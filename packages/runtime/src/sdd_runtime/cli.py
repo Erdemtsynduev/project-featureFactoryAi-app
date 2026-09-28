@@ -13,7 +13,6 @@ from pathlib import Path
 from sdd_core.codec import (
     canonical,
     integer,
-    mapping,
     object_json,
     sequence,
     text,
@@ -23,70 +22,15 @@ from sdd_core.codec import (
 from sdd_core.editor import compare, insert_step, simulate
 from sdd_core.graph import validate
 from sdd_core.models import Step
-from sdd_core.sdk import Handler, Registry
 from sdd_storage.store import Store
 
+from sdd_runtime.composition import registry
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import atomic_write, revision
 from sdd_runtime.lock import Lease
 from sdd_runtime.platform import NO_WINDOW, Job
-from sdd_runtime.plugins import load_extensions
 from sdd_runtime.watchdog import watch_parent
-
-
-def registry(config: Path | None) -> Registry:
-    from sdd_providers.catalog import adapters
-    from sdd_providers.handlers import CommandHandler
-    from sdd_providers.structured_cli import Invocation
-
-    from sdd_runtime.profiles import RunnerInstallation, load_profiles, register_profiles
-
-    result = Registry()
-    result.register(CommandHandler())
-    if config is None:
-        return result
-    doc = object_json(config.read_text(encoding="utf-8"))
-    catalog = adapters(
-        tuple(text(x, "extension") for x in sequence(doc.get("agent_extensions", [])))
-    )
-
-    def factory(installation: RunnerInstallation, model: str) -> Handler:
-        if installation.adapter not in catalog:
-            raise ValueError(f"Unknown agent adapter: {installation.adapter}")
-        return catalog[installation.adapter].factory(
-            Invocation(installation.executable, installation.arguments), model
-        )
-
-    if "profiles" in doc:
-        profiles = load_profiles(config)
-        for profile in profiles.profiles:
-            adapter_id = profiles.runners[profile.runner].adapter
-            if adapter_id not in catalog:
-                raise ValueError(f"Unknown agent adapter: {adapter_id}")
-            profile_adapter = catalog[adapter_id]
-            if profile.permissions == "read-only" and not profile_adapter.read_only:
-                raise ValueError(f"{profile_adapter.id} read-only policy is not qualified")
-        register_profiles(result, profiles, factory)
-    else:
-        for raw in sequence(doc.get("providers", [])):
-            item = mapping(raw)
-            adapter = text(item.get("id"), "id")
-            if adapter not in catalog:
-                raise ValueError(f"Unknown agent adapter: {adapter}")
-            model = item.get("model")
-            handler = catalog[adapter].factory(
-                Invocation(
-                    text(item.get("executable"), "executable"),
-                    tuple(text(arg, "argument") for arg in sequence(item.get("arguments", []))),
-                ),
-                None if model is None else text(model, "model"),
-            )
-            result.register(handler, name=text(item.get("name", adapter), "name"))
-        load_extensions(
-            result, tuple(text(x, "extension") for x in sequence(doc.get("extensions", [])))
-        )
-    return result
 
 
 def supervise(args: argparse.Namespace) -> int:
@@ -205,7 +149,7 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--depends-on", nargs="*", default=[])
     for name in ("status", "events", "replay"):
         commands.add_parser(name).add_argument("id")
-    for name in ("resume", "pause", "retry", "stop"):
+    for name in ("resume", "pause", "retry", "stop", "auto", "manual"):
         command = commands.add_parser(name)
         command.add_argument("id")
         command.add_argument("--version", type=int, required=True)
@@ -225,6 +169,9 @@ def parser() -> argparse.ArgumentParser:
     answer.add_argument("id")
     answer.add_argument("outcome")
     answer.add_argument("text")
+    answer.add_argument(
+        "--version", type=int, help="Task version the answer refers to (default: current)"
+    )
     commands.add_parser("backup").add_argument("target", type=Path)
     commands.add_parser("catalog").add_argument("--config", type=Path)
     agents = commands.add_parser("agents")
@@ -426,7 +373,7 @@ def main() -> int:
             finally:
                 coordinator.close()
         print(canonical(asdict(state)))
-    elif args.action in ("pause", "resume", "retry", "stop"):
+    elif args.action in ("pause", "resume", "retry", "stop", "auto", "manual"):
         print(
             canonical(
                 asdict(
@@ -449,8 +396,8 @@ def main() -> int:
     elif args.action == "backup":
         engine.store.backup(args.target)
     elif args.action == "answer":
-        with Lease(args.database.with_suffix(".coordinator.lock")):
-            Coordinator(engine, Registry()).answer(args.id, args.outcome, args.text, time.time())
+        expected = engine.store.get(args.id).version if args.version is None else args.version
+        engine.answer(args.id, args.outcome, args.text, {}, expected, time.time())
     elif args.action == "run":
         with Lease(args.database.with_suffix(".coordinator.lock")):
             coordinator = Coordinator(

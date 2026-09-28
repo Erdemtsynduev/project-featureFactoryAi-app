@@ -7,7 +7,7 @@ from sdd_core.codec import object_json
 from sdd_core.models import Attempt, Step, Workflow
 from sdd_core.profiles import AgentProfile, resolve_profiles
 from sdd_core.sdk import Packet, handler_key
-from sdd_runtime.cli import registry
+from sdd_runtime.composition import registry
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
 from sdd_runtime.profiles import load_profiles

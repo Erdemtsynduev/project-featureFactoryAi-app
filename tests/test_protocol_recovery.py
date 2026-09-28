@@ -39,7 +39,7 @@ def test_recovery_preserves_protocol_diagnosis_without_second_call(tmp_path):
     registry.register(BrokenProtocol())
     coordinator = Coordinator(engine, registry)
     try:
-        packet = coordinator._packet("one")
+        packet = coordinator.packet("one")
         with engine.store.transaction() as db:
             db.execute("UPDATE effects SET host_nonce='nonce' WHERE id='attempt'")
         Path(packet.directory, "exit.json").write_text(

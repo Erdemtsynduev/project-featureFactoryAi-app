@@ -8,7 +8,7 @@ version = "0.1.0"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = ["sdd-runtime[local]==0.1.0", "sdd-providers==0.1.0", "sdd-workflows==0.1.0"]
+dependencies = ["sdd-runtime[local]==0.1.0", "sdd-providers==0.1.0", "sdd-workflows==0.1.0", "sdd-usage==0.1.0"]
 
 [project.entry-points."ffai.commands"]
 ui = "sdd_ui.server:launch"

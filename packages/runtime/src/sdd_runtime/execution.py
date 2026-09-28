@@ -1,7 +1,6 @@
 """Durable dispatch adapter for backends that need no local process identity."""
 
 from dataclasses import asdict
-from pathlib import Path
 
 from sdd_core.codec import canonical
 from sdd_core.execution import (
@@ -66,9 +65,7 @@ class ExecutionDriver:
         elif observation.status in ("terminated", "unknown"):
             observed_revision = run.revision
             if observation.status == "terminated":
-                with self.engine.store.unit() as db:
-                    workspace = db.location(run_id)[0]
-                observed_revision = self.engine.project.revision(str(Path(workspace)))
+                observed_revision = self.engine.observe(run_id)
             self.engine.recover(
                 run_id,
                 now,

@@ -1,5 +1,6 @@
 """Explicit agent adapter catalog. Loading a third-party adapter is operator opt-in."""
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -22,6 +23,9 @@ class AgentAdapter:
     install_patterns: tuple[str, ...] = ()
     entrypoint: str | None = None
     parse_models: Callable[[str], tuple[str, ...]] | None = None
+    auth_arguments: tuple[str, ...] | None = None
+    parse_auth: Callable[[int, str], tuple[str, str]] | None = None
+    suggested_models: tuple[str, ...] = ()
 
 
 def _cli(provider: str, invocation: Invocation, model: str | None) -> Handler:
@@ -36,10 +40,62 @@ def _opencode(invocation: Invocation, model: str | None) -> Handler:
     return StructuredCliHandler("opencode", invocation, model)
 
 
+def _claude_auth(code: int, output: str) -> tuple[str, str]:
+    start = output.find("{")
+    try:
+        state = json.loads(output[start : output.rfind("}") + 1]) if start >= 0 else {}
+    except ValueError:
+        state = {}
+    if not isinstance(state, dict) or "loggedIn" not in state:
+        return "unknown", "Unrecognized status output"
+    if state["loggedIn"] is not True:
+        return "not_authenticated", "Run: claude auth login"
+    parts = [str(state.get(key)) for key in ("authMethod", "subscriptionType") if state.get(key)]
+    return "authenticated", " · ".join(parts)
+
+
+def _phrase_auth(login_hint: str) -> Callable[[int, str], tuple[str, str]]:
+    def parse(code: int, output: str) -> tuple[str, str]:
+        lowered = output.lower()
+        if "not logged in" in lowered or "logged out" in lowered:
+            return "not_authenticated", login_hint
+        if code == 0 and "logged in" in lowered:
+            line = next((x.strip("✓ ").strip() for x in output.splitlines() if x.strip()), "")
+            # Keep the login method, never the account identifier.
+            return "authenticated", line.split(" as ")[0].split(" using ")[-1][:80]
+        return "unknown", f"exit {code}"
+
+    return parse
+
+
+def _opencode_auth(code: int, output: str) -> tuple[str, str]:
+    stored = [line for line in output.splitlines() if line.rstrip().endswith("stored")]
+    if code == 0 and stored:
+        return "authenticated", f"{len(stored)} stored credential(s)"
+    return (
+        ("not_authenticated", "Run: opencode auth login")
+        if code == 0
+        else ("unknown", f"exit {code}")
+    )
+
+
 def adapters(extensions: tuple[str, ...] = ()) -> dict[str, AgentAdapter]:
     result = {
-        "claude": AgentAdapter("claude", ("claude",), lambda i, m: _cli("claude", i, m)),
-        "codex": AgentAdapter("codex", ("codex",), lambda i, m: _cli("codex", i, m)),
+        "claude": AgentAdapter(
+            "claude",
+            ("claude",),
+            lambda i, m: _cli("claude", i, m),
+            auth_arguments=("auth", "status"),
+            parse_auth=_claude_auth,
+            suggested_models=("opus", "sonnet", "haiku"),
+        ),
+        "codex": AgentAdapter(
+            "codex",
+            ("codex",),
+            lambda i, m: _cli("codex", i, m),
+            auth_arguments=("login", "status"),
+            parse_auth=_phrase_auth("Run: codex login"),
+        ),
         "cursor": AgentAdapter(
             "cursor",
             ("agent", "cursor-agent"),
@@ -49,6 +105,8 @@ def adapters(extensions: tuple[str, ...] = ()) -> dict[str, AgentAdapter]:
             ("$LOCALAPPDATA/cursor-agent/versions/*/node.exe",),
             "index.js",
             cursor_models,
+            ("status",),
+            _phrase_auth("Run: cursor-agent login"),
         ),
         "opencode": AgentAdapter(
             "opencode",
@@ -58,6 +116,8 @@ def adapters(extensions: tuple[str, ...] = ()) -> dict[str, AgentAdapter]:
             False,
             ("$APPDATA/npm/node_modules/@opencode/cli/bin/opencode.exe",),
             parse_models=opencode_models,
+            auth_arguments=("auth", "list"),
+            parse_auth=_opencode_auth,
         ),
     }
     installed = {point.name: point for point in entry_points(group="sdd.agents")}

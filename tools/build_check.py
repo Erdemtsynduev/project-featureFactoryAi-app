@@ -7,17 +7,17 @@ import tempfile
 import venv
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-DIST = ROOT / "dist"
+from wheels import DIST, ROOT, clean
 
 
 def run(args: list[str], cwd: Path = ROOT) -> None:
     subprocess.run(args, cwd=cwd, check=True, timeout=180)
 
 
+clean()
 for path in [
     ROOT / "packages" / name
-    for name in ("core", "storage", "runtime", "providers", "workflows", "ui")
+    for name in ("core", "storage", "runtime", "providers", "workflows", "usage", "ui")
 ] + [ROOT, ROOT / "examples/extension"]:
     run(
         [

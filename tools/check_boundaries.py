@@ -5,13 +5,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED = {
-    "ui": {"ui", "core", "runtime", "storage", "providers", "workflows"},
+    "ui": {"ui", "core", "runtime", "providers", "workflows", "usage"},
+    "usage": {"core", "usage"},
     "core": {"core"},
     "storage": {"core", "storage"},
     "runtime": {"core", "runtime"},
     "providers": {"core", "providers"},
     "workflows": {"core", "workflows"},
 }
+# Composition roots may choose concrete adapters; nothing else may.
+COMPOSITION = {
+    ("runtime", "composition.py"): {"sdd_providers", "sdd_storage"},
+    ("runtime", "cli.py"): {"sdd_providers", "sdd_workflows", "sdd_storage"},
+    ("runtime", "engine.py"): {"sdd_storage"},
+}
+# The legacy importer reads a foreign sdd-orchestrator database, read-only.
+FOREIGN_SQL = {("ui", "legacy.py")}
 FORBIDDEN = {
     "os",
     "pathlib",
@@ -24,20 +33,31 @@ FORBIDDEN = {
     "threading",
     "asyncio",
 }
+SQL_CALLS = {"execute", "executemany", "executescript", "transaction"}
 errors = []
 for package, allowed in ALLOWED.items():
     for path in (ROOT / "packages" / package / "src").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        where = (package, path.name)
         for node in ast.walk(tree):
             if (
-                package == "runtime"
+                package in ("runtime", "ui")
+                and where not in FOREIGN_SQL
                 and isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"execute", "executemany", "executescript", "transaction"}
+                and node.func.attr in SQL_CALLS
             ):
                 errors.append(
-                    f"{path}:{node.lineno}: persistence implementation leaked into runtime"
+                    f"{path}:{node.lineno}: persistence implementation leaked into {package}"
                 )
+            if (
+                package != "core"
+                and isinstance(node, ast.Attribute)
+                and node.attr == "changed"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "machine"
+            ):
+                errors.append(f"{path}:{node.lineno}: use a named transition, not machine.changed")
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
             names = []
@@ -45,6 +65,12 @@ for package, allowed in ALLOWED.items():
                 names = [alias.name for alias in node.names]
             if isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module]
+                if (
+                    package != "core"
+                    and node.module == "sdd_core.machine"
+                    and any(alias.name == "changed" for alias in node.names)
+                ):
+                    errors.append(f"{path}:{node.lineno}: use a named transition, not changed()")
             for name in names:
                 module = name.split(".")[0]
                 if path.name == "application.py" and module in {
@@ -56,16 +82,14 @@ for package, allowed in ALLOWED.items():
                     errors.append(
                         f"{path}:{node.lineno}: concrete infrastructure in application: {module}"
                     )
-                if package == "core" and module in FORBIDDEN:
-                    errors.append(f"{path}:{node.lineno}: IO dependency in core: {module}")
+                if package in ("core", "usage") and module in FORBIDDEN:
+                    errors.append(f"{path}:{node.lineno}: IO dependency in {package}: {module}")
+                if package == "ui" and module == "sqlite3" and where not in FOREIGN_SQL:
+                    errors.append(f"{path}:{node.lineno}: SQL in ui; use a storage port")
+                if package == "ui" and name == "sdd_runtime.cli":
+                    errors.append(f"{path}:{node.lineno}: compose through sdd_runtime.composition")
                 if module.startswith("sdd_") and module[4:] not in allowed:
-                    if package == "runtime" and (
-                        (
-                            path.name == "cli.py"
-                            and module in {"sdd_providers", "sdd_workflows", "sdd_storage"}
-                        )
-                        or (path.name == "engine.py" and module == "sdd_storage")
-                    ):
+                    if module in COMPOSITION.get(where, set()):
                         continue
                     errors.append(f"{path}:{node.lineno}: forbidden dependency: {module}")
 if errors:

@@ -4,12 +4,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from threading import RLock
+from typing import cast
 
+from sdd_core.catalog import AgentCall
 from sdd_core.codec import digest, result_load, workflow_json
 from sdd_core.graph import validate
-from sdd_core.models import Result, Run, Transition, Workflow
-from sdd_core.ports import Conflict, UnitOfWork
+from sdd_core.models import Attempt, Result, Run, Transition, Workflow
+from sdd_core.ports import Conflict, StaleVersion, UnitOfWork
 from sdd_core.runtime_ports import EffectRecord
 
 
@@ -26,7 +29,9 @@ class MemoryState:
     bindings: dict[tuple[str, str], str] = field(default_factory=dict)
     executions: dict[str, tuple[str, str]] = field(default_factory=dict)
     portfolios: dict[str, str] = field(default_factory=dict)
+    lanes: dict[str, str] = field(default_factory=dict)
     policies: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    attempts: dict[str, Attempt] = field(default_factory=dict)
 
 
 class MemoryUnit:
@@ -46,7 +51,7 @@ class MemoryUnit:
         if after.id != before.id or after.version != before.version + 1:
             raise ValueError("Invalid transition version")
         if self.run(before.id).version != before.version:
-            raise Conflict("Stale state version")
+            raise StaleVersion("Stale state version")
         self.state.runs[before.id] = after
         self.state.events.extend((before.id, event.at, event.kind) for event in transition.events)
         for effect in transition.effects:
@@ -55,6 +60,7 @@ class MemoryUnit:
             self.state.effects[effect.id] = EffectRecord(
                 effect.id, before.id, effect.kind, "pending", self.location(before.id)[0]
             )
+            self.state.attempts[effect.id] = effect.attempt
         return after
 
     def command(self, identifier: str) -> tuple[str, str] | None:
@@ -194,8 +200,23 @@ class MemoryUnit:
             )
         )
 
+    def queue_usage(self) -> tuple[int, int]:
+        runs = self.state.runs.values()
+        return sum(r.calls for r in runs), sum(r.planning_calls for r in runs)
+
     def last_transition(self) -> float | None:
         return max((at for _, at, _ in self.state.events), default=None)
+
+    def lane(self, run_id: str) -> str | None:
+        return self.state.lanes.get(run_id)
+
+    def save_lane(self, run_id: str, document: str) -> None:
+        self.run(run_id)
+        self.state.lanes[run_id] = document
+
+    def relocate(self, identifier: str, workspace: str, claim: str) -> None:
+        _, context, _, dependencies = self.state.inputs[identifier]
+        self.state.inputs[identifier] = workspace, context, claim, dependencies
 
     def portfolio(self, identifier: str) -> str | None:
         return self.state.portfolios.get(identifier)
@@ -271,3 +292,67 @@ class MemoryStore:
             self._state.created[run.id] = now
             self._state.events.append((run.id, now, "created"))
             return run
+
+
+class MemoryCatalog:
+    """Volatile CatalogRecords over a MemoryStore, for embedding and contract tests."""
+
+    def __init__(self, store: MemoryStore) -> None:
+        self.store = store
+        self.documents: dict[str, dict[str, str]] = {
+            "projects": {},
+            "tasks": {},
+            "preferences": {},
+        }
+        self.plan_documents: dict[tuple[str, str], str] = {}
+
+    def projects(self) -> tuple[str, ...]:
+        return tuple(v for _, v in sorted(self.documents["projects"].items()))
+
+    def save_project(self, identifier: str, document: str) -> None:
+        self.documents["projects"][identifier] = document
+
+    def plans(self) -> tuple[tuple[str, str], ...]:
+        return tuple((key[0], value) for key, value in sorted(self.plan_documents.items()))
+
+    def save_plans(self, project: str, plans: tuple[tuple[str, str], ...]) -> None:
+        for identifier, document in plans:
+            self.plan_documents[project, identifier] = document
+
+    def tasks(self) -> tuple[tuple[str, str], ...]:
+        return tuple(self.documents["tasks"].items())
+
+    def save_task(self, identifier: str, document: str) -> None:
+        self.store.get(identifier)
+        self.documents["tasks"].setdefault(identifier, document)
+
+    def preference(self, key: str) -> str | None:
+        return self.documents["preferences"].get(key)
+
+    def save_preference(self, key: str, document: str) -> None:
+        self.documents["preferences"][key] = document
+
+    def agent_calls(self) -> tuple[AgentCall, ...]:
+        with self.store.unit() as unit:
+            state = cast(MemoryUnit, unit).state
+            return tuple(
+                AgentCall(
+                    record.run_id,
+                    state.runs[record.run_id].workflow_digest,
+                    state.attempts[key].step,
+                    state.attempts[key].started,
+                    record.status,
+                    state.results[key][1] if key in state.results else None,
+                )
+                for key, record in state.effects.items()
+                if record.kind == "agent"
+            )
+
+    def daily_dispatches(self, days: int) -> tuple[tuple[str, int], ...]:
+        counts: dict[str, int] = {}
+        with self.store.unit() as unit:
+            for _, at, kind in cast(MemoryUnit, unit).state.events:
+                if kind == "dispatched":
+                    day = datetime.fromtimestamp(at, UTC).date().isoformat()
+                    counts[day] = counts.get(day, 0) + 1
+        return tuple(sorted(counts.items(), reverse=True)[:days])

@@ -1,5 +1,6 @@
 """Loopback-only operator UI with same-origin, token-protected mutations."""
 
+import hashlib
 import secrets
 import threading
 import webbrowser
@@ -24,12 +25,18 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
             pass
 
         def reply(
-            self, status: int, body: bytes, mime: str = "application/json; charset=utf-8"
+            self,
+            status: int,
+            body: bytes,
+            mime: str = "application/json; charset=utf-8",
+            etag: str | None = None,
         ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if etag is not None:
+                self.send_header("ETag", etag)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header(
                 "Content-Security-Policy",
@@ -62,6 +69,11 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                     "/locale.js",
                     "/workspace.js",
                     "/workspace.css",
+                    "/pipeline.js",
+                    "/office.js",
+                    "/nav.js",
+                    "/persist.js",
+                    "/onboarding.js",
                 ):
                     name = "index.html" if url.path == "/" else url.path[1:]
                     mime = (
@@ -73,20 +85,27 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                     ) + "; charset=utf-8"
                     self.reply(200, files("sdd_ui").joinpath("static", name).read_bytes(), mime)
                     return
-                with service.lock:
-                    result: dict[str, object]
-                    if url.path == "/api/info":
-                        result = {
-                            "application": "feature-factory-ai",
-                            "database": str(service.engine.store.path),
-                        }
-                    elif url.path == "/api/state":
-                        result = {**service.state(), "token": token}
-                    elif url.path == "/api/run":
-                        result = service.detail(parse_qs(url.query)["id"][0])
+                # Reads use their own short transactions and never wait for a queue tick.
+                result: dict[str, object]
+                if url.path == "/api/info":
+                    result = {
+                        "application": "feature-factory-ai",
+                        "database": str(service.engine.store.path),
+                    }
+                elif url.path == "/api/state":
+                    body = canonical({**service.state(), "token": token}).encode()
+                    # The board polls every few seconds; unchanged state costs no transfer.
+                    etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+                    if self.headers.get("If-None-Match") == etag:
+                        self.reply(304, b"", etag=etag)
                     else:
-                        self.reply(404, b"{}")
-                        return
+                        self.reply(200, body, etag=etag)
+                    return
+                elif url.path == "/api/run":
+                    result = service.detail(parse_qs(url.query)["id"][0])
+                else:
+                    self.reply(404, b"{}")
+                    return
                 self.reply(200, canonical(result).encode())
             except (ValueError, KeyError, OSError) as error:
                 self.reply(400, canonical({"error": str(error)}).encode())
@@ -111,8 +130,9 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                     self.reply(200, b'{"stopping":true}')
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                     return
-                with service.lock:
-                    result = service.mutate(action, document)
+                # The service takes the coordinator lock only for actions that need it;
+                # slow probes (discovery, models, quotas) never freeze the queue or polling.
+                result: object = service.mutate(action, document)
                 self.reply(200, canonical(result).encode())
             except (ValueError, KeyError, OSError) as error:
                 self.reply(

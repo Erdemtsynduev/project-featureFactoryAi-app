@@ -15,6 +15,7 @@ members = [
     "sdd-runtime",
     "sdd-storage",
     "sdd-ui",
+    "sdd-usage",
     "sdd-workflows",
 ]
 
@@ -253,6 +254,7 @@ dependencies = [
     { name = "sdd-providers" },
     { name = "sdd-runtime", extra = ["local"] },
     { name = "sdd-ui" },
+    { name = "sdd-usage" },
     { name = "sdd-workflows" },
 ]
 
@@ -280,6 +282,7 @@ requires-dist = [
     { name = "sdd-providers", editable = "packages/providers" },
     { name = "sdd-runtime", extras = ["local"], editable = "packages/runtime" },
     { name = "sdd-ui", editable = "packages/ui" },
+    { name = "sdd-usage", editable = "packages/usage" },
     { name = "sdd-workflows", editable = "packages/workflows" },
     { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77" },
     { name = "types-psutil", marker = "extra == 'dev'", specifier = ">=7" },
@@ -879,6 +882,7 @@ source = { editable = "packages/ui" }
 dependencies = [
     { name = "sdd-providers" },
     { name = "sdd-runtime", extra = ["local"] },
+    { name = "sdd-usage" },
     { name = "sdd-workflows" },
 ]
 
@@ -886,8 +890,20 @@ dependencies = [
 requires-dist = [
     { name = "sdd-providers", editable = "packages/providers" },
     { name = "sdd-runtime", extras = ["local"], editable = "packages/runtime" },
+    { name = "sdd-usage", editable = "packages/usage" },
     { name = "sdd-workflows", editable = "packages/workflows" },
 ]
+
+[[package]]
+name = "sdd-usage"
+version = "0.1.0"
+source = { editable = "packages/usage" }
+dependencies = [
+    { name = "sdd-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "sdd-core", editable = "packages/core" }]
 
 [[package]]
 name = "sdd-workflows"

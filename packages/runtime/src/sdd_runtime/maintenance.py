@@ -7,6 +7,8 @@ from pathlib import Path
 from sdd_core.codec import result_load
 from sdd_core.ports import StateStore
 
+from sdd_runtime.files import attempt_folder
+
 
 def archive_diagnostics(store: StateStore, older_than_days: int = 30) -> tuple[str, ...]:
     if older_than_days < 1:
@@ -17,7 +19,7 @@ def archive_diagnostics(store: StateStore, older_than_days: int = 30) -> tuple[s
         rows = db.effects(("done",))
     for row in rows:
         root = Path(row.workspace)
-        folder = root / ".sdd-engine" / row.run_id / row.id
+        folder = attempt_folder(root, row.run_id, row.id)
         result = result_load(row.receipt or "{}")
         protected = {(root / artifact.path).resolve() for artifact in result.artifacts}
         for path in folder.glob("*.log"):

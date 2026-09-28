@@ -10,8 +10,9 @@ entire original scope. Describe observable acceptance, binding constraints, and 
 highest practical verification seams (a public API or scenario rather than internals).
 Give each criterion a stable ID. Distinguish explicit exclusions from missing work.
 Do not ask about facts you can establish from the repository. Ask only unresolved
-product or architecture decisions; never invent the user's answer. Put the question,
-options, recommendation and reason in the result reason and return questions.
+product or architecture decisions; never invent the user's answer. Return questions
+with each decision in `questions` (id, question, 2-4 options, your recommended
+option) and explain the trade-offs behind each recommendation in reason.
 Otherwise return done with the complete bounded specification in reason. No edits.
 """
 
@@ -80,9 +81,21 @@ with the precise remaining repair when partial, or blocked when ownership/proces
 is uncertain. Include the observed state and next safe action in reason.
 """
 
+RESOLVE = """A rebase of this task's isolated branch onto the updated base branch stopped
+with conflicts. The reason lists the repository, the lane folder and the conflicted
+files. For every conflict, read both sides and the history of each change, keep the
+intent of both (never drop the other side, never skip a commit), and preserve all
+acceptance criteria of this task. Run focused checks, then `git add` the resolved files
+and `git rebase --continue` until the rebase completes. Work only inside the lane
+repositories; linked folders are other checkouts and must not be edited. Return done
+when no rebase is in progress, failed with the remaining conflicts, or blocked when the
+two intents contradict each other and a human decision is needed. The engine reruns
+every check and the independent review afterwards.
+"""
+
 INTERVIEW = """Use the original request and every recorded answer to identify the next
-small independent decision. Ask one focused question with 2-3 options and an explained
-recommendation in reason; return questions. Research repository facts instead of asking
+small independent decision. Return questions with that decision in `questions`: 2-3
+options and your recommended option; explain the recommendation in reason. Research repository facts instead of asking
 the user to supply them. Never silently answer for the user or discard an earlier answer.
 When the scope is clear, return done with a complete specification and acceptance criteria
 in reason. This only proposes readiness: the next human step must approve it. No edits.

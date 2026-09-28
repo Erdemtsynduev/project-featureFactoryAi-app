@@ -63,9 +63,23 @@ function options(id, items) {
   select.replaceChildren(...items);
   if ([...select.options].some((x) => x.value === old)) select.value = old;
 }
+let stateTag = null;
+let stateBody = null;
+// Polling revalidates with the last ETag; an unchanged board is not re-sent.
+async function fetchState() {
+  const r = await fetch("/api/state", {
+    headers: stateTag ? { "If-None-Match": stateTag } : {},
+  });
+  if (r.status === 304 && stateBody) return stateBody;
+  const v = await r.json();
+  if (!r.ok) throw Error(v.error || "Запрос отклонён");
+  stateTag = r.headers.get("ETag");
+  stateBody = v;
+  return v;
+}
 async function refresh() {
   try {
-    state = await api("state");
+    state = await fetchState();
     token = state.token;
     if (!$("profiles-json").dataset.loaded) {
       $("profiles-json").value = JSON.stringify(state.profile_config, null, 2);
@@ -76,6 +90,11 @@ async function refresh() {
       : state.settings.running
         ? "Очередь включена"
         : "Очередь на паузе";
+    $("connection").classList.toggle(
+      "is-running",
+      !state.error && state.settings.running,
+    );
+    $("connection").classList.toggle("is-error", !!state.error);
     $("queue").textContent = state.settings.running
       ? "Приостановить очередь"
       : "Запустить очередь";
@@ -87,14 +106,13 @@ async function refresh() {
     $("tokens").textContent =
       state.totals.tokens.toLocaleString() +
       (state.totals.usage_unknown ? " + неизвестные" : "");
+    $("cost").textContent = money(state.usage?.total_usd);
     $("last").textContent = state.last_transition
       ? new Date(state.last_transition * 1000).toLocaleString()
       : "—";
     if (state.error) notify(state.error, true);
     if (!boardInitialized) {
       boardInitialized = true;
-      if (!state.runs.length && state.preview?.items.length)
-        $("preview-board").click();
     }
     renderBoard();
     renderOffice();
@@ -126,6 +144,7 @@ async function refresh() {
         option(name, name),
       ),
     );
+    document.dispatchEvent(new Event("ffai-refreshed"));
     if (!document.activeElement.closest("#budget-form"))
       for (const name of ["max_calls", "max_planning_calls"])
         $("budget-form").elements[name].value = state.settings[name];
@@ -149,6 +168,10 @@ const labels = {
   finish: "Готово",
   ask: "Вопросы",
   answer: "Ваш ответ",
+  integrate: "Слияние",
+  rebase: "Перебазирование",
+  resolve: "Разрешение конфликта",
+  merge_conflict: "Конфликт слияния",
 };
 const roles = {
   spec: "Аналитик",
@@ -157,20 +180,20 @@ const roles = {
   checks: "Тестировщик",
   review: "Ревьюер",
   diagnose: "Диагност",
-  repair: "Разработчик",
-  reconcile: "Диагност",
+  repair: "Исправление",
+  reconcile: "Сверка",
   interview: "Вы",
   approve: "Вы",
 };
 let boardInitialized = false;
-let boardMode = "live",
+let boardMode = recall("board-mode", "live"),
   boardSignature = "",
   officeSignature = "",
   inboxSignature = "";
 let detailId = null,
   detailVersion = null,
   detailRequest = 0;
-const answerDrafts = new Map();
+const answerDrafts = persistentMap("answer-drafts");
 function stepFor(run) {
   return state.definitions
     .find((d) => d.digest === run.workflow_digest)
@@ -188,20 +211,240 @@ function laneFor(r) {
     ? "running"
     : "ready";
 }
+const KINDS = {
+  requirement: { label: "Требование", glyph: "◇" },
+  ticket: { label: "Тикет", glyph: "▣" },
+  task: { label: "Задание", glyph: "○" },
+};
+let kindFilter = recall("kind-filter", "");
+const openPlans = new Set(recall("open-plans", []));
+function money(value) {
+  if (value === undefined || value === null) return "—";
+  const digits = value >= 100 ? 0 : value >= 1 ? 2 : 3;
+  return "$" + value.toFixed(digits);
+}
+function kindOf(run) {
+  const kind = state.task_metadata?.[run.id]?.kind;
+  return KINDS[kind] ? kind : "task";
+}
+function workflowOf(run) {
+  return state.definitions.find((d) => d.digest === run.workflow_digest)
+    ?.workflow;
+}
+/* Who executes a step, e.g. "claude · opus"; checks run commands, humans are you. */
+function runnerLabel(step) {
+  if (!step) return "";
+  if (step.kind === "human") return tr("вы");
+  if (step.kind === "check" || step.kind === "operation")
+    return step.handler || "command";
+  if (step.kind !== "agent") return "";
+  const name = step.profile !== "default" ? step.profile : step.handler;
+  const profile = state.profile_config?.profiles?.[name];
+  if (!profile) return name;
+  return name + " · " + profile.model;
+}
+function planTitle(project, planId) {
+  const plans =
+    state.plans?.[project] || Object.values(state.plans || {}).flat();
+  return plans.find((p) => p.id === planId)?.title || "План " + planId;
+}
+function statusPill(r) {
+  const key = laneFor(r);
+  const text =
+    {
+      ready: r.paused ? "пауза" : "в очереди",
+      running: "в работе",
+      blocked:
+        r.active && stepFor(r)?.kind === "human" ? "нужен ответ" : "нужны вы",
+      accepted: "готово",
+    }[key] || r.status;
+  return el("span", text, "status-pill status-" + key);
+}
+function taskCard(r) {
+  const kind = kindOf(r);
+  const meta = state.task_metadata?.[r.id] || {};
+  const c = el("button", undefined, "card kind-" + kind);
+  configureDraggable(c, r);
+  const head = el("span", undefined, "card-head");
+  head.append(
+    el("span", KINDS[kind].glyph + " " + KINDS[kind].label, "kind-tag"),
+  );
+  if (meta.plan) head.append(raw("span", meta.plan, "plan-chip"));
+  head.append(statusPill(r));
+  c.append(head, raw("strong", r.title || r.id));
+  const step = stepFor(r);
+  const line = el("small", undefined, "card-step");
+  line.append(
+    el("span", tr(labels[r.step] || r.step)),
+    raw("span", runnerLabel(step), "runner"),
+  );
+  c.append(line);
+  const facts = [];
+  if (kind === "ticket") {
+    const checks = workflowOf(r)?.steps.filter(
+      (s) => s.kind === "check",
+    ).length;
+    if (checks) facts.push(checks + " " + tr("пров."));
+    if (meta.parent) facts.push(tr("из") + " " + meta.parent);
+  }
+  if (kind === "requirement") {
+    const children = state.runs.filter(
+      (x) => state.task_metadata?.[x.id]?.parent === r.id,
+    ).length;
+    if (children) facts.push(children + " " + tr("тикетов"));
+  }
+  if (r.calls) facts.push(r.calls + " " + tr("вызовов"));
+  const spent = state.usage?.per_run_usd?.[r.id];
+  if (spent) facts.push("≈ " + money(spent));
+  if (facts.length) c.append(raw("small", facts.join(" · "), "card-facts"));
+
+  if (r.reason && r.status !== "accepted")
+    c.append(raw("small", r.reason, "card-reason"));
+  c.onclick = () => act(() => openDetail(r.id));
+  return c;
+}
+function renderPlans(items) {
+  const root = el("div", undefined, "plans");
+  const byPlan = new Map();
+  for (const r of items) {
+    const plan = state.task_metadata?.[r.id]?.plan || "";
+    if (!byPlan.has(plan)) byPlan.set(plan, []);
+    byPlan.get(plan).push(r);
+  }
+  const known = (state.plans?.[currentProject] || []).filter((p) =>
+    byPlan.has(p.id),
+  );
+  const ids = [
+    ...known.map((p) => p.id),
+    ...[...byPlan.keys()].filter((id) => !known.some((p) => p.id === id)),
+  ];
+  if (!ids.length)
+    root.append(
+      el("p", "Планов нет. Задания без плана видны на доске.", "empty"),
+    );
+  for (const id of ids) {
+    const runs = byPlan.get(id) || [];
+    const info = known.find((p) => p.id === id);
+    const accepted = runs.filter((r) => r.status === "accepted").length;
+    const total = info ? info.requirements + info.tickets : runs.length;
+    const done = (info?.accepted || 0) + accepted;
+    const section = el("details", undefined, "plan");
+    section.open = openPlans.has(id);
+    section.ontoggle = () => {
+      if (section.open) {
+        openPlans.add(id);
+        remember("open-plans", [...openPlans]);
+        if (!section.querySelector(".plan-tree"))
+          section.append(planTree(runs));
+      } else {
+        openPlans.delete(id);
+        remember("open-plans", [...openPlans]);
+      }
+    };
+    const summary = el("summary");
+    const bar = el("span", undefined, "plan-bar");
+    const fill = el("span");
+    fill.style.width = Math.round((100 * done) / Math.max(1, total)) + "%";
+    bar.append(fill);
+    const counts = el("span", undefined, "plan-counts");
+    const req = runs.filter((r) => kindOf(r) === "requirement").length;
+    const tix = runs.filter((r) => kindOf(r) === "ticket").length;
+    const waiting = runs.filter((r) => laneFor(r) === "blocked").length;
+    counts.append(
+      el("span", req + " " + tr("треб.")),
+      el("span", tix + " " + tr("тик.")),
+    );
+    if (waiting)
+      counts.append(el("span", waiting + " " + tr("ждут вас"), "attention"));
+    summary.append(
+      raw(
+        "span",
+        id ? planTitle(currentProject, id) : tr("Без плана"),
+        "plan-name",
+      ),
+      bar,
+      raw("span", done + " / " + total, "plan-progress"),
+      counts,
+    );
+    section.append(summary);
+    if (section.open) section.append(planTree(runs));
+    root.append(section);
+  }
+  return root;
+}
+function planTree(runs) {
+  const tree = el("div", undefined, "plan-tree");
+  const children = new Map();
+  for (const r of runs) {
+    const parent = state.task_metadata?.[r.id]?.parent;
+    if (kindOf(r) === "ticket" && parent) {
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(r);
+    }
+  }
+  const requirements = runs.filter((r) => kindOf(r) === "requirement");
+  const shown = new Set();
+  const row = (r, depth) => {
+    shown.add(r.id);
+    const item = el("button", undefined, "tree-row kind-" + kindOf(r));
+    item.style.setProperty("--depth", depth);
+    item.append(
+      el("span", KINDS[kindOf(r)].glyph, "tree-glyph"),
+      raw(
+        "span",
+        r.title || state.task_metadata?.[r.id]?.title || r.id,
+        "tree-title",
+      ),
+      raw("span", runnerLabel(stepFor(r)), "runner"),
+      statusPill(r),
+    );
+    item.onclick = () => act(() => openDetail(r.id));
+    return item;
+  };
+  for (const r of requirements) {
+    tree.append(row({ ...r, title: state.task_metadata?.[r.id]?.title }, 0));
+    for (const t of children.get(r.id) || [])
+      tree.append(row({ ...t, title: state.task_metadata?.[t.id]?.title }, 1));
+  }
+  // Tickets whose requirement was decomposed before the move group under its id.
+  const orphans = new Map();
+  for (const r of runs)
+    if (!shown.has(r.id)) {
+      const parent = state.task_metadata?.[r.id]?.parent || "";
+      if (!orphans.has(parent)) orphans.set(parent, []);
+      orphans.get(parent).push(r);
+    }
+  for (const [parent, list] of orphans) {
+    if (parent) {
+      const head = el("div", undefined, "tree-group");
+      head.append(
+        el("span", "◇", "tree-glyph"),
+        raw("span", parent),
+        el("span", tr("разбито на тикеты"), "hint"),
+      );
+      tree.append(head);
+    }
+    for (const t of list)
+      tree.append(
+        row(
+          { ...t, title: state.task_metadata?.[t.id]?.title },
+          parent ? 1 : 0,
+        ),
+      );
+  }
+  return tree;
+}
 function renderBoard() {
-  const preview = boardMode === "preview",
-    snapshot = state.preview || { items: [] };
-  const all = preview
-    ? snapshot.items
-    : state.runs.filter(matchesProject).map((r) => ({
-        ...r,
-        title: state.task_metadata?.[r.id]?.title || r.id,
-      }));
+  const live = state.runs.filter(matchesProject).map((r) => ({
+    ...r,
+    title: state.task_metadata?.[r.id]?.title || r.id,
+  }));
   const query = $("task-search").value.toLowerCase();
-  const plan = $("plan-filter").value;
-  const items = all.filter(
+  const plan = $("plan-filter").value || recall("plan-filter", "");
+  const items = live.filter(
     (r) =>
-      (!preview || !plan || r.plan === plan) &&
+      (!plan || state.task_metadata?.[r.id]?.plan === plan) &&
+      (!kindFilter || kindOf(r) === kindFilter) &&
       [r.id, r.title, r.context, r.reason]
         .join(" ")
         .toLowerCase()
@@ -212,22 +455,58 @@ function renderBoard() {
     items,
     query,
     plan,
-    state.definitions,
+    kindFilter,
+    currentProject,
+    state.definitions.length,
+    state.profile_config,
   ]);
   if (signature === boardSignature) return;
   boardSignature = signature;
-  $("plan-filter").disabled = !preview;
+  const planIds = [
+    ...new Set(
+      live.map((r) => state.task_metadata?.[r.id]?.plan).filter(Boolean),
+    ),
+  ];
   options("plan-filter", [
     option("", "Все планы"),
-    ...[...new Set(snapshot.items.map((r) => r.plan))]
-      .sort()
-      .map((p) => option(p, "План " + p)),
+    ...planIds.sort().map((p) => option(p, planTitle(currentProject, p))),
   ]);
-  $("snapshot-info").classList.toggle("hidden", !preview);
-  $("snapshot-info").textContent = snapshot.captured_at
-    ? `Снимок от ${new Date(snapshot.captured_at).toLocaleString()} · ${snapshot.items.length} карточек · только просмотр. Статусы взяты из исходного оркестратора; это не результаты нового движка.`
-    : "Снимок ещё не подключён. Создайте его командой из инструкции docs/UI.md; действующая очередь не переносится.";
+  const wantedPlan = recall("plan-filter", "");
+  if (wantedPlan && !$("plan-filter").value && planIds.includes(wantedPlan))
+    $("plan-filter").value = wantedPlan;
+  $("plan-filter").disabled = !planIds.length;
+  const counts = { requirement: 0, ticket: 0, task: 0 };
+  for (const r of live) counts[kindOf(r)]++;
+  const chips = $("kind-filter");
+  chips.replaceChildren();
+  chips.hidden = counts.requirement + counts.ticket === 0;
+  for (const [key, label] of [
+    ["", "Все"],
+    ["requirement", "Требования"],
+    ["ticket", "Тикеты"],
+    ["task", "Задания"],
+  ]) {
+    if (key && !counts[key]) continue;
+    const b = el("button", undefined, "chip" + (key ? " kind-" + key : ""));
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(kindFilter === key));
+    b.append(
+      el("span", label),
+      el("span", String(key ? counts[key] : live.length), "chip-count"),
+    );
+    b.onclick = () => {
+      kindFilter = key;
+      remember("kind-filter", key);
+      renderBoard();
+    };
+    chips.append(b);
+  }
   $("board").replaceChildren();
+  $("board").classList.toggle("as-plans", boardMode === "plans");
+  if (boardMode === "plans") {
+    $("board").append(renderPlans(items));
+    return;
+  }
   for (const [key, title] of [
     ["ready", "К выполнению"],
     ["running", "В работе"],
@@ -236,47 +515,16 @@ function renderBoard() {
   ]) {
     const runs = items.filter((r) => laneFor(r) === key);
     const lane = el("section", undefined, "lane lane-" + key);
-    configureDropTarget(lane, key, preview);
+    configureDropTarget(lane, key);
     const heading = el("h2", title);
     heading.append(el("span", runs.length, "lane-count"));
     lane.append(heading);
-    const visible = runs.slice(0, 40);
-    for (const r of visible) {
-      const c = el("button", undefined, "card");
-      configureDraggable(c, r, preview);
-      c.append(
-        el(
-          "small",
-          preview
-            ? `План ${r.plan} · ${r.kind === "ticket" ? "Тикет" : "Требование"}`
-            : roles[r.step] || r.step,
-          "card-kicker",
-        ),
-        raw("strong", r.title || r.id),
-        el(
-          "small",
-          preview
-            ? r.id
-            : (labels[r.step] || r.step) + (r.paused ? " · пауза" : ""),
-        ),
-      );
-      if (!preview)
-        c.append(
-          el("small", r.calls + " вызовов · планирование " + r.planning_calls),
-        );
-      if (r.reason && r.status !== "accepted")
-        c.append(raw("small", r.reason, "card-reason"));
-      if (r.dependencies?.length)
-        c.append(el("small", "Зависит от: " + r.dependencies.join(", ")));
-      c.onclick = () =>
-        preview ? openPreview(r) : act(() => openDetail(r.id));
-      lane.append(c);
-    }
+    for (const r of runs.slice(0, 40)) lane.append(taskCard(r));
     if (runs.length > 40)
       lane.append(
         el(
           "p",
-          `Ещё ${runs.length - 40}. Выберите план или уточните поиск.`,
+          `Ещё ${runs.length - 40}. Выберите план, тип или уточните поиск.`,
           "hint",
         ),
       );
@@ -284,7 +532,7 @@ function renderBoard() {
       lane.append(
         el(
           "div",
-          query || plan
+          query || plan || kindFilter
             ? "Нет совпадений"
             : {
                 ready: "Здесь появятся ваши задачи",
@@ -297,24 +545,6 @@ function renderBoard() {
       );
     $("board").append(lane);
   }
-}
-function openPreview(r) {
-  detailId = null;
-  showTaskDialog();
-  const root = $("detail");
-  root.classList.remove("hidden");
-  root.replaceChildren(
-    el("small", "СНИМОК · ТОЛЬКО ПРОСМОТР", "eyebrow"),
-    el("h2", r.id),
-    raw("h3", r.title),
-    raw("p", r.context),
-    el("p", "Исходный статус: " + r.status),
-    raw("p", r.reason),
-    el("p", "Источник: " + r.path),
-    el("p", "Зависимости: " + (r.dependencies?.join(", ") || "нет")),
-  );
-  appendClose(root);
-  root.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 function appendClose(root) {
   const close = el("button", "Закрыть карточку", "detail-close");
@@ -343,62 +573,99 @@ async function openMainFlow(stepId) {
   renderFlow();
   $("graph-fit").click();
 }
+let officeMounted = false,
+  officeWorkflow = null;
+function officeFlow() {
+  // Every workflow the project uses, most frequent first; the editor draft otherwise.
+  const runs = state.runs.filter(matchesProject);
+  const counts = new Map();
+  for (const r of runs)
+    counts.set(r.workflow_digest, (counts.get(r.workflow_digest) || 0) + 1);
+  const seen = new Set();
+  const flows = [];
+  for (const [digest] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+    const workflow = state.definitions.find(
+      (d) => d.digest === digest,
+    )?.workflow;
+    const shape = workflow && workflow.steps.map((s) => s.id + s.kind).join();
+    if (workflow && !seen.has(shape)) {
+      seen.add(shape);
+      flows.push(workflow);
+    }
+  }
+  return flows.length ? flows : flow ? [flow] : [];
+}
+function stepLabel(step) {
+  let title = "";
+  try {
+    title = JSON.parse(step.config || "{}").title || "";
+  } catch {}
+  return tr(labels[step.id] || title || step.id);
+}
 function renderOffice() {
+  if (!officeMounted) {
+    officeMounted = true;
+    window.ffaiOffice.mount($("office"), {
+      flow: () => officeWorkflow,
+
+      // Desk caption: the role for known steps, otherwise the step's own name.
+      label: (step) =>
+        step.kind === "human"
+          ? tr("Вы")
+          : step.kind === "check"
+            ? tr("Тестировщик")
+            : step.handler?.startsWith("lane-")
+              ? tr("Интегратор")
+              : tr(roles[step.id] || "") || stepLabel(step),
+      runner: (step) =>
+        step.kind === "check"
+          ? tr("проверки проекта")
+          : step.handler?.startsWith("lane-")
+            ? "git · fast-forward"
+            : runnerLabel(step),
+      summary: (tasks, people) =>
+        tr("Сотрудников") +
+        ": " +
+        people +
+        ", " +
+        tr("документов") +
+        ": " +
+        tasks,
+      inboxLabel: () => tr("Входящие"),
+      shelfLabel: () => tr("Готово"),
+      docsLabel: (runs) =>
+        runs
+          .slice(0, 3)
+          .map((r) => state.task_metadata?.[r.id]?.title || r.id)
+          .join(" · ") + (runs.length > 3 ? " · +" + (runs.length - 3) : ""),
+      emptyLabel: () => tr("Откройте сценарий, чтобы расставить столы"),
+      deskHint: (n) =>
+        n ? n + " " + tr("в работе") : tr("свободен · открыть шаг в редакторе"),
+      openRun: (run) => act(() => openDetail(run.id)),
+      openStep: (step) =>
+        act(async () => {
+          flow = structuredClone(
+            officeWorkflow.find((f) => f.steps.some((s) => s.id === step.id)) ||
+              officeWorkflow[0],
+          );
+          selected = Math.max(
+            0,
+            flow.steps.findIndex((s) => s.id === step.id),
+          );
+          showTab("flows");
+          renderFlow();
+        }),
+    });
+  }
+  officeWorkflow = officeFlow();
+  const runs = state.runs.filter(matchesProject);
   const signature = JSON.stringify([
-    state.runs.filter(matchesProject),
-    state.settings.running,
+    runs,
+    officeWorkflow.map((f) => f.id + f.steps.length),
   ]);
   if (signature === officeSignature) return;
   officeSignature = signature;
-  $("office").replaceChildren();
-  for (const [id, name] of [
-    ["spec", "Аналитик"],
-    ["tickets", "Планировщик"],
-    ["implement", "Разработчик"],
-    ["checks", "Тестировщик"],
-    ["review", "Ревьюер"],
-    ["interview", "Вы"],
-  ]) {
-    const working = state.runs
-      .filter(matchesProject)
-      .filter(
-        (r) =>
-          r.active &&
-          (r.step === id ||
-            (id === "implement" && r.step === "repair") ||
-            (id === "interview" && stepFor(r)?.kind === "human")),
-      );
-    const person = el(
-      "button",
-      undefined,
-      "workstation" + (working.length ? " busy" : " idle"),
-    );
-    const scene = el("span", undefined, "pixel-scene");
-    scene.setAttribute("aria-hidden", "true");
-    scene.append(
-      el("span", undefined, "pixel-person"),
-      el("span", undefined, "pixel-desk"),
-      el("span", undefined, "pixel-cup"),
-      el("span", undefined, "pixel-phone"),
-      el("span", undefined, "pixel-plant"),
-      el("span", undefined, "pixel-mail"),
-    );
-    person.append(
-      scene,
-      el("strong", name),
-      el(
-        "small",
-        working.length
-          ? `${working.length} ${id === "interview" ? "ждут ответа" : "в работе"}`
-          : "Свободен",
-      ),
-    );
-    person.onclick = () =>
-      working.length
-        ? act(() => openDetail(working[0].id))
-        : act(() => openMainFlow(id));
-    $("office").append(person);
-  }
+  window.ffaiOffice.update(runs, stepFor, officeWorkflow);
 }
 function renderInbox() {
   const runs = state.runs
@@ -419,17 +686,34 @@ function renderInbox() {
 }
 for (const [id, mode] of [
   ["live-board", "live"],
-  ["preview-board", "preview"],
+  ["plans-board", "plans"],
 ])
   $(id).onclick = () => {
     boardMode = mode;
+    remember("board-mode", mode);
     document
       .querySelectorAll(".segmented button")
       .forEach((b) => b.classList.toggle("active", b.id === id));
     renderBoard();
   };
-$("task-search").oninput = renderBoard;
-$("plan-filter").onchange = renderBoard;
+$("task-search").value = recall("task-search", "");
+$("task-search").oninput = () => {
+  remember("task-search", $("task-search").value);
+  renderBoard();
+};
+$("plan-filter").onchange = () => {
+  remember("plan-filter", $("plan-filter").value);
+  renderBoard();
+};
+for (const b of document.querySelectorAll(".segmented button"))
+  b.classList.toggle(
+    "active",
+    b.id === (boardMode === "plans" ? "plans-board" : "live-board"),
+  );
+$("template").value = recall("template", $("template").value);
+$("template").addEventListener("change", () =>
+  remember("template", $("template").value),
+);
 $("edit-main-flow").onclick = () => act(() => openMainFlow());
 async function openDetail(id) {
   const request = ++detailRequest;
@@ -491,10 +775,23 @@ async function openDetail(id) {
       });
     actions.append(b);
   }
+  actions.append(autoAnswerSwitch(r, id));
   const reload = el("button", "Обновить");
   reload.onclick = () => act(() => openDetail(id));
   actions.append(reload);
   root.append(actions);
+  const track = el("div", undefined, "run-pipeline");
+  track.setAttribute("aria-label", tr("Путь задания по сценарию"));
+  window.ffaiPipeline.render(track, d.workflow, {
+    labels,
+    runner: runnerLabel,
+    zoom: 0.62,
+    run: r,
+    recoveryLabel: tr("Восстановление и вопросы"),
+    ariaLabel: tr("Путь задания по сценарию"),
+  });
+  root.append(track);
+  if (d.lane?.root) root.append(laneInfo(d.lane));
   const tabs = el("div", undefined, "detail-tabs"),
     discussion = el("section"),
     details = el("section"),
@@ -502,6 +799,7 @@ async function openDetail(id) {
   const panes = { discussion, details, events };
   const choose = (key) => {
     detailTab = key;
+    remember("detail-tab", key);
     Object.entries(panes).forEach(([name, node]) =>
       node.classList.toggle("hidden", name !== key),
     );
@@ -542,68 +840,7 @@ async function openDetail(id) {
     discussion.append(item);
   }
   if (r.active && step.kind === "human") {
-    const question = el("section", undefined, "question-thread");
-    question.append(
-      el("small", "КОМАНДА → ВЫ", "eyebrow"),
-      raw("h3", step.prompt || tr("Нужен ваш ответ")),
-    );
-    const answer = el("textarea"),
-      draftKey = id + ":" + r.active.id;
-    answer.setAttribute("aria-label", "Ваш ответ");
-    answer.placeholder = "Напишите ответ команде…";
-    answer.value = answerDrafts.get(draftKey) || "";
-    answer.oninput = () => answerDrafts.set(draftKey, answer.value);
-    const choices = JSON.parse(step.config || "{}").choices;
-    if (Array.isArray(choices)) {
-      const list = el("div", undefined, "question-choices");
-      choices
-        .filter((choice) => typeof choice === "string")
-        .forEach((choice) => {
-          const button = raw("button", choice);
-          button.onclick = () => {
-            answer.value = choice;
-            answerDrafts.set(draftKey, choice);
-            answer.focus();
-          };
-          list.append(button);
-        });
-      question.append(list);
-    }
-    const outcomes = el("select");
-    outcomes.setAttribute("aria-label", "Решение");
-    step.transitions.forEach(([o, t]) =>
-      outcomes.append(
-        option(
-          o,
-          {
-            approved: "Подтвердить",
-            answered: "Отправить ответ",
-            rejected: "Отклонить",
-          }[o] || o,
-        ),
-      ),
-    );
-    outcomes.classList.toggle("hidden", step.transitions.length === 1);
-    const send = el("button", "Подтвердить ответ", "primary");
-    send.onclick = () =>
-      act(async () => {
-        if (!answer.value.trim()) throw Error(tr("Введите ответ"));
-        send.disabled = true;
-        try {
-          await api("answer", {
-            id,
-            version: r.version,
-            outcome: outcomes.value,
-            answer: answer.value,
-          });
-          answerDrafts.delete(draftKey);
-        } finally {
-          send.disabled = false;
-        }
-        await openDetail(id);
-      });
-    question.append(answer, outcomes, send);
-    discussion.append(question);
+    discussion.append(questionPanel(d, r, step, id));
   } else if (r.status !== "accepted") {
     const form = el("form", undefined, "message-form"),
       input = el("textarea");
@@ -693,6 +930,10 @@ function captureFlow() {
 }
 function renderFlow() {
   if (!flow) return;
+  // The editor draft is kept automatically; publishing stays an explicit step.
+  try {
+    localStorage.setItem("ffai-flow-draft", JSON.stringify({ flow }));
+  } catch {}
   $("flow-id").value = flow.id;
   $("flow-entry").value = flow.entry;
   $("flow-calls").value = flow.max_calls;
@@ -772,8 +1013,6 @@ $("step-form").onsubmit = (e) => {
       mutates: e.target.mutates.checked,
     };
     if (old.id !== doc.id) {
-      positions[flow.id + ":" + doc.id] = position(old, selected);
-      delete positions[flow.id + ":" + old.id];
       flow.steps.forEach(
         (s) =>
           (s.transitions = s.transitions.map(([o, t]) => [
@@ -866,12 +1105,12 @@ $("save-profiles").onclick = () =>
   });
 document.addEventListener("DOMContentLoaded", () => {
   refresh().then(async () => {
+    document.dispatchEvent(new Event("ffai-ready"));
     try {
       const saved = localStorage.getItem("ffai-flow-draft");
       if (saved) {
         const draft = JSON.parse(saved);
         flow = draft.flow;
-        positions = draft.positions || {};
         selected = 0;
         renderFlow();
       } else {
@@ -926,9 +1165,10 @@ $("profile-form").onsubmit = (e) => {
     notify("Профиль добавлен в черновик. Нажмите «Проверить и сохранить».");
   });
 };
-let positions = {},
+let graphZoom = 1,
   connecting = null,
-  graphZoom = 1;
+  selectedEdge = null,
+  graphSize = { width: 1, height: 1 };
 const ns = "http://www.w3.org/2000/svg";
 function svgEl(tag, attrs = {}, text) {
   const n = document.createElementNS(ns, tag);
@@ -936,262 +1176,147 @@ function svgEl(tag, attrs = {}, text) {
   if (text !== undefined) n.textContent = text;
   return n;
 }
-function position(s, i) {
-  const defaults = {
-    spec: [40, 65],
-    tickets: [370, 65],
-    implement: [700, 65],
-    interview: [40, 310],
-    diagnose: [370, 310],
-    checks: [700, 310],
-    accepted: [40, 555],
-    reconcile: [40, 800],
-    repair: [370, 555],
-    review: [700, 555],
-  };
-  return (
-    positions[flow.id + ":" + s.id] ||
-    defaults[s.id] || [40 + (i % 3) * 330, 800 + Math.floor(i / 3) * 245]
-  );
+function defaultOutcome(step) {
+  // Never propose an outcome the step already routes: connecting must not rewire it.
+  const used = new Set(step.transitions.map(([o]) => o));
+  const first =
+    step.kind === "condition"
+      ? "true"
+      : step.gate
+        ? "passed"
+        : step.kind === "human"
+          ? "answered"
+          : "done";
+  const names = [
+    first,
+    step.kind === "condition" ? "false" : "failed",
+    "questions",
+    "retry",
+  ];
+  for (let n = 2; names.length < 50; n++) names.push("outcome" + n);
+  return names.find((name) => !used.has(name));
 }
 function renderGraph() {
-  const root = $("graph");
-  root.replaceChildren();
-  const height = Math.max(
-    735,
-    ...flow.steps.map((s, i) => position(s, i)[1] + 160),
-  );
-  const svg = svgEl("svg", {
-    viewBox: `0 0 1010 ${height}`,
-    width: 1010 * graphZoom,
-    height: height * graphZoom,
-    "aria-label": "Шаги и связи main flow",
-  });
-  let pan = null;
-  svg.onpointerdown = (e) => {
-    if (e.target !== svg) return;
-    pan = [e.clientX, e.clientY, root.scrollLeft, root.scrollTop];
-    svg.setPointerCapture(e.pointerId);
-  };
-  svg.onpointermove = (e) => {
-    if (pan) {
-      root.scrollLeft = pan[2] - (e.clientX - pan[0]);
-      root.scrollTop = pan[3] - (e.clientY - pan[1]);
-    }
-  };
-  svg.onpointerup = svg.onpointercancel = () => {
-    pan = null;
-  };
-  const defs = svgEl("defs"),
-    marker = svgEl("marker", {
-      id: "arrow",
-      viewBox: "0 0 10 10",
-      refX: 9,
-      refY: 5,
-      markerWidth: 6,
-      markerHeight: 6,
-      orient: "auto-start-reverse",
-    });
-  marker.append(
-    svgEl("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "arrow-tip" }),
-  );
-  defs.append(marker);
-  svg.append(defs);
-  flow.steps.forEach((s, i) => {
-    const [x, y] = position(s, i);
-    s.transitions.forEach(([outcome, target], edgeIndex) => {
-      const targetIndex = flow.steps.findIndex((t) => t.id === target);
-      if (targetIndex < 0) return;
-      const [tx, ty] = position(flow.steps[targetIndex], targetIndex);
-      let sx = x + 230,
-        sy = y + 48,
-        ex = tx,
-        ey = ty + 48;
-      let d;
-      if (tx === x && ty > y) {
-        sx = x + 115;
-        sy = y + 96;
-        ex = tx + 115;
-        ey = ty;
-        d = `M${sx},${sy} C${sx},${sy + 65} ${ex},${ey - 65} ${ex},${ey}`;
-      } else if (tx < x || (tx === x && ty <= y)) {
-        const bend = Math.max(y, ty) + 145 + edgeIndex * 22;
-        d = `M${sx},${sy} C${sx + 70},${bend} ${ex - 70},${bend} ${ex},${ey}`;
-      } else d = `M${sx},${sy} C${sx + 60},${sy} ${ex - 60},${ey} ${ex},${ey}`;
-      const path = svgEl("path", {
-        d,
-        class: "flow-edge" + (outcome === "failed" ? " retry-edge" : ""),
-        "marker-end": "url(#arrow)",
-        tabindex: 0,
-        role: "button",
-        "aria-label": `${s.id}: ${outcome} → ${target}`,
-      });
-      const choose = () => {
-        $("edge-source").value = s.id;
-        $("edge-target").value = target;
-        $("edge-outcome").value = outcome;
-        notify(
-          `Связь: ${s.id} → ${target}. Её можно изменить или удалить ниже.`,
-        );
-      };
-      path.onclick = choose;
-      path.onkeydown = (e) => {
-        if (e.key === "Enter") choose();
-      };
-      svg.append(path);
-      svg.append(
-        svgEl("text", { x: sx + 8, y: sy - 9, class: "edge-label" }, outcome),
-      );
-    });
-  });
-  flow.steps.forEach((s, i) => {
-    const [x, y] = position(s, i);
-    const group = svgEl("g", {
-      transform: `translate(${x},${y})`,
-      class: "flow-node" + (i === selected ? " selected" : ""),
-      tabindex: 0,
-      role: "button",
-      "aria-label": `${labels[s.id] || s.id} · ${s.id}`,
-    });
-    group.append(
-      svgEl("rect", { width: 230, height: 96, rx: 12, class: "node-body" }),
-      svgEl(
-        "text",
-        { x: 18, y: 25, class: "node-role" },
-        roles[s.id] || s.kind,
-      ),
-      svgEl(
-        "text",
-        { x: 18, y: 49, class: "node-title" },
-        (labels[s.id] || s.id).slice(0, 25),
-      ),
-      svgEl(
-        "text",
-        { x: 18, y: 73, class: "node-meta" },
-        (s.kind === "human"
-          ? "Ожидание ответа"
-          : s.handler || s.profile || s.kind
-        ).slice(0, 28),
-      ),
-    );
-    if (flow.entry === s.id)
-      group.append(
-        svgEl("text", { x: 172, y: 24, class: "node-role" }, "СТАРТ"),
-      );
-    const choose = () => {
-      captureFlow();
-      selected = i;
-      renderFlow();
-    };
-    group.onkeydown = (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        choose();
-      }
-    };
-    let drag = null,
-      moved = false;
-    group.onpointerdown = (e) => {
-      if (e.target.classList.contains("port")) return;
-      drag = [e.clientX, e.clientY, x, y];
-      moved = false;
-      group.setPointerCapture(e.pointerId);
-    };
-    group.onpointermove = (e) => {
-      if (!drag) return;
-      const scale = 1010 / svg.getBoundingClientRect().width;
-      const dx = (e.clientX - drag[0]) * scale,
-        dy = (e.clientY - drag[1]) * scale;
-      if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
-      if (moved) {
-        positions[flow.id + ":" + s.id] = [
-          Math.max(5, Math.min(770, drag[2] + dx)),
-          Math.max(5, Math.min(height - 100, drag[3] + dy)),
-        ];
-        group.setAttribute(
-          "transform",
-          `translate(${positions[flow.id + ":" + s.id].join(",")})`,
-        );
-      }
-    };
-    group.onpointerup = () => {
-      if (!drag) return;
-      drag = null;
-      if (moved) renderGraph();
-      else choose();
-    };
-    group.onpointercancel = () => {
-      drag = null;
-      renderGraph();
-    };
-    for (const [kind, cx] of [
-      ["input", 0],
-      ["output", 230],
-    ]) {
-      const port = svgEl("circle", {
-        cx,
-        cy: 48,
-        r: 7,
-        class: "port",
-        tabindex: 0,
-        role: "button",
-        "aria-label": (kind === "output" ? "Выход " : "Вход ") + s.id,
-      });
-      const connect = () => {
-        if (kind === "output") {
-          connecting = s.id;
-          $("edge-source").value = s.id;
-          notify(
-            "Теперь выберите вход следующего шага. Результат связи задаётся в поле «Результат».",
-          );
-        } else if (connecting) {
-          $("edge-target").value = s.id;
-          $("edge-source").value = connecting;
-          connecting = null;
-          $("edge-form").requestSubmit();
-        }
-      };
-      port.onpointerdown = (e) => e.stopPropagation();
-      port.onclick = (e) => {
-        e.stopPropagation();
-        connect();
-      };
-      port.onkeydown = (e) => {
-        if (e.key === "Enter") {
-          e.stopPropagation();
-          connect();
-        }
-      };
-      group.append(port);
-    }
-    svg.append(group);
-  });
-  root.append(svg);
+  // Keep keyboard focus on the same stage or wire across re-renders.
+  const focused = $("graph").contains(document.activeElement)
+    ? document.activeElement.getAttribute("aria-label")
+    : null;
+  renderPipeline();
+  if (focused)
+    (
+      $("graph").querySelector(`[aria-label="${CSS.escape(focused)}"]`) ||
+      $("graph")
+    ).focus();
 }
-$("graph-reset").onclick = () => {
-  positions = {};
-  renderGraph();
-};
+function renderPipeline() {
+  graphSize = window.ffaiPipeline.render($("graph"), flow, {
+    labels,
+    runner: runnerLabel,
+    selected,
+    zoom: graphZoom,
+    connecting,
+    selectedEdge,
+    recoveryLabel: tr("Восстановление и вопросы"),
+    ariaLabel: tr("Пайплайн сценария"),
+    onSelect: (index) => {
+      if (connecting) {
+        $("edge-source").value = connecting;
+        $("edge-target").value = flow.steps[index].id;
+        connecting = null;
+        $("edge-form").requestSubmit();
+        return;
+      }
+      captureFlow();
+      selected = index;
+      selectedEdge = null;
+      renderFlow();
+    },
+    onEdge: (source, outcome, target) => {
+      selectedEdge = [source, outcome];
+      $("edge-source").value = source;
+      $("edge-target").value = target;
+      $("edge-outcome").value = outcome;
+      renderGraph();
+      notify(tr("Связь выбрана: Delete удаляет её, форма ниже меняет цель."));
+    },
+    onInsert: (source, outcome) =>
+      act(async () => {
+        captureFlow();
+        const from = flow.steps.find((s) => s.id === source);
+        const edge = from.transitions.find(([o]) => o === outcome);
+        let n = flow.steps.length;
+        while (flow.steps.some((s) => s.id === "step" + n)) n++;
+        const id = "step" + n;
+        flow.steps.push({
+          id,
+          kind: "agent",
+          handler: "",
+          profile: "default",
+          prompt: "",
+          transitions: [["done", edge[1]]],
+          config: "{}",
+          timeout: 900,
+          max_visits: 3,
+          required: false,
+          gate: false,
+          mutates: false,
+          condition_key: "",
+          condition_value: "",
+        });
+        edge[1] = id;
+        selected = flow.steps.length - 1;
+        selectedEdge = null;
+        renderFlow();
+        notify(
+          tr("Шаг вставлен. Выберите исполнителя и инструкцию в инспекторе."),
+        );
+      }),
+    onPort: (source) => {
+      connecting = connecting === source ? null : source;
+      selectedEdge = null;
+      if (connecting) {
+        const step = flow.steps.find((s) => s.id === source);
+        $("edge-source").value = source;
+        $("edge-outcome").value = defaultOutcome(step);
+      }
+      renderGraph();
+      if (connecting)
+        notify(
+          tr("Выберите шаг, куда ведёт результат") +
+            " «" +
+            $("edge-outcome").value +
+            "». Esc — " +
+            tr("отмена"),
+        );
+    },
+    onBackground: () => {
+      if (!connecting && !selectedEdge) return;
+      connecting = null;
+      selectedEdge = null;
+      renderGraph();
+    },
+  });
+}
+$("graph").addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && (connecting || selectedEdge)) {
+    connecting = null;
+    selectedEdge = null;
+    renderGraph();
+  } else if ((e.key === "Delete" || e.key === "Backspace") && selectedEdge)
+    $("edge-delete").click();
+});
 $("zoom-in").onclick = () => {
-  graphZoom = Math.min(1.8, graphZoom + 0.15);
+  graphZoom = Math.min(1.6, graphZoom + 0.1);
   renderGraph();
 };
 $("zoom-out").onclick = () => {
-  graphZoom = Math.max(0.4, graphZoom - 0.15);
+  graphZoom = Math.max(0.4, graphZoom - 0.1);
   renderGraph();
 };
 $("graph-fit").onclick = () => {
-  const height = Math.max(
-    735,
-    ...flow.steps.map((s, i) => position(s, i)[1] + 160),
-  );
   graphZoom = Math.max(
-    0.25,
-    Math.min(
-      1,
-      ($("graph").clientWidth - 20) / 1010,
-      ($("graph").clientHeight - 20) / height,
-    ),
+    0.6,
+    Math.min(1, ($("graph").clientWidth - 16) / graphSize.width),
   );
   renderGraph();
 };
@@ -1199,7 +1324,7 @@ $("draft-save").onclick = () =>
   act(async () => {
     localStorage.setItem(
       "ffai-flow-draft",
-      JSON.stringify({ flow: captureFlow(), positions }),
+      JSON.stringify({ flow: captureFlow() }),
     );
     notify(
       "Черновик сохранён в этом браузере. Для запуска опубликуйте проверенную версию.",
@@ -1218,6 +1343,7 @@ $("edge-form").onsubmit = (e) => {
     if (existing) existing[1] = target;
     else source.transitions.push([outcome, target]);
     selected = flow.steps.indexOf(source);
+    selectedEdge = [source.id, outcome];
     renderFlow();
     notify("Связь сохранена в черновике");
   });
@@ -1231,13 +1357,14 @@ $("edge-delete").onclick = () =>
       ([o, t]) =>
         !(o === $("edge-outcome").value && t === $("edge-target").value),
     );
+    selectedEdge = null;
     renderFlow();
     notify("Связь удалена из черновика");
   });
 let profileSignature = "";
 function renderProfiles() {
   const config = state.profile_config,
-    signature = JSON.stringify(config);
+    signature = JSON.stringify([config, state.cooldowns]);
   if (signature === profileSignature) return;
   profileSignature = signature;
   const entries = Object.entries(config.profiles || {}),
@@ -1247,7 +1374,7 @@ function renderProfiles() {
     root.append(
       el(
         "p",
-        "Добавьте исполнителя справа, затем выберите его профиль в свойствах шага.",
+        "Профилей пока нет. Подключите найденный CLI в карточке выше.",
         "empty",
       ),
     );
@@ -1277,9 +1404,315 @@ function renderProfiles() {
       };
       for (const [key, value] of Object.entries(values))
         form.elements[key].value = value ?? "";
+      form.closest("details").open = true;
       form.scrollIntoView({ block: "center", behavior: "smooth" });
       form.elements.name.focus();
     };
-    root.append(card);
+    const item = el("div", undefined, "profile-item");
+    item.append(card, rotationForm(name, config));
+    root.append(item);
   }
+}
+/* Fallback chain for one profile: which profile takes over after a limit. */
+const FAILURE_LABELS = {
+  usage_limit: "лимит использования",
+  rate_limit: "rate limit",
+  authentication: "слетел вход",
+  unreachable: "нет сети",
+};
+function rotationForm(name, config) {
+  const rule = config.rotation?.[name];
+  const form = el("form", undefined, "rotation-form");
+  const others = Object.keys(config.profiles || {}).filter((n) => n !== name);
+  const target = el("select");
+  target.setAttribute("aria-label", tr("Запасной профиль для") + " " + name);
+  target.append(
+    option("", tr("не переключаться")),
+    ...others.map((n) => option(n, n)),
+  );
+  target.value = rule?.fallbacks?.[0] || "";
+  const cooldown = el("input");
+  cooldown.type = "number";
+  cooldown.min = 1;
+  cooldown.max = 10080;
+  cooldown.value = rule?.cooldown_minutes ?? 60;
+  cooldown.setAttribute("aria-label", tr("Отдых, минут"));
+  const retry = el("input");
+  retry.type = "number";
+  retry.min = 5;
+  retry.max = 3600;
+  retry.value = rule?.retry_seconds ?? 20;
+  retry.setAttribute("aria-label", tr("Пауза перед повтором, секунд"));
+  const triggers = el("div", undefined, "rotation-triggers");
+  const on = new Set(
+    rule?.on || ["usage_limit", "rate_limit", "authentication"],
+  );
+  for (const [key, label] of Object.entries(FAILURE_LABELS)) {
+    const box = el("label");
+    const input = el("input");
+    input.type = "checkbox";
+    input.value = key;
+    input.checked = on.has(key);
+    box.append(input, el("span", label));
+    triggers.append(box);
+  }
+  const row = el("div", undefined, "rotation-row");
+  const field = (text, input) => {
+    const node = el("label", text);
+    node.append(input);
+    return node;
+  };
+  row.append(
+    field("При сбое переключаться на", target),
+    field("Отдых, мин", cooldown),
+    field("Повтор через, с", retry),
+  );
+  const save = el("button", "Сохранить ротацию");
+  form.append(row, triggers, save);
+  const resting = state.cooldowns?.[name];
+  if (resting && resting.until * 1000 > Date.now())
+    form.append(
+      raw(
+        "small",
+        tr("Отдыхает до") +
+          " " +
+          new Date(resting.until * 1000).toLocaleTimeString() +
+          " · " +
+          (FAILURE_LABELS[resting.reason] || resting.reason),
+        "resting",
+      ),
+    );
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    act(async () => {
+      await api("rotation", {
+        name,
+        fallbacks: target.value ? [target.value] : [],
+        on: [...triggers.querySelectorAll("input:checked")].map((i) => i.value),
+        cooldown_minutes: Number(cooldown.value),
+        retry_seconds: Number(retry.value),
+      });
+      profileSignature = "";
+      notify(
+        target.value
+          ? tr("Ротация сохранена") + ": " + name + " → " + target.value
+          : tr("Ротация для профиля выключена") + ": " + name,
+      );
+    });
+  };
+  return form;
+}
+
+/* Answering agent questions works like a CLI picker: arrows or digits choose an
+ * option, Enter moves on, and the recommended option is marked and preselected. */
+const choiceDrafts = persistentMap("choice-drafts");
+function questionPanel(d, r, step, id) {
+  const panel = el("section", undefined, "question-thread");
+  const draftKey = id + ":" + r.active.id;
+  const asked = d.questions || [];
+  const chosen = choiceDrafts.get(draftKey) || {};
+  panel.append(
+    el("small", "Команда → вы", "eyebrow"),
+    raw("h3", step.prompt || tr("Нужен ваш ответ")),
+  );
+  const pickers = [];
+  asked.forEach((q, index) => {
+    const group = el("fieldset", undefined, "picker");
+    const legend = el("legend");
+    legend.append(
+      el("span", String(index + 1) + "/" + asked.length, "picker-index"),
+      raw("span", q.text),
+    );
+    group.append(legend);
+    const buttons = [];
+    const select = (value, focus) => {
+      chosen[q.id] = value;
+      choiceDrafts.set(draftKey, chosen);
+      buttons.forEach((b) => {
+        const on = b.dataset.value === value;
+        b.setAttribute("aria-checked", String(on));
+        b.tabIndex = on ? 0 : -1;
+        if (on && focus) b.focus();
+      });
+    };
+    if (!(q.id in chosen) && q.recommended) chosen[q.id] = q.recommended;
+    q.options.forEach((value, i) => {
+      const b = el("button", undefined, "option");
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      b.dataset.value = value;
+      b.append(el("kbd", String(i + 1)), raw("span", value));
+      if (value === q.recommended) b.append(el("em", "рекомендовано"));
+      b.onclick = () => select(value, true);
+      b.onkeydown = (e) => {
+        const at = q.options.indexOf(value);
+        if (e.key === "ArrowDown" || e.key === "ArrowRight")
+          select(q.options[(at + 1) % q.options.length], true);
+        else if (e.key === "ArrowUp" || e.key === "ArrowLeft")
+          select(
+            q.options[(at - 1 + q.options.length) % q.options.length],
+            true,
+          );
+        else if (/^[1-9]$/.test(e.key) && q.options[Number(e.key) - 1])
+          select(q.options[Number(e.key) - 1], true);
+        else if (e.key === "Enter") {
+          e.preventDefault();
+          const next = pickers[index + 1];
+          (next
+            ? next.querySelector('[aria-checked="true"],.option')
+            : note
+          ).focus();
+          return;
+        } else return;
+        e.preventDefault();
+      };
+      buttons.push(b);
+    });
+    const list = el("div", undefined, "options");
+    list.setAttribute("role", "radiogroup");
+    list.setAttribute("aria-label", q.text);
+    list.append(...buttons);
+    group.append(list);
+    select(chosen[q.id], false);
+    pickers.push(group);
+    panel.append(group);
+  });
+  const legacyChoices = JSON.parse(step.config || "{}").choices;
+  const note = el("textarea");
+  note.setAttribute("aria-label", "Ваш ответ");
+  note.placeholder = asked.length
+    ? "Комментарий к выбору (необязательно)"
+    : "Напишите ответ команде…";
+  note.value = answerDrafts.get(draftKey) || "";
+  note.oninput = () => answerDrafts.set(draftKey, note.value);
+  if (!asked.length && Array.isArray(legacyChoices)) {
+    const list = el("div", undefined, "question-choices");
+    legacyChoices
+      .filter((choice) => typeof choice === "string")
+      .forEach((choice) => {
+        const button = raw("button", choice);
+        button.type = "button";
+        button.onclick = () => {
+          note.value = choice;
+          answerDrafts.set(draftKey, choice);
+          note.focus();
+        };
+        list.append(button);
+      });
+    panel.append(list);
+  }
+  const outcomes = el("select");
+  outcomes.setAttribute("aria-label", "Решение");
+  step.transitions.forEach(([o]) =>
+    outcomes.append(
+      option(
+        o,
+        {
+          approved: "Подтвердить",
+          answered: "Отправить ответ",
+          rejected: "Отклонить",
+        }[o] || o,
+      ),
+    ),
+  );
+  outcomes.classList.toggle("hidden", step.transitions.length === 1);
+  const submit = async (choices) => {
+    if (!asked.length && !note.value.trim()) throw Error(tr("Введите ответ"));
+    await api("answer", {
+      id,
+      version: r.version,
+      outcome: outcomes.value,
+      answer: note.value,
+      choices,
+    });
+    answerDrafts.delete(draftKey);
+    choiceDrafts.delete(draftKey);
+    document.dispatchEvent(new Event("ffai-answered"));
+    await openDetail(id);
+  };
+  const send = el("button", "Подтвердить ответ", "primary");
+  send.onclick = () =>
+    act(async () => {
+      send.disabled = true;
+      try {
+        await submit(asked.length ? { ...chosen } : {});
+      } finally {
+        send.disabled = false;
+      }
+    });
+  const actions = el("div", undefined, "form-actions");
+  actions.append(outcomes, send);
+  if (asked.length && asked.every((q) => q.recommended)) {
+    const accept = el("button", "Принять все рекомендации");
+    accept.type = "button";
+    accept.onclick = () =>
+      act(() =>
+        submit(Object.fromEntries(asked.map((q) => [q.id, q.recommended]))),
+      );
+    actions.append(accept);
+  }
+  panel.append(note, actions);
+  return panel;
+}
+function autoAnswerSwitch(r, id) {
+  const label = el("label", undefined, "switch");
+  const input = el("input");
+  input.type = "checkbox";
+  input.checked = !!r.auto_answer;
+  input.disabled = r.status === "accepted";
+  input.onchange = () =>
+    act(async () => {
+      await api(input.checked ? "auto" : "manual", {
+        id,
+        version: r.version,
+        request_id: crypto.randomUUID(),
+      });
+      notify(
+        input.checked
+          ? "Вопросы с рекомендациями будут приниматься автоматически. Ответ записывается в историю."
+          : "Вопросы снова ждут вашего ответа.",
+      );
+      await openDetail(id);
+    });
+  label.append(input, el("span", "Агент выбирает рекомендованные ответы"));
+  label.title = tr(
+    "Работает, пока очередь запущена и у каждого вопроса есть рекомендация.",
+  );
+  return label;
+}
+
+/* Where an isolated task works and what will be merged back. */
+function laneInfo(lane) {
+  const box = el("section", undefined, "lane-info");
+  const head = el("div", undefined, "lane-head");
+  head.append(
+    el(
+      "strong",
+      lane.status === "removed"
+        ? "Слито, дорожка убрана"
+        : "Изолированная дорожка",
+    ),
+    raw("code", lane.repos?.[0]?.branch || ""),
+  );
+  box.append(head, raw("small", lane.root, "mono"));
+  const list = el("ul");
+  for (const repo of lane.repos || []) {
+    const item = el("li");
+    item.append(
+      raw("code", repo.path),
+      el(
+        "span",
+        repo.fresh
+          ? tr("новый репозиторий")
+          : tr("от") +
+              " " +
+              (repo.origin || "HEAD") +
+              " @ " +
+              repo.base.slice(0, 10),
+      ),
+    );
+    list.append(item);
+  }
+  box.append(list);
+  return box;
 }

@@ -121,6 +121,13 @@ class SQLiteRuntimeRecords:
             )
         )
 
+    def queue_usage(self) -> tuple[int, int]:
+        row = self.db.execute(
+            "SELECT COALESCE(sum(json_extract(state,'$.calls')),0),"
+            "COALESCE(sum(json_extract(state,'$.planning_calls')),0) FROM runs"
+        ).fetchone()
+        return int(row[0]), int(row[1])
+
     def last_transition(self) -> float | None:
         value = self.db.execute("SELECT max(at) FROM events").fetchone()[0]
         return None if value is None else float(value)
@@ -138,6 +145,16 @@ class SQLiteRuntimeRecords:
         self.db.execute(
             "INSERT OR IGNORE INTO portfolios VALUES(?,?,?)",
             (identifier, digest(document), document),
+        )
+
+    def lane(self, run_id: str) -> str | None:
+        row = self.db.execute("SELECT document FROM lanes WHERE run=?", (run_id,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def save_lane(self, run_id: str, document: str) -> None:
+        self.db.execute(
+            "INSERT INTO lanes VALUES(?,?) ON CONFLICT(run) DO UPDATE SET document=excluded.document",
+            (run_id, document),
         )
 
     def set_policy(self, workspace: str, mandatory: tuple[str, ...]) -> None:

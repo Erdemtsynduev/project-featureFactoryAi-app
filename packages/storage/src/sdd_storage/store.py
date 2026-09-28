@@ -11,8 +11,9 @@ from sdd_core.codec import canonical, digest, run_json, run_load, workflow_json,
 from sdd_core.graph import validate
 from sdd_core.models import Run, Transition, Workflow
 from sdd_core.ports import Conflict as Conflict
-from sdd_core.ports import UnitOfWork
+from sdd_core.ports import StaleVersion, UnitOfWork
 
+from sdd_storage.catalog import SQLiteCatalog
 from sdd_storage.unit import SQLiteUnit
 
 SCHEMA = """
@@ -40,7 +41,22 @@ CREATE TABLE IF NOT EXISTS bindings(run TEXT NOT NULL, handler TEXT NOT NULL, ma
     PRIMARY KEY(run,handler));
 CREATE TABLE IF NOT EXISTS project_policies(workspace TEXT PRIMARY KEY, mandatory TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS portfolios(id TEXT PRIMARY KEY, digest TEXT NOT NULL, document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS lanes(run TEXT PRIMARY KEY REFERENCES runs(id), document TEXT NOT NULL);
 """
+
+# Application metadata (projects, plans, task labels, preferences) behind CatalogRecords.
+# Earlier releases created these tables from the UI; IF NOT EXISTS adopts them unchanged.
+MIGRATION_3 = """
+CREATE TABLE IF NOT EXISTS ui_projects(id TEXT PRIMARY KEY, document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ui_tasks(id TEXT PRIMARY KEY REFERENCES runs(id), document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ui_plans(project TEXT NOT NULL, id TEXT NOT NULL,
+    document TEXT NOT NULL, PRIMARY KEY(project, id));
+CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY, document TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS effects_kind ON effects(kind);
+"""
+
+VERSION = 3
+MIGRATIONS = (MIGRATION_2, MIGRATION_3)
 
 
 class Store:
@@ -51,8 +67,12 @@ class Store:
             with self.transaction() as probe:
                 exists = probe.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone()
                 version = probe.execute("SELECT version FROM meta").fetchone() if exists else None
-            if version and version[0] == 1:
-                self.backup(self.path.with_name(self.path.name + f".pre-v2-{time.time_ns()}.bak"))
+            if version and 1 <= version[0] < VERSION:
+                self.backup(
+                    self.path.with_name(
+                        self.path.name + f".pre-v{version[0] + 1}-{time.time_ns()}.bak"
+                    )
+                )
         with self.transaction(initialize=True) as db:
             for statement in SCHEMA.split(";"):
                 if statement.strip():
@@ -60,12 +80,17 @@ class Store:
             row = db.execute("SELECT version FROM meta").fetchone()
             if row is None:
                 db.execute("INSERT INTO meta VALUES(1)")
-            elif row[0] not in (1, 2):
+            elif not 1 <= row[0] <= VERSION:
                 raise ValueError("Unsupported database version; restore a compatible backup")
-            for statement in MIGRATION_2.split(";"):
-                if statement.strip():
-                    db.execute(statement)
-            db.execute("UPDATE meta SET version=2")
+            for migration in MIGRATIONS:
+                for statement in migration.split(";"):
+                    if statement.strip():
+                        db.execute(statement)
+            db.execute("UPDATE meta SET version=?", (VERSION,))
+
+    def catalog(self) -> SQLiteCatalog:
+        """Application metadata port backed by this database."""
+        return SQLiteCatalog(self.transaction)
 
     @contextmanager
     def unit(self) -> Iterator[UnitOfWork]:
@@ -223,7 +248,7 @@ class Store:
             (run_json(after), after.version, after.id, before.version),
         )
         if cursor.rowcount != 1:
-            raise Conflict("Stale state version")
+            raise StaleVersion("Stale state version")
         for event in transition.events:
             db.execute(
                 "INSERT INTO events(run,version,kind,at,detail,state) VALUES(?,?,?,?,?,?)",

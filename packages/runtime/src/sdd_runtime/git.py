@@ -1,5 +1,6 @@
 """Explicit Git operations. Integration is journaled before touching the target."""
 
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -14,7 +15,11 @@ class GitProject:
     manifest = Manifest("git", "0.1.0", capabilities=("revision", "worktree", "integration"))
 
     def revision(self, workspace: str) -> str:
-        return revision(Path(workspace))
+        path = Path(workspace)
+        if not path.exists() and path.parent.is_dir():
+            # A scoped repository that the run has not created yet.
+            return hashlib.sha256(b"absent:" + path.name.encode()).hexdigest()
+        return revision(path)
 
     @staticmethod
     def command(repo: Path, *args: str) -> str:

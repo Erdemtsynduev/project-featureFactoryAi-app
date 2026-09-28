@@ -48,6 +48,15 @@ class SQLiteUnit(SQLiteRuntimeRecords):
             raise KeyError(identifier)
         return str(row[0]), str(row[1])
 
+    def relocate(self, identifier: str, workspace: str, claim: str) -> None:
+        if (
+            self.db.execute(
+                "UPDATE runs SET workspace=?, claim=? WHERE id=?", (workspace, claim, identifier)
+            ).rowcount
+            != 1
+        ):
+            raise KeyError(identifier)
+
     def policy(self, workspace: str) -> tuple[str, ...]:
         row = self.db.execute(
             "SELECT mandatory FROM project_policies WHERE workspace=?", (workspace,)

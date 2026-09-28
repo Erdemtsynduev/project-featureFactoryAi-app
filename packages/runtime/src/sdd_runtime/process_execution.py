@@ -13,7 +13,7 @@ from sdd_core.codec import canonical, integer, number, object_json, sequence, te
 from sdd_core.execution import ExecutionHandle, ExecutionObservation, ExecutionRequest
 from sdd_core.models import Result
 
-from sdd_runtime.files import atomic_write, evidence, revision
+from sdd_runtime.files import ENGINE_DIRECTORY, atomic_write, evidence, revision
 from sdd_runtime.lock import Lease
 from sdd_runtime.platform import NO_WINDOW, Containment, Job, group_alive
 
@@ -52,7 +52,7 @@ class ProcessExecutionBackend:
             workspace = Path(text(config.get("workspace"), "workspace")).resolve(strict=True)
             if not argv or not Path(argv[0]).is_absolute():
                 raise ValueError("Explicit executable required")
-            if not folder.is_relative_to(workspace / ".sdd-engine"):
+            if not folder.is_relative_to(workspace / ENGINE_DIRECTORY):
                 raise ValueError("Local command receipts must live in workspace engine scratch")
             nonce = uuid.uuid4().hex
             atomic_write(

@@ -50,6 +50,11 @@ def main() -> None:
                             "/locale.js",
                             "/workspace.js",
                             "/workspace.css",
+                            "/pipeline.js",
+                            "/office.js",
+                            "/nav.js",
+                            "/persist.js",
+                            "/onboarding.js",
                         ):
                             with urlopen(url + asset, timeout=5) as response:
                                 assert response.status == 200 and response.read()

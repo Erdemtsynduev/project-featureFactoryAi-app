@@ -4,7 +4,10 @@ The application services, coordinator, execution driver, portfolio and diagnosti
 archiver use `sdd_core.ports.StateStore` / `UnitOfWork`. They contain no SQL and do
 not import a concrete storage package. `RuntimeRecords` describes process claims,
 execution requests, bindings and scheduler projections within that same unit of
-work. The SQLite implementation owns SQL and table initialization.
+work. Both are unions of the role interfaces in `sdd_core.records`; a backend must
+raise `StaleVersion` when `apply` loses a compare-and-swap and implement
+`queue_usage()`. The SQLite implementation owns SQL, table initialization and schema
+migrations.
 
 ## Composition
 
@@ -79,6 +82,7 @@ That does not require editing coordinator or application use cases.
 | Revision model | `ProjectAdapter` |
 | Workflow | Immutable `Workflow` / `Step` definitions |
 | Persistence | `StateStore`, transactional `UnitOfWork` including `RuntimeRecords` |
+| Application metadata (UI) | `CatalogRecords` (`Store.catalog()`, `MemoryCatalog`) |
 
 An external library is wrapped in a small adapter satisfying the appropriate
 contract. It is not enough to give an arbitrary library matching method names:
@@ -86,6 +90,7 @@ transaction, idempotency and termination semantics must also match. OS process
 containment remains in the local process implementation; using a different host
 means supplying a different execution backend, not putting OS logic in the core.
 
-The boundary gate rejects storage imports outside the local composition and CLI,
-and rejects raw transaction/SQL calls in runtime modules. This keeps replacement
+The boundary gate rejects storage imports outside the local composition
+(`sdd_runtime.composition`, `engine.py`) and CLI, rejects raw transaction/SQL calls in
+runtime and UI modules, and rejects `machine.changed` outside the core. This keeps replacement
 points from gradually becoming coupled again.

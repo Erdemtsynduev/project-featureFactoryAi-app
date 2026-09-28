@@ -1,7 +1,7 @@
 /* UI commands remain versioned; neither drag-and-drop nor messages assign acceptance. */
 let currentProject = "",
-  detailTab = "discussion";
-const messageDrafts = new Map();
+  detailTab = recall("detail-tab", "discussion");
+const messageDrafts = persistentMap("message-drafts");
 let draggedRun = null,
   workspaceSignature = "",
   previousRuns = new Map(),
@@ -88,6 +88,8 @@ $("edit-project").onclick = () => {
     for (const key of ["id", "name", "workspace", "language"])
       form.elements[key].value = project[key];
     form.elements.checks.value = JSON.stringify(project.checks);
+    form.elements.isolation.checked = project.isolation !== false;
+    form.elements.auto_resolve.checked = project.auto_resolve !== false;
   }
 };
 $("project-cancel").onclick = () => $("project-form").classList.add("hidden");
@@ -96,6 +98,8 @@ $("project-form").onsubmit = (e) => {
   act(async () => {
     const doc = Object.fromEntries(new FormData(e.target));
     doc.checks = JSON.parse(doc.checks);
+    doc.isolation = e.target.elements.isolation.checked;
+    doc.auto_resolve = e.target.elements.auto_resolve.checked;
     const result = await api("project", doc);
     currentProject = result.id;
     workspaceSignature = "";
@@ -106,8 +110,8 @@ $("project-form").onsubmit = (e) => {
     $("project-select").dispatchEvent(new Event("change"));
   });
 };
-function configureDraggable(card, run, preview) {
-  card.draggable = !preview && run.status !== "accepted";
+function configureDraggable(card, run) {
+  card.draggable = run.status !== "accepted";
   card.dataset.run = run.id;
   card.ondragstart = (e) => {
     draggedRun = run;
@@ -129,10 +133,10 @@ function configureDraggable(card, run, preview) {
       .forEach((l) => l.classList.remove("drop-allowed", "drag-over"));
   };
 }
-function configureDropTarget(lane, key, preview) {
+function configureDropTarget(lane, key) {
   lane.dataset.lane = key;
   lane.ondragover = (e) => {
-    if (draggedRun && !preview) {
+    if (draggedRun) {
       e.preventDefault();
       e.dataTransfer.dropEffect = ["ready", "running"].includes(key)
         ? "move"
@@ -151,7 +155,6 @@ function configureDropTarget(lane, key, preview) {
       .forEach((l) => l.classList.remove("drop-allowed"));
     if (!run) return;
     act(async () => {
-      if (preview) throw Error(tr("Снимки доступны только для чтения."));
       if (!["ready", "running"].includes(key))
         throw Error(
           tr(
@@ -262,6 +265,7 @@ function updateNotifications() {
 }
 function renderWorkspace() {
   updateNotifications();
+  renderAgents();
   const signature = JSON.stringify([
     state.projects,
     state.usage,
@@ -341,127 +345,232 @@ function renderWorkspace() {
     history.append(svg);
   }
   charts.append(history);
-  const agents = $("agent-status");
-  agents.replaceChildren();
-  for (const id of ["codex", "claude", "cursor", "opencode"]) {
-    const discovery = state.agent_discovery?.find((d) => d.adapter === id),
-      configured = Object.entries(state.profile_config.profiles || {}).filter(
-        ([, p]) => state.profile_config.runners[p.runner]?.adapter === id,
-      );
-    const keys = new Set([id, ...configured.map(([name]) => name)]),
-      usage = [...keys].reduce(
-        (a, k) => {
-          const u = state.usage?.by_handler?.[k] || {};
-          return {
-            calls: a.calls + (u.calls || 0),
-            tokens: a.tokens + (u.tokens || 0),
-            active: a.active + (u.active || 0),
-            unknown: a.unknown + (u.unknown || 0),
-          };
-        },
-        { calls: 0, tokens: 0, active: 0, unknown: 0 },
-      );
-    const card = el("article", undefined, "agent-card");
-    card.append(
-      raw("strong", id),
-      el("span", configured.length ? "Настроен" : "Не настроен"),
-      el(
-        "small",
-        {
-          installed: "Установлен",
-          missing: "Не найден",
-          ambiguous: "Несколько установок",
-          broken: "Ошибка CLI",
-        }[discovery?.status] || "Не проверен",
-      ),
-      el(
-        "small",
-        id === "codex" && state.usage?.subscription?.windows?.length
-          ? "Доступ к квотам подтверждён"
-          : "Авторизация: не проверена",
-      ),
-      el(
-        "small",
-        id === "codex" && state.usage?.subscription?.windows?.length
-          ? "Квоты аккаунта · использовано"
-          : "Подписка: нет данных",
-      ),
-    );
-    const subscription = id === "codex" && state.usage?.subscription;
-    if (subscription) {
-      for (const window of subscription.windows || []) {
-        const meter = el("progress");
-        meter.max = 100;
-        meter.value = window.used_percent;
-        meter.setAttribute("aria-label", window.bucket + " " + window.window);
-        const minutes = window.duration_minutes;
-        const unit =
-          minutes && minutes % 1440 === 0
-            ? "day"
-            : minutes && minutes % 60 === 0
-              ? "hour"
-              : "minute";
-        const duration =
-          minutes == null
-            ? "?"
-            : new Intl.NumberFormat(document.documentElement.lang, {
-                style: "unit",
-                unit,
-                unitDisplay: "long",
-              }).format(
-                minutes / (unit === "day" ? 1440 : unit === "hour" ? 60 : 1),
-              );
-        card.append(
-          raw(
-            "small",
-            `${window.bucket} · ${duration} · ${window.used_percent}%`,
-          ),
-          meter,
-        );
-        if (window.resets_at) {
-          const line = el("small");
-          line.append(
-            el("span", "Сброс лимита"),
-            raw(
-              "span",
-              " · " +
-                new Date(window.resets_at * 1000).toLocaleString(
-                  document.documentElement.lang,
-                ),
-            ),
+}
+const modelCache = new Map();
+let agentsSignature = "";
+function pill(text, tone) {
+  return el("span", text, "pill" + (tone ? " " + tone : ""));
+}
+function agentUsage(id, configured) {
+  const keys = new Set([id, ...configured.map(([name]) => name)]);
+  return [...keys].reduce(
+    (a, k) => {
+      const u = state.usage?.by_handler?.[k] || {};
+      return {
+        calls: a.calls + (u.calls || 0),
+        tokens: a.tokens + (u.tokens || 0),
+        active: a.active + (u.active || 0),
+        unknown: a.unknown + (u.unknown || 0),
+        usd: a.usd + (u.usd || 0),
+      };
+    },
+    { calls: 0, tokens: 0, active: 0, unknown: 0, usd: 0 },
+  );
+}
+function codexQuota(card) {
+  const subscription = state.usage?.subscription;
+  if (!subscription) return;
+  for (const window of subscription.windows || []) {
+    const meter = el("progress");
+    meter.max = 100;
+    meter.value = window.used_percent;
+    meter.setAttribute("aria-label", window.bucket + " " + window.window);
+    const minutes = window.duration_minutes;
+    const unit =
+      minutes && minutes % 1440 === 0
+        ? "day"
+        : minutes && minutes % 60 === 0
+          ? "hour"
+          : "minute";
+    const duration =
+      minutes == null
+        ? "?"
+        : new Intl.NumberFormat(document.documentElement.lang, {
+            style: "unit",
+            unit,
+            unitDisplay: "long",
+          }).format(
+            minutes / (unit === "day" ? 1440 : unit === "hour" ? 60 : 1),
           );
-          card.append(line);
-        }
-      }
-      const checked = el("small");
-      checked.append(
-        el("span", "Проверено"),
+    card.append(
+      raw("small", `${window.bucket} · ${duration} · ${window.used_percent}%`),
+      meter,
+    );
+    if (window.resets_at) {
+      const line = el("small");
+      line.append(
+        el("span", "Сброс лимита"),
         raw(
           "span",
           " · " +
-            new Date(subscription.checked_at * 1000).toLocaleString(
+            new Date(window.resets_at * 1000).toLocaleString(
               document.documentElement.lang,
             ),
         ),
       );
-      card.append(checked);
-    }
-    if (usage.unknown)
-      card.append(el("small", "Часть запусков не сообщила токены"));
-    for (const [label, value] of [
-      ["Локальные вызовы", usage.calls],
-      ["Измеренные токены", usage.tokens],
-      ["Активные процессы", usage.active],
-    ]) {
-      const line = el("small");
-      line.append(el("span", label), raw("span", " · " + value));
       card.append(line);
     }
-    configured.forEach(([name, p]) =>
-      card.append(raw("small", name + " · " + p.model)),
+  }
+  if (subscription.status === "unavailable")
+    card.append(el("small", "Квоты недоступны"));
+}
+function connectForm(id, discovery, configured) {
+  const form = el("form", undefined, "connect-form");
+  const field = (text, input, wide) => {
+    const node = el("label", text);
+    if (wide) node.className = "wide";
+    node.append(input);
+    return node;
+  };
+  const name = el("input");
+  name.value = configured[0]?.[0] || id;
+  name.required = true;
+  const model = el("input");
+  model.required = true;
+  model.placeholder = "ID модели";
+  model.value = configured[0]?.[1].model || "";
+  const list = el("datalist");
+  list.id = "models-" + id;
+  model.setAttribute("list", list.id);
+  const loadModels = async () => {
+    if (!modelCache.has(id)) {
+      try {
+        modelCache.set(id, (await api("models", { adapter: id })).models);
+      } catch {
+        modelCache.set(id, discovery.suggested_models || []);
+      }
+    }
+    const models = modelCache.get(id);
+    list.replaceChildren(...models.map((m) => option(m, m)));
+    if (!model.value && models.length) model.value = models[0];
+  };
+  loadModels();
+  const rights = el("select");
+  rights.append(
+    option("workspace-write", "Может изменять файлы"),
+    option("read-only", "Только чтение"),
+  );
+  rights.value = configured[0]?.[1].permissions || "workspace-write";
+  const submit = el(
+    "button",
+    configured.length ? "Обновить профиль" : "Подключить",
+    "primary wide",
+  );
+  form.append(
+    field("Профиль", name),
+    field("Модель", model),
+    list,
+    field("Права", rights, true),
+    submit,
+  );
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    act(async () => {
+      await api("connect", {
+        adapter: id,
+        argv: discovery.selected,
+        name: name.value.trim(),
+        model: model.value.trim(),
+        permissions: rights.value,
+      });
+      agentsSignature = "";
+      notify(
+        "Профиль «" + name.value.trim() + "» подключён. Вызовов моделей: 0.",
+      );
+    });
+  };
+  return form;
+}
+function renderAgents() {
+  const signature = JSON.stringify([
+    state.agent_discovery,
+    state.profile_config,
+    state.usage,
+  ]);
+  if (signature === agentsSignature) return;
+  agentsSignature = signature;
+  const agents = $("agent-status");
+  agents.replaceChildren();
+  const found = state.agent_discovery || [];
+  if (!found.length)
+    agents.append(
+      el(
+        "p",
+        "Нажмите «Найти CLI и проверить вход». Запускаются только команды версии и статуса входа, модель не вызывается.",
+        "empty",
+      ),
     );
-    for (const probe of discovery?.candidates || [])
-      card.append(raw("small", probe.version || probe.error));
+  for (const discovery of found) {
+    const id = discovery.adapter;
+    const configured = Object.entries(
+      state.profile_config.profiles || {},
+    ).filter(([, p]) => state.profile_config.runners[p.runner]?.adapter === id);
+    const card = el("article", undefined, "agent-card");
+    const head = el("div", undefined, "agent-head");
+    head.append(raw("strong", id));
+    head.append(
+      discovery.status === "installed"
+        ? pill("Установлен", "good")
+        : discovery.status === "missing"
+          ? pill("Не найден")
+          : discovery.status === "ambiguous"
+            ? pill("Несколько установок", "warn")
+            : pill("Ошибка CLI", "bad"),
+    );
+    if (discovery.status === "installed")
+      head.append(
+        discovery.authentication === "authenticated"
+          ? pill("Вход выполнен", "good")
+          : discovery.authentication === "not_authenticated"
+            ? pill("Нужен вход", "bad")
+            : pill("Вход неизвестен"),
+      );
+    card.append(head);
+    const chosen = discovery.candidates.find(
+      (c) => discovery.selected && c.argv.join() === discovery.selected.join(),
+    );
+    if (chosen?.version) card.append(raw("small", chosen.version));
+    if (discovery.authentication_detail)
+      card.append(raw("small", discovery.authentication_detail));
+    if (discovery.selected)
+      card.append(raw("small", discovery.selected[0], "mono"));
+    if (discovery.candidates.length > 1)
+      card.append(
+        el(
+          "small",
+          "Установок найдено: " +
+            discovery.candidates.length +
+            (discovery.status === "installed" ? " · выбрана новейшая" : ""),
+        ),
+      );
+    for (const [name, p] of configured)
+      card.append(
+        raw(
+          "small",
+          name +
+            " → " +
+            p.model +
+            (p.permissions === "workspace-write" ? " · запись" : " · чтение"),
+          "mono",
+        ),
+      );
+    const usage = agentUsage(id, configured);
+    const stats = el("div", undefined, "agent-stats");
+    for (const [label, value] of [
+      ["вызовы", usage.calls],
+      ["токены", usage.tokens.toLocaleString()],
+      ["активно", usage.active],
+      ["≈ API", money(usage.usd)],
+    ]) {
+      const item = el("span");
+      item.append(raw("b", String(value)), el("span", " " + label));
+      stats.append(item);
+    }
+    card.append(stats);
+    if (usage.unknown)
+      card.append(el("small", "Часть запусков не сообщила токены"));
+    if (id === "codex") codexQuota(card);
+    if (discovery.selected) card.append(connectForm(id, discovery, configured));
     agents.append(card);
   }
 }
@@ -469,9 +578,24 @@ $("discover-agents").onclick = () =>
   act(async () => {
     const b = $("discover-agents");
     b.disabled = true;
+    notify("Проверяю установленные CLI и статус входа…");
     try {
-      await api("discover", {});
-      workspaceSignature = "";
+      const found = await api("discover", {});
+      modelCache.clear();
+      agentsSignature = "";
+      const ready = found.filter((d) => d.authentication === "authenticated");
+      notify(
+        tr("Проверка завершена") +
+          ": " +
+          found.filter((d) => d.status === "installed").length +
+          " " +
+          tr("установлено") +
+          ", " +
+          ready.length +
+          " " +
+          tr("с выполненным входом") +
+          ".",
+      );
     } finally {
       b.disabled = false;
     }

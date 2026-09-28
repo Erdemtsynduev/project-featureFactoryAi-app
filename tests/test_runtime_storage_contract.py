@@ -125,7 +125,7 @@ def test_restore_durable_exit_without_relaunch(configured):
     engine.dispatch("one", 2, "attempt")
     first = Coordinator(engine, registry)
     try:
-        packet = first._packet("one")
+        packet = first.packet("one")
         first.bind("one")
         with engine.store.unit() as unit:
             unit.claim_host("attempt", "{}", "nonce")

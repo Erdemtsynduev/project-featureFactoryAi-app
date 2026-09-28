@@ -24,10 +24,11 @@ virtual environment and installs locked dependencies. Installation does not star
 queues. Node.js and tmux are not required by the engine or UI; individual agent CLIs
 may have their own runtime dependencies.
 
-To install the commands globally from locally built wheels:
+To install the commands globally from locally built wheels (the script clears stale
+`build/` trees first, so deleted modules never ship):
 
 ```text
-uv build --all-packages --wheel --out-dir dist
+uv run --locked python tools/wheels.py
 uv tool install --find-links ./dist feature-factory-ai==0.1.0
 ffai-app
 ```
@@ -58,7 +59,15 @@ Keep the control database outside task workspaces. The local interface includes:
 - Projects with names, workspace folders, response language and check commands.
 - Kanban cards with versioned drag-and-drop for pause/resume, a task drawer,
   discussion, evidence and event history.
-- A node graph with editable prompts, profiles, transitions and budgets.
+- An editable pipeline view of each workflow: numbered main stages, a recovery lane,
+  bundled failure wires, insert-on-wire and link-from-port editing.
+- One-click connection of discovered agent CLIs with native sign-in status checks.
+- Migration of a paused legacy sdd-orchestrator queue into a new project: plans,
+  requirement runs and scoped ticket runs, all paused (`python -m sdd_ui.legacy`).
+- Board kinds (requirement/ticket/task), a plans tree, browser-history navigation
+  and a first-steps checklist with a short tour.
+- Worktree lanes per ticket with fast-forward merge, rebase and agent or human
+  conflict resolution; agent rotation on limits; API-equivalent cost per task.
 - Explicit human questions, saved answer drafts and optional browser notifications.
 - Pixel workers with different desks, subtle idle animation and task handoff effects.
 - Persistent light/dark/system themes and Russian/English interface settings.
@@ -173,6 +182,7 @@ verified evidence; a model's success claim alone is insufficient.
 | `sdd-providers` | CLI protocols, discovery and model catalogs |
 | `sdd-workflows` | Approved feature, full main flow and interview templates |
 | `sdd-ui` | Optional local visual workspace |
+| `sdd-usage` | Dated model rate cards and API-equivalent cost of measured tokens |
 
 Python module names `sdd_*`, extension groups `sdd.handlers`, `sdd.agents`,
 `sdd.executors`, and `.sdd-engine` remain stable technical contracts.
@@ -189,7 +199,7 @@ attempt generations were found. Model calls: zero. The user stopped the run.
 This is not a 24-hour soak or a real-model qualification.
 
 The UI is tested with Playwright in installed Microsoft Edge on Windows. Legacy
-plan snapshots are read-only and create no runnable queue entries. OpenCode
+queue migration creates paused runs only. OpenCode
 read-only execution is not qualified. The remote executor has a contract and a
 reference HTTP adapter, not a production server. Linux/macOS CI definitions do not
 substitute for real platform runs. See [Verification](docs/REFACTOR-VERIFICATION.md)

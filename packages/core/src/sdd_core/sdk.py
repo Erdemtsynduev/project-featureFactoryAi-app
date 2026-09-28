@@ -32,6 +32,8 @@ class Packet:
     workspace: str
     directory: str
     context: str
+    # Native session to continue; context then holds only what is new since it.
+    resume: str = ""
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,12 @@ class Registry:
         if manifest.api_version != API_VERSION or key in self._handlers:
             raise ValueError("Incompatible or duplicate plugin")
         self._handlers[key] = handler
+
+    def replace(self, handler: Handler, name: str) -> None:
+        """Swap a registered handler for a composed one, e.g. an agent rotation."""
+        if name not in self._handlers or handler.manifest.api_version != API_VERSION:
+            raise ValueError("Only a registered, compatible handler can be replaced")
+        self._handlers[name] = handler
 
     def get(self, identifier: str) -> Handler:
         return self._handlers[identifier]

@@ -28,36 +28,70 @@ def atomic_write(path: Path, content: str) -> None:
             time.sleep(0.02 * (attempt + 1))
 
 
-def revision(root: Path) -> str:
-    """Git HEAD plus tracked/untracked contents, excluding engine scratch only.
+# Engine scratch inside a workspace: packets, host receipts and logs per attempt.
+ENGINE_DIRECTORY = ".sdd-engine"
+SCRATCH = (".git", ENGINE_DIRECTORY, ".sdd-lanes", "__pycache__", ".venv", ".pytest_cache")
 
-    Non-Git workspaces intentionally use a content snapshot as well.
-    """
-    root = root.resolve(strict=True)
-    response = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"],
+
+def attempt_folder(workspace: Path, run_id: str, attempt_id: str) -> Path:
+    return workspace / ENGINE_DIRECTORY / run_id / attempt_id
+
+
+def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "--no-optional-locks", "-C", str(root), *args],
         capture_output=True,
-        timeout=15,
+        check=check,
+        timeout=60,
         creationflags=NO_WINDOW,
     )
-    checksum = hashlib.sha256(response.stdout if response.returncode == 0 else b"no-git")
-    if response.returncode == 0:
-        listing = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"],
-            capture_output=True,
-            check=True,
-            timeout=30,
-            creationflags=NO_WINDOW,
-        )
-        paths = {root / os.fsdecode(item) for item in listing.stdout.split(b"\0") if item}
+
+
+def _changed_paths(root: Path, top: Path) -> set[Path]:
+    """Paths under `root` whose content differs from HEAD: modified, deleted, renamed
+    or untracked.
+
+    Unchanged tracked files are identified by the HEAD tree itself, so large
+    repositories are not re-read on every observation. Ignored files stay out.
+    A nested repository appears as one untracked directory, never recursively.
+    Porcelain paths are relative to the repository top, even for a subfolder.
+    """
+    listing = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".")
+    paths: set[Path] = set()
+    entries = iter(listing.stdout.split(b"\0"))
+    for entry in entries:
+        if len(entry) < 4:
+            continue
+        paths.add(top / os.fsdecode(entry[3:]))
+        if entry[:1] in (b"R", b"C"):
+            paths.add(top / os.fsdecode(next(entries, b"")))
+    return {path for path in paths if path == root or path.is_relative_to(root)}
+
+
+def revision(root: Path) -> str:
+    """Git HEAD plus the content of every change against it, excluding engine scratch.
+
+    A repository top hashes its HEAD commit; a folder inside a repository hashes
+    only its own HEAD tree, so unrelated commits elsewhere do not change it.
+    Non-Git workspaces intentionally use a full content snapshot.
+    """
+    root = root.resolve(strict=True)
+    response = _git(root, "rev-parse", "--show-toplevel", "HEAD", check=False)
+    lines = response.stdout.decode(errors="replace").split()
+    if response.returncode == 0 and len(lines) == 2:
+        top = Path(lines[0]).resolve()
+        if top == root:
+            checksum = hashlib.sha256(b"git-head:" + lines[1].encode())
+        else:
+            tree = _git(root, "rev-parse", "HEAD:./", check=False).stdout.strip()
+            checksum = hashlib.sha256(b"git-tree:" + tree)
+        paths = _changed_paths(root, top)
     else:
+        checksum = hashlib.sha256(b"no-git")
         paths = set(root.rglob("*"))
     for path in sorted(paths):
         relative = path.relative_to(root)
-        if any(
-            p in (".git", ".sdd-engine", "__pycache__", ".venv", ".pytest_cache")
-            for p in relative.parts
-        ):
+        if any(p in SCRATCH for p in relative.parts):
             continue
         if path.is_symlink() or (path.exists() and not path.resolve().is_relative_to(root)):
             raise ValueError("Revision cannot silently follow workspace links")

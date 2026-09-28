@@ -38,7 +38,10 @@ class Workflow:
     max_planning_calls: int | None = None
 
     def step(self, identifier: str) -> Step:
-        return next(step for step in self.steps if step.id == identifier)
+        for step in self.steps:
+            if step.id == identifier:
+                return step
+        raise ValueError(f"Unknown step: {identifier}")
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,8 @@ class Run:
     reason: str = ""
     previous_attempt: str | None = None
     planning_calls: int = 0
+    # Operator's choice: answer structured agent questions with their recommendations.
+    auto_answer: bool = False
 
 
 @dataclass(frozen=True)

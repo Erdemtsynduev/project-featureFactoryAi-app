@@ -47,7 +47,7 @@ def test_message_persists_once_and_enters_next_packet(tmp_path, backend):
     engine.command("one", "resume", "resume", run.version, 3)
     engine.dispatch("one", 4, "attempt")
     coordinator = Coordinator(engine, Registry())
-    packet = coordinator._packet("one")
+    packet = coordinator.packet("one")
     assert "Ответы на русском" in packet.context
     assert packet.attempt.id == "attempt"
 

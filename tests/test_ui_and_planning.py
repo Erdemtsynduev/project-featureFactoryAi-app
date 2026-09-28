@@ -139,6 +139,16 @@ def test_ui_http_security_and_complete_demo_lifecycle(tmp_path):
         with urlopen(base + "/api/state", timeout=5) as response:
             state = json.load(response)
         assert state["settings"]["running"] is False and state["totals"]["calls"] == 0
+        status = 200
+        for _ in range(5):  # the first worker tick may change the state in between
+            with urlopen(base + "/api/state", timeout=5) as response:
+                tag = response.headers["ETag"]
+            try:
+                urlopen(Request(base + "/api/state", headers={"If-None-Match": tag}), timeout=5)
+            except HTTPError as unchanged:
+                status = unchanged.code
+                break
+        assert status == 304, "an unchanged board is not re-sent"
 
         def post(action, body, authorized=True):
             headers = {"Content-Type": "application/json"}

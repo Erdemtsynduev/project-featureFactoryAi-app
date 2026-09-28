@@ -18,37 +18,6 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def workshop(tmp_path):
-    (tmp_path / "ui.preview.json").write_text(
-        json.dumps(
-            {
-                "captured_at": "2026-09-28T00:00:00Z",
-                "source": "read-only portfolio",
-                "items": [
-                    {
-                        "id": "104:ECL-11",
-                        "title": "Body get-up acceptance",
-                        "plan": "104",
-                        "context": "Verify the rise",
-                        "status": "ready",
-                        "kind": "ticket",
-                        "dependencies": [],
-                        "path": "plan.md",
-                    },
-                    {
-                        "id": "105:TEST",
-                        "title": "<script>alert(1)</script>",
-                        "plan": "105",
-                        "context": "Literal text",
-                        "status": "blocked",
-                        "kind": "requirement",
-                        "dependencies": [],
-                        "path": "other.md",
-                    },
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
     service = WorkspaceService(tmp_path / "ui.db")
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -103,92 +72,77 @@ def test_question_inbox_preserves_draft_and_submits_once(page, workshop):
     assert not errors
 
 
-def test_graph_edit_connections_rename_drag_and_persist(page, workshop):
+def test_pipeline_edit_insert_connect_and_persist(page, workshop):
     from playwright.sync_api import expect
 
     url, _ = workshop
     errors = []
     page.on("pageerror", lambda error: errors.append(error))
     page.goto(url)
-    page.get_by_role("button", name="Настроить main flow ↗").click()
-    expect(page.locator(".flow-node")).to_have_count(10)
-    page.get_by_role("button", name="Разработка · implement", exact=True).click()
+    page.get_by_role("button", name="Открыть main flow").click()
+    expect(page.locator("#graph .stage")).to_have_count(10)
+    page.get_by_role("button", name="Разработка (agent)", exact=True).click()
     page.locator('#step-form input[name="id"]').fill("build")
     page.get_by_role("button", name="Применить к черновику").click()
     draft = json.loads(page.locator("#flow-json").input_value())
     assert ["done", "build"] in next(s for s in draft["steps"] if s["id"] == "tickets")[
         "transitions"
     ]
-    page.locator("#edge-source").select_option("build")
-    page.locator("#edge-target").select_option("interview")
-    page.locator("#edge-outcome").fill("questions")
-    page.get_by_role("button", name="Соединить", exact=True).click()
-    expect(
-        page.get_by_role("button", name="build: questions → interview", exact=True)
-    ).to_have_count(1)
-    node = page.get_by_role("button", name="build · build", exact=True)
-    node.scroll_into_view_if_needed()
-    before = node.get_attribute("transform")
-    box = node.bounding_box()
-    page.mouse.move(box["x"] + 60, box["y"] + 40)
-    page.mouse.down()
-    page.mouse.move(box["x"] + 85, box["y"] + 60, steps=5)
-    page.mouse.up()
-    assert node.get_attribute("transform") != before
+    # "+" on the tickets → build wire inserts a step between them.
+    page.get_by_role("button", name="Insert after tickets (done)", exact=True).click()
+    draft = json.loads(page.locator("#flow-json").input_value())
+    inserted = next(s for s in draft["steps"] if s["id"] == "step10")
+    assert inserted["transitions"] == [["done", "build"]]
+    assert ["done", "step10"] in next(s for s in draft["steps"] if s["id"] == "tickets")[
+        "transitions"
+    ]
+    expect(page.locator("#graph .stage")).to_have_count(11)
+    # Output port, then a target step, creates a new outcome without rewiring others.
+    page.get_by_role("button", name="Connect from review", exact=True).click()
+    assert page.locator("#edge-outcome").input_value() == "questions"
+    page.get_by_role("button", name="Ваш ответ (human)", exact=True).click()
+    link = page.get_by_role("button", name="review: questions → interview", exact=True)
+    expect(link).to_have_count(1)
+    draft = json.loads(page.locator("#flow-json").input_value())
+    review = next(s for s in draft["steps"] if s["id"] == "review")
+    assert ["failed", "diagnose"] in review["transitions"]
     page.get_by_role("button", name="Сохранить черновик").click()
     page.reload()
-    page.get_by_role("button", name="Редактор флоу", exact=True).click()
-    expect(
-        page.get_by_role("button", name="build: questions → interview", exact=True)
-    ).to_have_count(1)
-    page.get_by_role("button", name="build: questions → interview", exact=True).focus()
+    page.get_by_role("button", name="Сценарии", exact=True).click()
+    link = page.get_by_role("button", name="review: questions → interview", exact=True)
+    expect(link).to_have_count(1)
+    link.focus()
     page.keyboard.press("Enter")
-    page.get_by_role("button", name="Удалить связь", exact=True).click()
-    expect(
-        page.get_by_role("button", name="build: questions → interview", exact=True)
-    ).to_have_count(0)
-    page.locator("#edge-outcome").fill("questions")
-    page.get_by_role("button", name="Выход review", exact=True).focus()
-    page.keyboard.press("Enter")
-    page.get_by_role("button", name="Вход interview", exact=True).focus()
-    page.keyboard.press("Enter")
-    expect(
-        page.get_by_role("button", name="review: questions → interview", exact=True)
-    ).to_have_count(1)
+    page.keyboard.press("Delete")
+    expect(link).to_have_count(0)
     assert not errors
 
 
-def test_snapshot_search_is_read_only_and_mobile_fits(page, workshop):
+def test_search_filters_persist_and_mobile_fits(page, workshop):
     from playwright.sync_api import expect
 
     url, service = workshop
     page.goto(url)
-    page.get_by_role("button", name="Планы оркестратора", exact=True).click()
-    page.locator("#plan-filter").select_option("104")
     expect(page.locator("#board .card")).to_have_count(1)
-    page.locator("#board .card").click()
-    expect(page.locator("#detail")).to_contain_text("ТОЛЬКО ПРОСМОТР")
-    expect(page.locator("#detail .detail-actions")).to_have_count(0)
-    assert len(service.state()["runs"]) == 1
-    page.keyboard.press("Escape")
+    expect(page.locator("#preview-board")).to_have_count(0)
     page.locator("#task-search").fill("missing")
     expect(page.locator("#board .card")).to_have_count(0)
+    page.reload()
+    expect(page.locator("#task-search")).to_have_value("missing")
     page.locator("#task-search").fill("")
-    page.locator("#plan-filter").select_option("105")
-    expect(page.locator("#board .card")).to_contain_text("<script>alert(1)</script>")
+    expect(page.locator("#board .card")).to_have_count(1)
+    page.get_by_role("button", name="Планы", exact=True).click()
+    page.reload()
+    expect(page.locator("#plans-board")).to_have_class("active")
+    page.get_by_role("button", name="Доска", exact=True).click()
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    page.emulate_media(reduced_motion="reduce")
-    assert (
-        page.locator(".busy .pixel-person").first.evaluate(
-            "el => getComputedStyle(el).animationName"
-        )
-        == "none"
-    )
+    expect(page.locator("#office canvas")).to_be_visible()
     Path("reports/ui").mkdir(parents=True, exist_ok=True)
     page.screenshot(path="reports/ui/workshop-mobile.png", full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1100})
     page.screenshot(path="reports/ui/workshop-desktop.png", full_page=True)
+    assert len(service.state()["runs"]) == 1
 
 
 def test_settings_budget_validation_and_persistence(page, workshop):
@@ -196,7 +150,7 @@ def test_settings_budget_validation_and_persistence(page, workshop):
 
     url, service = workshop
     page.goto(url)
-    page.get_by_role("button", name="Команда и настройки", exact=True).click()
+    page.get_by_role("button", name="Агенты и лимиты", exact=True).click()
     page.locator('#budget-form input[name="max_calls"]').fill("12")
     page.locator('#budget-form input[name="max_planning_calls"]').fill("13")
     page.get_by_role("button", name="Сохранить лимиты").click()
@@ -206,14 +160,15 @@ def test_settings_budget_validation_and_persistence(page, workshop):
     page.get_by_role("button", name="Сохранить лимиты").click()
     expect(page.locator("#calls")).to_have_text("0 / 12")
     assert json.loads(service.settings_path.read_text())["max_calls"] == 12
+    page.get_by_text("Профиль вручную", exact=True).click()
     page.locator('#profile-form input[name="name"]').fill("reviewer")
     page.locator('#profile-form input[name="executable"]').fill(sys.executable)
     page.locator('#profile-form input[name="model"]').fill("test-model")
-    page.get_by_role("button", name="Добавить / обновить профиль").click()
+    page.get_by_role("button", name="Добавить в черновик").click()
     page.get_by_role("button", name="Проверить и сохранить", exact=True).click()
     expect(page.locator(".profile-card")).to_contain_text("reviewer")
     page.reload()
-    page.get_by_role("button", name="Команда и настройки", exact=True).click()
+    page.get_by_role("button", name="Агенты и лимиты", exact=True).click()
     page.locator(".profile-card").click()
     expect(page.locator('#profile-form input[name="model"]')).to_have_value("test-model")
     assert service.state()["totals"]["calls"] == 0
@@ -247,6 +202,7 @@ def test_projects_drag_drop_theme_language_and_question_demo(page, workshop, tmp
             "definition": service.engine.store.publish(flow),
         },
     )
+    page.set_viewport_size({"width": 1440, "height": 1200})
     page.reload()
     expect(page.locator("#project-select")).to_have_value("beta")
     page.locator("#live-board").click()
@@ -270,24 +226,28 @@ def test_projects_drag_drop_theme_language_and_question_demo(page, workshop, tmp
     page.locator("#interactive-demo").click()
     expect(page.locator("#task-dialog")).to_be_visible()
     expect(page.locator(".question-thread h3")).to_contain_text("Which working mode")
-    page.get_by_role("button", name="Approval before changes", exact=True).click()
-    expect(page.get_by_role("textbox", name="Your answer", exact=True)).to_have_value(
-        "Approval before changes"
+    recommended = page.get_by_role("radio", name="Approval before changes")
+    expect(recommended).to_have_attribute("aria-checked", "true")
+    recommended.focus()
+    page.keyboard.press("ArrowDown")
+    expect(page.get_by_role("radio", name="Work within the agreed scope")).to_have_attribute(
+        "aria-checked", "true"
     )
+    page.keyboard.press("1")
+    expect(recommended).to_have_attribute("aria-checked", "true")
     expect(page.locator(".question-thread select")).to_be_hidden()
     page.get_by_role("textbox", name="Your answer", exact=True).fill("Approval first")
     page.get_by_role("button", name="Submit answer", exact=True).click()
     expect(page.locator(".question-thread")).to_have_count(0)
+    events = [e["kind"] for e in service.engine.store.history(service.state()["runs"][0]["id"])]
+    assert "result_applied" in events
     page.keyboard.press("Escape")
     page.locator("#language-select").select_option("ru")
     expect(page.get_by_role("button", name="Добавить проект", exact=True)).to_be_visible()
     page.locator("#theme-select").select_option("light")
     expect(page.locator("html")).to_have_attribute("data-theme", "light")
     page.emulate_media(reduced_motion="reduce")
-    assert (
-        page.locator(".pixel-person").first.evaluate("el => getComputedStyle(el).animationName")
-        == "none"
-    )
+    expect(page.locator("#office canvas")).to_be_visible()
     assert service.state()["totals"]["calls"] == 0
     assert not errors
 
@@ -312,3 +272,29 @@ def test_browser_notification_on_new_question(page, workshop):
     assert page.evaluate("window.notificationLog[0].body") == "Пример вопроса команды"
     page.evaluate("refresh()")
     assert page.evaluate("window.notificationLog.length") == 1
+
+
+def test_back_navigation_and_first_steps(page, workshop):
+    from playwright.sync_api import expect
+
+    url, service = workshop
+    page.goto(url)
+    expect(page.locator(".onboarding")).to_be_visible()
+    expect(page.locator(".onboarding-steps li.current")).to_contain_text("Подключите агентов")
+    page.get_by_role("button", name="Сценарии", exact=True).click()
+    expect(page.locator("#flows")).to_be_visible()
+    page.get_by_role("button", name="Назад", exact=True).click()
+    expect(page.locator("#tasks")).to_be_visible()
+    page.locator(".lane-blocked .card").first.click()
+    expect(page.locator("#task-dialog")).to_be_visible()
+    page.go_back()
+    expect(page.locator("#task-dialog")).to_be_hidden()
+    page.go_forward()
+    expect(page.locator("#task-dialog")).to_be_visible()
+    page.get_by_role("button", name="Закрыть карточку").click()
+    expect(page.locator("#task-dialog")).to_be_hidden()
+    page.get_by_role("button", name="Короткий тур").click()
+    expect(page.locator(".coach-tip")).to_contain_text("Разделы")
+    page.keyboard.press("Escape")
+    expect(page.locator(".coach")).to_be_hidden()
+    assert service.state()["totals"]["calls"] == 0

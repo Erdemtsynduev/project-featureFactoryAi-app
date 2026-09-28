@@ -34,6 +34,7 @@ def load_profiles(path: Path) -> ProfileConfiguration:
         "runners",
         "profiles",
         "agent_extensions",
+        "rotation",
     }:
         raise ValueError("Unsupported profiles configuration")
     runners = {}

@@ -2,8 +2,7 @@ import time
 
 import pytest
 from sdd_core.models import Result, Step, Workflow
-from sdd_core.sdk import Registry
-from sdd_runtime.coordinator import Coordinator
+from sdd_core.ports import Conflict
 from sdd_runtime.engine import Engine
 from sdd_storage.store import Store
 from test_runtime import runtime
@@ -42,13 +41,12 @@ def test_human_wait_does_not_expire_or_consume_calls(tmp_path):
     engine.create("human", definition, workspace, "question", "rev", 0)
     engine.command("human", "resume", "r", 0, 1)
     engine.dispatch("human", 2, "a")
-    coordinator = Coordinator(engine, Registry())
-    try:
-        coordinator.answer("human", "answered", "answer", 100000)
-        state = engine.store.get("human")
-        assert state.calls == 0 and state.step == "finish"
-    finally:
-        coordinator.close()
+    version = engine.store.get("human").version
+    engine.answer("human", "answered", "answer", {}, version, 100000)
+    state = engine.store.get("human")
+    assert state.calls == 0 and state.step == "finish"
+    with pytest.raises(Conflict):
+        engine.answer("human", "answered", "again", {}, version, 100001)
 
 
 def test_subscription_wait_does_not_reset_call_budget(tmp_path):

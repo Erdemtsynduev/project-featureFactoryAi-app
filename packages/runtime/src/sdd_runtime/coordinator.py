@@ -1,52 +1,78 @@
 """Single-writer coordinator with gated hosts and durable per-attempt receipts."""
 
 import os
-import subprocess
-import sys
 import time
 import uuid
-from dataclasses import asdict, dataclass, replace
+from collections.abc import Callable
+from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 
-import psutil
 from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load
-from sdd_core.machine import changed
 from sdd_core.models import Result
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Packet, Registry, handler_key
 
 from sdd_runtime.application import ApplicationEngine
-from sdd_runtime.files import atomic_write, verify_evidence
-from sdd_runtime.platform import NO_WINDOW, Containment, Job, group_alive
+from sdd_runtime.files import atomic_write, attempt_folder, verify_evidence
+from sdd_runtime.hosts import Hosts, Running, health
+from sdd_runtime.lane_keeper import LaneKeeper
+from sdd_runtime.packets import build_packet
 
-
-@dataclass
-class Running:
-    packet: Packet
-    process: subprocess.Popen[bytes]
-    job: Containment
-    nonce: str
+__all__ = ["Coordinator", "Running"]
 
 
 class Coordinator:
+    """Schedules runs and owns their hosts. One failing run never stops the others.
+
+    A per-run failure is recorded durably on that run (blocked, or recovered when
+    it holds an attempt). Only a failure to record it propagates to the caller.
+    """
+
     def __init__(
         self, engine: ApplicationEngine, registry: Registry, health_path: Path | None = None
     ) -> None:
         self.engine, self.registry = engine, registry
         self.health_path = health_path
         self.live: dict[str, Running] = {}
-        self.resource_job = Job()
+        self.hosts = Hosts()
+        self.lanes = LaneKeeper(engine)
 
-    def revision(self, root: Path) -> str:
-        return self.engine.project.revision(str(root))
+    def revision(self, run_id: str) -> str:
+        return self.engine.observe(run_id)
 
     def block(self, run_id: str, now: float, reason: str) -> None:
-        with self.engine.store.unit() as db:
-            before = db.run(run_id)
-            db.apply(
-                before,
-                changed(replace(before, status="blocked", reason=reason), now, "blocked", reason),
-            )
+        self.engine.block(run_id, now, reason)
+
+    def contain(self, run_id: str, now: float, error: Exception) -> None:
+        """Record a failure on its own run so the queue can go on."""
+        reason = f"{type(error).__name__}: {error}"
+        for _ in range(3):
+            run = self.engine.store.get(run_id)
+            try:
+                if run.active is None:
+                    if run.status != "blocked":
+                        self.engine.block(run_id, now, reason)
+                else:
+                    # A host still tracked here may be alive: ownership stays uncertain.
+                    confirmed = run.active.id not in self.live
+                    self.engine.recover(run_id, now, confirmed, reason, run.revision)
+                return
+            except Conflict:
+                continue  # the run moved meanwhile; re-read and record again
+
+    def _isolated(self, run_id: str, now: float, action: Callable[[], object]) -> object:
+        try:
+            return action()
+        except Exception as error:
+            self.contain(run_id, now, error)
+            return None
+
+    def _auto_answer(self, run_id: str, now: float) -> None:
+        try:
+            self.engine.auto_answer(run_id, now)
+        except (ValueError, Conflict) as error:
+            self.block(run_id, now, "Automatic answer: " + str(error))
 
     def bind(self, run_id: str) -> None:
         workflow = self.engine.store.workflow(self.engine.store.get(run_id).workflow_digest)
@@ -68,29 +94,8 @@ class Coordinator:
                 document = canonical(asdict(manifest))
                 db.bind_handler(run_id, handler_key(step), document)
 
-    def _packet(self, run_id: str) -> Packet:
-        store = self.engine.store
-        run = store.get(run_id)
-        if run.active is None:
-            raise ValueError("No dispatched attempt")
-        workflow = store.workflow(run.workflow_digest)
-        with store.unit() as db:
-            root = Path(db.location(run_id)[0])
-            context = db.context(run_id)
-            results = db.recent_results(run_id, 5)
-        folder = root / ".sdd-engine" / run.id / run.active.id
-        folder.mkdir(parents=True, exist_ok=True)
-        if results:
-            remaining = workflow.max_input_chars - len(context)
-            carry = "\nRecent results (newest first):\n" + "\n".join(results)
-            if remaining < len(carry):
-                carry = "\nPrevious result artifact: " + str(
-                    folder.parent / str(run.previous_attempt) / "receipt.json"
-                )
-            if len(context) + len(carry) > workflow.max_input_chars:
-                raise ValueError("Required context exceeds budget")
-            context += carry
-        return Packet(run.id, run.active, workflow.step(run.step), str(root), str(folder), context)
+    def packet(self, run_id: str) -> Packet:
+        return build_packet(self.engine.store, self.registry, run_id)
 
     def start(self, run_id: str) -> None:
         with self.engine.store.unit() as db:
@@ -98,13 +103,12 @@ class Coordinator:
             if active and db.execution(active.id) is not None:
                 raise Conflict("Attempt belongs to a neutral execution backend")
         self.bind(run_id)
-        packet = self._packet(run_id)
+        packet = self.packet(run_id)
         folder = Path(packet.directory)
         nonce = uuid.uuid4().hex
-        handler = self.registry.get(handler_key(packet.step))
-        launch = handler.prepare(packet)
-        if Path(launch.cwd).resolve() != Path(packet.workspace).resolve():
-            raise ValueError("Handler cwd must match the owned workspace")
+        launch = self.registry.get(handler_key(packet.step)).prepare(packet)
+        if not Path(launch.cwd).resolve().is_relative_to(Path(packet.workspace).resolve()):
+            raise ValueError("Handler cwd must stay inside the owned workspace")
         if not launch.argv or not Path(launch.argv[0]).is_absolute():
             raise ValueError("Explicit executable required")
         atomic_write(folder / "packet.json", canonical(asdict(packet)))
@@ -123,76 +127,37 @@ class Coordinator:
         # Until the persisted host identity exists, no GO can be sent.
         with self.engine.store.unit() as db:
             db.claim_host(packet.attempt.id, canonical(asdict(packet)), nonce)
-        job = Job()
-        process: subprocess.Popen[bytes] | None = None
-        try:
-            process = subprocess.Popen(
-                [sys.executable, "-m", "sdd_runtime.host", str(folder)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=NO_WINDOW,
-                start_new_session=os.name != "nt",
-            )
-            self.resource_job.assign(process.pid)
-            job.assign(process.pid)
-            birth = psutil.Process(process.pid).create_time()
+
+        def started(pid: int, created: float) -> None:
             with self.engine.store.unit() as db:
-                db.host_started(packet.attempt.id, nonce, process.pid, birth)
-            if process.stdin is None:
-                raise RuntimeError("Missing host gate")
-            process.stdin.write(b"GO\n")
-            process.stdin.close()
-            self.live[packet.attempt.id] = Running(packet, process, job, nonce)
-        except BaseException:
-            job.close()
-            if process:
-                if process.stdin and not process.stdin.closed:
-                    process.stdin.close()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-                self.resource_job.forget(process.pid)
-            raise
+                db.host_started(packet.attempt.id, nonce, pid, created)
+
+        self.live[packet.attempt.id] = self.hosts.spawn(packet, nonce, started)
 
     def collect(self, identifier: str, now: float) -> None:
         live = self.live[identifier]
         packet = live.packet
         state = self.engine.store.get(packet.run_id)
         if state.paused and state.reason == "Stop requested":
-            live.job.stop_and_confirm()
-            live.process.wait(timeout=10)
-            live.job.close()
-            self.resource_job.forget(live.process.pid)
+            self.hosts.settle(live, wait=True)
             del self.live[identifier]
             self.engine.recover(
-                packet.run_id,
-                now,
-                True,
-                "Stopped by operator",
-                self.revision(Path(packet.workspace)),
+                packet.run_id, now, True, "Stopped by operator", self.revision(packet.run_id)
             )
             return
         code = live.process.poll()
         if code is None and now < packet.attempt.deadline:
             return
         if code is None:
-            live.job.stop_and_confirm()
-            live.process.wait(timeout=10)
-            live.job.close()
-            self.resource_job.forget(live.process.pid)
+            self.hosts.settle(live, wait=True)
             del self.live[identifier]
             self.engine.recover(
-                packet.run_id, now, True, "Attempt timeout", self.revision(Path(packet.workspace))
+                packet.run_id, now, True, "Attempt timeout", self.revision(packet.run_id)
             )
             return
-        live.job.stop_and_confirm()
-        live.job.close()
-        self.resource_job.forget(live.process.pid)
+        self.hosts.settle(live, wait=False)
         del self.live[identifier]
-        current = self.revision(Path(packet.workspace))
+        current = self.revision(packet.run_id)
         exit_path = Path(packet.directory) / "exit.json"
         if not exit_path.exists():
             self.engine.recover(
@@ -233,28 +198,16 @@ class Coordinator:
             run = self.engine.store.get(run_id)
             if run.active is None:
                 raise RuntimeError("Active effect without an attempt")
-            if row.kind in ("human", "condition"):
+            if row.kind == "human":
                 continue
-            confirmed = row.pid is None
-            if row.pid is not None and row.created is not None:
-                try:
-                    process = psutil.Process(int(row.pid))
-                    confirmed = abs(process.create_time() - row.created) > 0.01
-                    if not confirmed:
-                        try:
-                            process.wait(timeout=2)
-                            confirmed = True
-                        except psutil.TimeoutExpired:
-                            pass
-                except psutil.NoSuchProcess:
-                    confirmed = True
-                except psutil.AccessDenied:
-                    confirmed = False
-                if os.name != "nt" and group_alive(int(row.pid)):
-                    confirmed = False
+            if row.kind == "condition":
+                # Earlier releases dispatched conditions as effects; route them purely now.
+                self.engine.release_condition(run_id, now)
+                continue
+            confirmed = self.hosts.ended(row.pid, row.created)
             root = Path(str(row.workspace))
-            receipt = root / ".sdd-engine" / run_id / run.active.id / "receipt.json"
-            current = self.revision(root)
+            receipt = attempt_folder(root, run_id, run.active.id) / "receipt.json"
+            current = self.revision(run_id)
             exit_path = receipt.with_name("exit.json")
             if confirmed and exit_path.exists():
                 try:
@@ -269,7 +222,7 @@ class Coordinator:
                         result = result_load(receipt.read_text(encoding="utf-8"))
                     else:
                         self.bind(run_id)
-                        packet = self._packet(run_id)
+                        packet = self.packet(run_id)
                         result = self._collect_result(
                             packet, integer(exit_data["exit_code"], "exit_code"), current
                         )
@@ -285,126 +238,87 @@ class Coordinator:
                 run_id, now, confirmed, "Coordinator restart reconciliation", current
             )
 
-    def answer(self, run_id: str, outcome: str, answer: str, now: float) -> None:
+    def _advance(self, run_id: str, now: float) -> bool:
+        """Dispatch one runnable run and start its host. True when an attempt began."""
         run = self.engine.store.get(run_id)
+        if (
+            run.paused
+            or run.active
+            or run.status in ("blocked", "accepted")
+            or (run.wake_at and run.wake_at > now)
+        ):
+            return False
+        with self.engine.store.unit() as db:
+            waiting = any(dep.status != "accepted" for dep in db.dependencies(run_id))
+        if waiting:
+            return False
         workflow = self.engine.store.workflow(run.workflow_digest)
-        if run.active is None or workflow.step(run.step).kind != "human":
-            raise ValueError("Not waiting for a human")
-        # Human waits do not expire like a subprocess; record response against the held attempt.
-        self.engine.complete(
-            run_id,
-            Result(
-                run.active.id,
-                run.active.generation,
-                outcome,
-                answer,
-                run.revision,
-                data=canonical({"answer": answer}),
-            ),
-            now,
-        )
+        if any(step.handler.startswith("lane-") for step in workflow.steps):
+            try:
+                self.lanes.open(run_id, now)
+            except (ValueError, RuntimeError, OSError, Conflict) as error:
+                self.block(run_id, now, "Lane: " + str(error))
+                return False
+            run = self.engine.store.get(run_id)
+        observed = self.revision(run_id)
+        if observed != run.revision:
+            self.engine.invalidate(run_id, observed, now)
+            return False
+        try:
+            self.bind(run_id)
+        except (ValueError, KeyError) as error:
+            self.block(run_id, now, str(error))
+            return False
+        try:
+            run = self.engine.dispatch(run_id, now, uuid.uuid4().hex)
+        except Conflict:
+            return False  # waiting for a dependency, a process slot or its paths
+        except ValueError as error:
+            self.block(run_id, now, str(error))
+            return False
+        if run.active is None:
+            return False
+        if workflow.step(run.step).kind == "human":
+            self.engine.auto_answer(run_id, now)
+            return True
+        try:
+            self.start(run_id)
+        except (ValueError, KeyError, OSError) as error:
+            self.engine.recover(
+                run_id, now, True, "Preflight: " + str(error), self.revision(run_id)
+            )
+        return True
 
     def tick(self, now: float | None = None) -> int:
         current_time = time.time() if now is None else now
         for identifier in tuple(self.live):
-            running = self.live[identifier]
-            try:
-                self.collect(identifier, current_time)
-            except (ValueError, OSError) as error:
-                run = self.engine.store.get(running.packet.run_id)
-                if run.active:
-                    self.engine.recover(
-                        run.id, current_time, identifier not in self.live, str(error), run.revision
-                    )
+            run_id = self.live[identifier].packet.run_id
+            self._isolated(run_id, current_time, partial(self.collect, identifier, current_time))
         with self.engine.store.unit() as db:
             ids = db.runnable()
+            states = db.runs()
+        answering = [r.id for r in states if r.active is not None and r.status == "running"]
+        finished = [
+            r.id for r in states if r.status == "accepted" and r.id not in self.lanes.cleaned
+        ]
+        for run_id in finished:
+            self._isolated(run_id, current_time, partial(self.lanes.close, run_id))
+        for run_id in answering:
+            self._isolated(run_id, current_time, partial(self._auto_answer, run_id, current_time))
         dispatched = 0
         for run_id in ids:
-            run = self.engine.store.get(run_id)
-            if (
-                run.paused
-                or run.active
-                or run.status in ("blocked", "accepted")
-                or (run.wake_at and run.wake_at > current_time)
-            ):
-                continue
-            with self.engine.store.unit() as db:
-                root = Path(db.location(run_id)[0])
-            observed = self.revision(root)
-            if observed != run.revision:
-                self.engine.invalidate(run_id, observed, current_time)
-                continue
-            workflow = self.engine.store.workflow(run.workflow_digest)
-            try:
-                self.bind(run_id)
-            except (ValueError, KeyError) as error:
-                self.block(run_id, current_time, str(error))
-                continue
-            try:
-                run = self.engine.dispatch(run_id, current_time, uuid.uuid4().hex)
-            except Conflict:
-                continue
-            except ValueError as error:
-                self.block(run_id, current_time, str(error))
-                continue
-            if run.active is None:
-                continue
-            dispatched += 1
-            step = workflow.step(run.step)
-            if step.kind == "human":
-                continue
-            if step.kind == "condition":
-                packet = self._packet(run_id)
-                config = object_json(packet.step.config)
-                outcome = (
-                    "true" if config.get(step.condition_key) == step.condition_value else "false"
-                )
-                self.engine.complete(
-                    run_id,
-                    Result(
-                        run.active.id,
-                        run.active.generation,
-                        outcome,
-                        "Deterministic condition",
-                        run.revision,
-                    ),
-                    current_time,
-                )
-                continue
-            try:
-                self.start(run_id)
-            except (ValueError, KeyError, OSError) as error:
-                self.engine.recover(
-                    run_id, current_time, True, "Preflight: " + str(error), self.revision(root)
-                )
-        with self.engine.store.unit() as db:
-            event = db.last_transition()
-        if self.health_path is not None:
-            atomic_write(
-                self.health_path,
-                canonical(
-                    {
-                        "coordinator_pid": os.getpid(),
-                        "heartbeat": current_time,
-                        "active_attempts": sorted(self.live),
-                        "last_transition": event,
-                        "resource_limits": (
-                            {"cpu_percent": 50, "memory_mb": 16384, "processes": 128}
-                            if os.name == "nt"
-                            else None
-                        ),
-                        "containment": "windows-job"
-                        if os.name == "nt"
-                        else "cooperative-posix-group",
-                    }
-                ),
+            began = self._isolated(
+                run_id, current_time, partial(self._advance, run_id, current_time)
             )
+            dispatched += began is True
+        if self.health_path is not None:
+            with self.engine.store.unit() as db:
+                event = db.last_transition()
+            atomic_write(self.health_path, canonical(health(tuple(self.live), event, current_time)))
         return dispatched
 
     def close(self) -> None:
         for live in self.live.values():
-            live.job.close()
-            live.process.wait(timeout=10)
-            self.resource_job.forget(live.process.pid)
+            self.hosts.release(live)
         self.live.clear()
-        self.resource_job.close()
+        self.hosts.close()

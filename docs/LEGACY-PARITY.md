@@ -18,9 +18,12 @@ Neither application nor any existing production queue was started or migrated.
 | Workers | Different desks, coffee/phone idle motion, mail on step change | Decorative, not a model reasoning or email indicator |
 | Appearance | Persisted light/dark/system, RU/EN and response language | Existing content stays unchanged; arbitrary extension CSS cannot all be controlled |
 | Usage | Local calls/tokens/active attempts, dispatch chart, Codex account probe | CLI presence is not auth proof; other quotas remain unavailable |
-| Old plans | Read-only snapshot with paths, criteria and dependencies | Creates no executable tasks; states are historical |
+| Old plans | Read-only snapshot with paths, criteria and dependencies | Snapshot creates no executable tasks; states are historical |
+| Queue migration | Unfinished tickets become paused `ticket` runs with per-check gates, scoped repositories and dependencies | Explicit operator action; undecomposed requirements are skipped; old queue is never modified or fenced automatically |
+| Lanes | Scoped claims let tickets in different repositories run side by side | No isolated copies/worktrees per ticket yet; shared paths serialize |
 
-The old autonomous portfolio audit/admission loop, grouped acceptance matrix,
+The migration keeps each ticket's frozen contract but not the legacy planning
+machinery: the old autonomous portfolio audit/admission loop, grouped acceptance matrix,
 automatic plan splitting, cross-plan reconciliation and queue refill are **not**
 ported as production behavior. This engine works on explicit bounded requirements.
 The tickets step produces a bounded implementation breakdown in a run; it does
