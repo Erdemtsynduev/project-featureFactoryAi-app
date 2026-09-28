@@ -33,6 +33,9 @@ class StateStore(Protocol):
         now: float,
         dependencies: tuple[str, ...] = (),
     ) -> Run: ...
+    def discard(self, identifiers: tuple[str, ...]) -> tuple[str, ...]:
+        """Remove runs that never dispatched, atomically; refuse anything else."""
+        ...
 
 
 class Workspace(Protocol):

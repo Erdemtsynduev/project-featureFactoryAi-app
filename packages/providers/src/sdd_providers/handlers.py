@@ -6,9 +6,10 @@ import re
 import time
 from pathlib import Path
 
-from sdd_core.codec import canonical, flag, integer, object_json, sequence, text
+from sdd_core.codec import canonical, flag, integer, object_json, text
 from sdd_core.memory import notes, tickets_of
 from sdd_core.models import Artifact, Json, Result, Usage
+from sdd_core.options import StepOptions
 from sdd_core.questions import questions
 from sdd_core.sdk import Launch, Manifest, Packet
 
@@ -27,8 +28,8 @@ class CommandHandler:
     manifest = Manifest("command", "0.1.0", capabilities=("process", "check", "operation"))
 
     def prepare(self, packet: Packet) -> Launch:
-        config = object_json(packet.step.config)
-        argv = tuple(text(x, "argv") for x in sequence(config.get("argv")))
+        settings = StepOptions.parse(packet.step.config)
+        argv = settings.argv
         if (
             not argv
             or not Path(argv[0]).is_absolute()
@@ -38,15 +39,14 @@ class CommandHandler:
                 "An explicit executable path is required; shell wrappers are not accepted"
             )
         root = Path(packet.workspace).resolve()
-        cwd = (root / text(config.get("cwd", "."), "cwd")).resolve()
+        cwd = (root / settings.cwd).resolve()
         if not cwd.is_relative_to(root) or not cwd.is_dir():
             raise ValueError("Check cwd must be an existing folder inside the workspace")
         return Launch(argv, str(cwd))
 
     def collect(self, packet: Packet, exit_code: int, revision: str) -> Result:
-        config = object_json(packet.step.config)
         logs = [Path(packet.directory) / name for name in ("stdout.log", "stderr.log")]
-        pattern = text(config.get("error_pattern", ""), "error_pattern")
+        pattern = StepOptions.parse(packet.step.config).error_pattern
         failed = exit_code != 0 or bool(
             pattern
             and any(
@@ -118,8 +118,8 @@ TICKETS_SCHEMA: dict[str, Json] = {
 
 
 def emits_tickets(packet: Packet) -> bool:
-    """A planning step opts into ticket output through `{"emits": "tickets"}`."""
-    return object_json(packet.step.config).get("emits") == "tickets"
+    """A planning step opts into ticket output through `{"produces": "tickets"}`."""
+    return StepOptions.parse(packet.step.config).produces == "tickets"
 
 
 def result_schema(packet: Packet) -> dict[str, Json]:

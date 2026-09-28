@@ -14,6 +14,7 @@ PACKAGES = (
     "sdd-providers",
     "sdd-workflows",
     "sdd-usage",
+    "sdd-factory",
     "sdd-ui",
     "feature-factory-ai",
 )

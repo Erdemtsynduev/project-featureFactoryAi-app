@@ -1,5 +1,7 @@
 """Move a paused sdd-orchestrator queue onto this engine as paused, explicit runs.
 
+Run as `python -m sdd_factory.legacy <portfolio> --database <ui.db> [--apply]`.
+
 The legacy database is opened read-only and is never modified. Created runs stay
 paused; nothing starts until the operator resumes tasks and starts the queue.
 Re-running the import is idempotent: existing identical runs are left alone.
@@ -22,9 +24,10 @@ from sdd_core.models import Json
 from sdd_runtime.composition import local_engine
 from sdd_runtime.engine import Engine
 from sdd_runtime.platform import NO_WINDOW
-from sdd_workflows.legacy import PLACEHOLDER, Environment, ImportPlan, translate
 
-from sdd_ui.workspace import WorkspaceCatalog
+from sdd_factory.catalog import ProjectCatalog
+from sdd_factory.legacy.translate import PLACEHOLDER, Environment, ImportPlan, translate
+from sdd_factory.model import TaskRecord
 
 
 @dataclass(frozen=True)
@@ -150,7 +153,7 @@ def summary(source: Source, plan: ImportPlan, env: Environment) -> dict[str, Jso
 
 
 def apply(
-    engine: Engine, catalog: WorkspaceCatalog, source: Source, plan: ImportPlan, language: str
+    engine: Engine, catalog: ProjectCatalog, source: Source, plan: ImportPlan, language: str
 ) -> dict[str, Json]:
     """Create every planned run paused; identical existing runs are kept."""
     project_id = re.sub(r"[^a-z0-9_-]", "-", source.name.lower()).strip("-")[:64] or source.project
@@ -198,15 +201,17 @@ def apply(
         )
         catalog.save_task(
             ticket.id,
-            {
-                "project": project_id,
-                "language": language,
-                "title": ticket.title,
-                "legacy_id": ticket.legacy_id,
-                "plan": ticket.plan,
-                "kind": ticket.kind,
-                "parent": ticket.parent,
-            },
+            TaskRecord.load(
+                {
+                    "project": project_id,
+                    "language": language,
+                    "title": ticket.title,
+                    "legacy_id": ticket.legacy_id,
+                    "plan": ticket.plan,
+                    "kind": ticket.kind,
+                    "parent": ticket.parent,
+                }
+            ),
         )
         created.append(ticket.id)
     return {"project": project_id, "created": created, "kept": kept}
@@ -240,7 +245,7 @@ def main() -> None:
     if args.apply:
         engine = local_engine(args.database.resolve())
         store = engine.store
-        catalog = WorkspaceCatalog(store.catalog(), store.path, store.workflow)
+        catalog = ProjectCatalog(store.catalog(), store.path)
         report["applied"] = apply(engine, catalog, source, plan, args.language)
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     print(json.dumps(report, ensure_ascii=False, indent=2))

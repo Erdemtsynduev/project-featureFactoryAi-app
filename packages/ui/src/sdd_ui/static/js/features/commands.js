@@ -5,9 +5,11 @@
 import * as api from "../core/api.js";
 import { h } from "../core/dom.js";
 import { t } from "../core/i18n.js";
-import { refresh, stepOf, store } from "../core/store.js";
+import { refresh, run as findRun, stepOf, store } from "../core/store.js";
+import { confirmDialog } from "../ui/dialog.js";
 import { attempt } from "../ui/toast.js";
 import { go } from "./shell.js";
+import { attentionText } from "./vocabulary.js";
 
 function recoverable(run) {
   try {
@@ -47,6 +49,38 @@ export async function runCommand(name, run) {
   );
 }
 
+/** Start one task: resume it and, when the queue is paused, start the queue too.
+ * Starting the queue also starts every other allowed task, so that case asks. */
+export async function startTask(run) {
+  const others = store.state.runs.filter(
+    (r) =>
+      r.id !== run.id &&
+      !r.paused &&
+      !r.active &&
+      !["accepted", "blocked"].includes(r.status),
+  ).length;
+  let startQueue = !store.state.settings.running;
+  if (startQueue && others)
+    startQueue = await confirmDialog({
+      title: t("start.queueTitle"),
+      message: t("start.queueText", { count: others }),
+      confirm: t("queue.start"),
+      cancel: t("start.onlyTask"),
+    });
+  return attempt(
+    async () => {
+      await api.command("resume", run);
+      if (startQueue) await api.post("queue", { running: true });
+      await refresh();
+      const moved = findRun(run.id);
+      return moved ? attentionText(moved) : "";
+    },
+    (next) =>
+      t(startQueue ? "command.done.start" : "command.done.resume") +
+      (next ? " — " + next : ""),
+  );
+}
+
 export function commandButton([name, label, tone], run, after) {
   return h(
     "button",
@@ -57,7 +91,7 @@ export function commandButton([name, label, tone], run, after) {
       onclick: async (event) => {
         event.stopPropagation();
         event.currentTarget.disabled = true;
-        await runCommand(name, run);
+        await (name === "resume" ? startTask(run) : runCommand(name, run));
         after?.();
       },
     },

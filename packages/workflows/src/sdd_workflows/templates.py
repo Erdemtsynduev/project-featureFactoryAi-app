@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 
 from sdd_core.codec import canonical, object_json
 from sdd_core.models import Step, Workflow
+from sdd_core.options import StepOptions
 
 from sdd_workflows import prompts
 
@@ -314,15 +315,15 @@ def _merge_steps(first: str, implementer: str, auto_resolve: bool) -> tuple[Step
     return tuple(steps)
 
 
-def requirement(analyst: str = "codex") -> Workflow:
-    """Turn one requirement into an approved specification and ticket breakdown.
+def feature(analyst: str = "codex") -> Workflow:
+    """Turn one feature into an approved specification (PRD) and ticket breakdown.
 
     The agent may ask structured questions; the human approves the result. The
     tickets step declares structured tickets; the application admits them as child
     ticket runs only after the approval, never from the agent's own decision.
     """
     return Workflow(
-        "requirement",
+        "feature",
         "spec",
         (
             Step(
@@ -332,7 +333,7 @@ def requirement(analyst: str = "codex") -> Workflow:
                 prompts.SPEC,
                 (("done", "tickets"), ("questions", "interview")),
                 required=True,
-                config='{"purpose":"planning"}',
+                config='{"produces":"specification","purpose":"planning"}',
             ),
             Step(
                 "interview",
@@ -347,7 +348,7 @@ def requirement(analyst: str = "codex") -> Workflow:
                 prompts.BREAKDOWN,
                 (("done", "approve"),),
                 required=True,
-                config='{"emits":"tickets","purpose":"planning"}',
+                config='{"produces":"tickets","purpose":"planning"}',
             ),
             Step(
                 "approve",
@@ -360,13 +361,14 @@ def requirement(analyst: str = "codex") -> Workflow:
             Step("accepted", "finish"),
         ),
         max_calls=8,
-        max_input_chars=40000,
+        # A feature's brief lists a whole plan's open rows and recorded drafts.
+        max_input_chars=60000,
         max_planning_calls=6,
     )
 
 
-def feature() -> Workflow:
-    """Execute an explicitly approved requirement without a portfolio audit loop."""
+def approved_feature() -> Workflow:
+    """Execute an explicitly approved feature without planning: approval, then build."""
     flow = main_flow()
     steps = tuple(step for step in flow.steps if step.id not in ("spec", "tickets", "interview"))
     approval = Step(
@@ -378,7 +380,7 @@ def feature() -> Workflow:
     )
     return replace(
         flow,
-        id="feature",
+        id="approved-feature",
         entry="approve",
         steps=(approval, *steps),
         max_calls=8,
@@ -466,25 +468,30 @@ def localized(flow: Workflow, language: str) -> Workflow:
 
 
 def with_checks(flow: Workflow, argv: list[str]) -> Workflow:
-    """Point every generic command check at the project's own check command.
+    """Point every unconfigured command check at the project's own check command.
 
-    Without a project command the generic checks are bypassed: each route into a
-    check goes to that check's `passed` target instead, so review still gates work.
+    Checks that already name a command (a ticket's repository checks) keep it.
+    Without a project command the unconfigured checks are bypassed: each route into
+    such a check goes to its `passed` target instead, so review still gates work.
     """
-    generic = {s.id for s in flow.steps if s.kind == "check" and s.handler == "command"}
+    unconfigured = {
+        s.id
+        for s in flow.steps
+        if s.kind == "check" and s.handler == "command" and not StepOptions.parse(s.config).argv
+    }
     if argv:
         return replace(
             flow,
             steps=tuple(
-                replace(step, config=canonical({**object_json(step.config), "argv": list(argv)}))
-                if step.id in generic
+                replace(
+                    step,
+                    config=StepOptions.parse(step.config).changed(argv=tuple(argv)).render(),
+                )
+                if step.id in unconfigured
                 else step
                 for step in flow.steps
             ),
         )
-    unconfigured = {
-        s.id for s in flow.steps if s.id in generic and not object_json(s.config).get("argv")
-    }
     if not unconfigured:
         return flow
 

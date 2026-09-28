@@ -1,53 +1,35 @@
-/* Board: the project's tasks by what they need, plus the plans tree.
+/* Board: the project's tasks by what they need, as status columns or plan rows.
  *
  * Columns follow the server's attention reason: Queue (paused, waiting),
  * In progress, Needs you (answers, blockers) and Done. Every card says why it
- * is (not) moving and offers the one action that moves it. Dragging between
- * Queue and In progress pauses or resumes; nothing can be dragged into Done. */
+ * is (not) moving and offers the one action that moves it. "By plan" shows one
+ * collapsible row per plan with the same columns inside and the plan's own
+ * Start and Pause, so a plan starts as a unit. Columns page by PAGE cards.
+ * Dragging between Queue and In progress pauses or resumes; nothing can be
+ * dragged into Done. */
 
-import * as api from "../core/api.js";
 import { h, memo, replace } from "../core/dom.js";
-import { formatTime, money, t } from "../core/i18n.js";
-import { recall, remember } from "../core/storage.js";
+import { t } from "../core/i18n.js";
+import { remember } from "../core/storage.js";
 import {
   boardFilter,
-  childrenOf,
   hasScope,
   kindOf,
   KINDS,
-  laneOf,
   meta,
-  refresh,
-  run as findRun,
-  runnerOf,
+  needsElsewhere,
+  planTitle,
   runs,
-  stepOf,
+  selectProject,
   store,
-  titleOf,
 } from "../core/store.js";
-import { attempt } from "../ui/toast.js";
 import { openBulkResume, pauseAll } from "./bulk.js";
-import { primaryAction } from "./commands.js";
+import { lanes } from "../board/cards.js";
+import { plansView } from "../board/plans.js";
+import { filters, openPlans, shown, view } from "../board/state.js";
 import { welcome } from "./onboarding.js";
-import { openTask, registerView } from "./shell.js";
-import {
-  attentionText,
-  elapsed,
-  KIND_GLYPH,
-  kindLabel,
-  stepName,
-} from "./vocabulary.js";
+import { go, registerView } from "./shell.js";
 
-const LANES = ["queue", "running", "needs", "done"];
-const LIMIT = 40;
-
-const filters = {
-  mode: recall("board-mode", "live"),
-  kind: recall("kind-filter", ""),
-  query: recall("task-search", ""),
-  plan: recall("plan-filter", ""),
-};
-const openPlans = new Set(recall("open-plans", []));
 function syncBoardFilter() {
   boardFilter.kind = filters.kind;
   boardFilter.plan = filters.plan;
@@ -56,13 +38,37 @@ syncBoardFilter();
 let root = null;
 let body = null;
 let toolbar = null;
+let notice = null;
 const render = memo();
 
 function setFilter(key, value, storageKey) {
   filters[key] = value;
+  shown.clear();
   syncBoardFilter();
   remember(storageKey, value);
   draw(true);
+}
+
+/** Show one plan's row on the board (from the overview's plan list). */
+export function showPlan(id) {
+  filters.mode = "plans";
+  filters.plan = "";
+  shown.clear();
+  syncBoardFilter();
+  remember("board-mode", "plans");
+  remember("plan-filter", "");
+  if (id) {
+    openPlans.add(id);
+    remember("open-plans", [...openPlans]);
+  }
+  go("board");
+  draw(true);
+  if (id)
+    requestAnimationFrame(() =>
+      root
+        ?.querySelector(`.plan[data-plan="${CSS.escape(id)}"]`)
+        ?.scrollIntoView({ block: "start" }),
+    );
 }
 
 function matches(run) {
@@ -104,7 +110,7 @@ function renderToolbar(all) {
     ),
   );
   const chips =
-    counts.requirement + counts.ticket
+    counts.feature + counts.ticket
       ? h(
           "div",
           { class: "chips", role: "group", "aria-label": t("board.kind") },
@@ -158,7 +164,7 @@ function renderToolbar(all) {
     ),
     h(
       "button",
-      { type: "button", class: "ghost", onclick: pauseAll },
+      { type: "button", class: "ghost", onclick: () => pauseAll() },
       t("bulk.pause"),
     ),
   );
@@ -166,9 +172,9 @@ function renderToolbar(all) {
     toolbar,
     segmented,
     chips,
-    h("span", { class: "spacer" }),
     search,
     plan,
+    h("span", { class: "spacer" }),
     bulk,
   );
   if (focused === "task-search") {
@@ -178,291 +184,29 @@ function renderToolbar(all) {
   }
 }
 
-function planTitle(id) {
-  const plans =
-    store.state.plans?.[store.project] ||
-    Object.values(store.state.plans || {}).flat();
-  return plans.find((p) => p.id === id)?.title || t("board.planId", { id });
-}
-
-/* Cards ---------------------------------------------------------------------- */
-
-function card(run) {
-  const kind = kindOf(run);
-  const m = meta(run);
-  const step = stepOf(run);
-  const facts = [];
-  if (kind === "requirement") {
-    const children = childrenOf(run);
-    if (children.length)
-      facts.push(
-        t("card.ticketsDone", {
-          done: children.filter((c) => c.status === "accepted").length,
-          count: children.length,
-        }),
-      );
-  }
-  if (kind === "ticket" && m.parent)
-    facts.push(t("card.from", { id: m.parent }));
-  if (run.calls) facts.push(t("card.calls", { count: run.calls }));
-  const spent = store.state.usage?.per_run_usd?.[run.id];
-  if (spent) facts.push("≈ " + money(spent));
-  const open = () => openTask(run.id);
-  const action = primaryAction(run, open);
-  const node = h(
-    "article",
-    {
-      class: `card kind-${kind} tone-${run.attention?.tone || "idle"}`,
-      tabindex: "0",
-      role: "button",
-      "aria-label": titleOf(run),
-      dataset: { run: run.id },
-      draggable: run.status !== "accepted" ? "true" : false,
-      onclick: open,
-      onkeydown: (e) => {
-        if ((e.key === "Enter" || e.key === " ") && e.target === node) {
-          e.preventDefault();
-          open();
-        }
-      },
-    },
+/** Needs-you in other projects is invisible from this one; say so and link there. */
+function renderNotice() {
+  const elsewhere = needsElsewhere();
+  if (!elsewhere.length) return replace(notice);
+  replace(
+    notice,
     h(
-      "div",
-      { class: "card-head" },
-      h(
-        "span",
-        { class: "kind-tag" },
-        KIND_GLYPH[kind] + " " + kindLabel(kind),
-      ),
-      m.plan ? h("span", { class: "plan-chip" }, m.plan) : null,
-    ),
-    h("strong", { class: "card-title" }, titleOf(run)),
-    h(
-      "div",
-      { class: "card-step" },
-      h("span", {}, stepName(step || run.step)),
-      h("span", { class: "runner" }, runnerOf(step, t)),
-    ),
-    h("p", { class: "card-why" }, attentionText(run)),
-    run.active && step?.kind !== "human" ? progressLine(run) : null,
-    facts.length || action
-      ? h(
-          "div",
-          { class: "card-foot" },
-          h("small", { class: "card-facts" }, facts.join(" · ")),
-          action,
-        )
-      : null,
-  );
-  node.addEventListener("dragstart", (e) => {
-    e.dataTransfer.setData("text/plain", run.id);
-    e.dataTransfer.effectAllowed = "move";
-    root.classList.add("dragging");
-  });
-  node.addEventListener("dragend", () => root.classList.remove("dragging"));
-  return node;
-}
-
-/** The queue lists what can start first; other lanes keep their order. */
-function grouped(key, items) {
-  const shown = items.slice(0, LIMIT);
-  if (key !== "queue") return shown;
-  const startable = (r) =>
-    r.paused && r.status !== "blocked" && !r.pending_dependencies?.length;
-  const ready = items.filter(startable);
-  const later = items.filter((r) => !startable(r));
-  const out = [];
-  if (ready.length)
-    out.push(
-      t("board.group.startable", { count: ready.length }),
-      ...ready.slice(0, LIMIT),
-    );
-  const room = Math.max(0, LIMIT - Math.min(ready.length, LIMIT));
-  if (later.length && room)
-    out.push(
-      t("board.group.later", { count: later.length }),
-      ...later.slice(0, room),
-    );
-  return out;
-}
-
-function lane(key, items) {
-  const empty =
-    filters.query || filters.plan || filters.kind
-      ? t("board.noMatches")
-      : t("board.empty." + key);
-  const section = h(
-    "section",
-    {
-      class: "lane lane-" + key,
-      dataset: { lane: key },
-      "aria-label": t("board.lane." + key),
-    },
-    h(
-      "h2",
-      {},
-      h("span", {}, t("board.lane." + key)),
-      h("span", { class: "lane-count" }, items.length),
-    ),
-    grouped(key, items).map((entry) =>
-      typeof entry === "string"
-        ? h("h3", { class: "lane-group" }, entry)
-        : card(entry),
-    ),
-    items.length > LIMIT
-      ? h(
-          "p",
-          { class: "hint" },
-          t("board.more", { count: items.length - LIMIT }),
-        )
-      : null,
-    items.length ? null : h("div", { class: "empty" }, empty),
-  );
-  if (key === "queue" || key === "running") {
-    section.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      section.classList.add("drag-over");
-    });
-    section.addEventListener("dragleave", () =>
-      section.classList.remove("drag-over"),
-    );
-    section.addEventListener("drop", (e) => {
-      e.preventDefault();
-      section.classList.remove("drag-over");
-      drop(e.dataTransfer.getData("text/plain"), key);
-    });
-  }
-  return section;
-}
-
-/** A live line for a running attempt: spinner, elapsed time, share of its timeout. */
-function progressLine(run) {
-  const { started, deadline } = run.active;
-  const share = Math.min(
-    100,
-    Math.round((100 * (Date.now() / 1000 - started)) / (deadline - started)),
-  );
-  return h(
-    "div",
-    {
-      class: "card-progress",
-      title: t("live.timeoutAt", { time: formatTime(deadline) }),
-    },
-    h("span", { class: "spinner", "aria-hidden": "true" }),
-    h(
-      "span",
-      { class: "elapsed", dataset: { since: String(started) } },
-      elapsed(started),
-    ),
-    h(
-      "span",
-      { class: "progress-track" },
-      h("span", { style: { width: share + "%" } }),
-    ),
-  );
-}
-
-function drop(id, key) {
-  const run = store.state.runs.find((r) => r.id === id);
-  if (!run) return;
-  const wanted = key === "queue" ? "pause" : "resume";
-  if (wanted === "pause" && run.paused) return;
-  if (wanted === "resume" && !run.paused) return;
-  attempt(
-    async () => {
-      if (run.status === "blocked") throw Error(t("board.dropBlocked"));
-      await api.command(wanted, run);
-      await refresh();
-      // Say what happens next: resumed is not the same as running.
-      const moved = findRun(id);
-      return moved ? attentionText(moved) : "";
-    },
-    (next) => t("command.done." + wanted) + (next ? " — " + next : ""),
-  );
-}
-
-/* Plans ---------------------------------------------------------------------- */
-
-function plansView(items) {
-  const byPlan = new Map();
-  for (const run of items) {
-    const plan = meta(run).plan || "";
-    if (!byPlan.has(plan)) byPlan.set(plan, []);
-    byPlan.get(plan).push(run);
-  }
-  if (!byPlan.size) return h("p", { class: "empty" }, t("plans.empty"));
-  return h(
-    "div",
-    { class: "plans" },
-    [...byPlan.entries()].map(([id, list]) => {
-      const done = list.filter((r) => r.status === "accepted").length;
-      const waiting = list.filter((r) => laneOf(r) === "needs").length;
-      const details = h(
-        "details",
-        {
-          class: "plan",
-          open: openPlans.has(id),
-          ontoggle: (e) => {
-            if (e.target.open) openPlans.add(id);
-            else openPlans.delete(id);
-            remember("open-plans", [...openPlans]);
-          },
-        },
+      "p",
+      { class: "attention tone-attention elsewhere" },
+      h("span", {}, t("board.elsewhere")),
+      elsewhere.map(({ id, name, count }) =>
         h(
-          "summary",
-          {},
-          h(
-            "span",
-            { class: "plan-name" },
-            id ? planTitle(id) : t("plans.none"),
-          ),
-          h(
-            "span",
-            { class: "plan-bar" },
-            h("span", {
-              style: { width: Math.round((100 * done) / list.length) + "%" },
-            }),
-          ),
-          h("span", { class: "plan-progress" }, `${done} / ${list.length}`),
-          waiting
-            ? h(
-                "span",
-                { class: "pill tone-attention" },
-                t("plans.waiting", { count: waiting }),
-              )
-            : null,
+          "button",
+          {
+            type: "button",
+            class: "primary-soft",
+            onclick: () => selectProject(id),
+          },
+          `${name || t("project.loose")} · ${count}`,
         ),
-        tree(list),
-      );
-      return details;
-    }),
+      ),
+    ),
   );
-}
-
-function tree(list) {
-  const ids = new Set(list.map((r) => r.id));
-  const roots = list.filter((r) => !ids.has(meta(r).parent));
-  const row = (run, depth) =>
-    h(
-      "button",
-      {
-        type: "button",
-        class: "tree-row kind-" + kindOf(run),
-        style: { "--depth": depth },
-        onclick: () => openTask(run.id),
-      },
-      h("span", { class: "tree-glyph" }, KIND_GLYPH[kindOf(run)]),
-      h("span", { class: "tree-title" }, titleOf(run)),
-      h("span", { class: "tree-why" }, attentionText(run)),
-    );
-  const rows = [];
-  const walk = (run, depth) => {
-    rows.push(row(run, depth));
-    for (const child of list.filter((r) => meta(r).parent === run.id))
-      walk(child, depth + 1);
-  };
-  roots.forEach((r) => walk(r, 0));
-  return h("div", { class: "plan-tree" }, rows);
 }
 
 /* View ----------------------------------------------------------------------- */
@@ -489,28 +233,23 @@ function draw(force = false) {
     store.state.settings,
     store.state.profile_config,
     store.project,
+    store.state.plans,
+    needsElsewhere(),
     window.ffaiPreferences.language,
   ];
   if (force) render(null, () => {});
   render(inputs, () => {
     if (!toolbar || !root.contains(toolbar)) {
       toolbar = h("div", { class: "board-toolbar" });
+      notice = h("div", { class: "board-notice" });
       body = h("div", { id: "board", class: "board" });
-      replace(root, toolbar, body);
+      replace(root, toolbar, notice, body);
     }
     renderToolbar(all);
+    renderNotice();
     body.classList.toggle("as-plans", filters.mode === "plans");
     if (filters.mode === "plans") replace(body, plansView(items));
-    else
-      replace(
-        body,
-        LANES.map((key) =>
-          lane(
-            key,
-            items.filter((r) => laneOf(r) === key),
-          ),
-        ),
-      );
+    else replace(body, lanes(items, ""));
   });
 }
 
@@ -521,6 +260,8 @@ registerView({
   glyph: "▤",
   mount(container) {
     root = container;
+    view.root = container;
+    view.redraw = () => draw(true);
     toolbar = null;
     draw(true);
   },
@@ -529,5 +270,6 @@ registerView({
   },
   unmount() {
     root = null;
+    view.root = null;
   },
 });

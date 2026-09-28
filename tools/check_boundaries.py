@@ -5,7 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED = {
-    "ui": {"ui", "core", "runtime", "providers", "workflows", "usage"},
+    "ui": {"ui", "factory", "core", "runtime", "providers", "workflows", "usage"},
+    "factory": {"factory", "core", "runtime", "workflows"},
     "usage": {"core", "usage"},
     "core": {"core"},
     "storage": {"core", "storage"},
@@ -20,7 +21,7 @@ COMPOSITION = {
     ("runtime", "engine.py"): {"sdd_storage"},
 }
 # The legacy importer reads a foreign sdd-orchestrator database, read-only.
-FOREIGN_SQL = {("ui", "legacy.py")}
+FOREIGN_SQL = {("factory", "importer.py")}
 FORBIDDEN = {
     "os",
     "pathlib",
@@ -41,7 +42,7 @@ for package, allowed in ALLOWED.items():
         where = (package, path.name)
         for node in ast.walk(tree):
             if (
-                package in ("runtime", "ui")
+                package in ("runtime", "ui", "factory")
                 and where not in FOREIGN_SQL
                 and isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
@@ -84,9 +85,13 @@ for package, allowed in ALLOWED.items():
                     )
                 if package in ("core", "usage") and module in FORBIDDEN:
                     errors.append(f"{path}:{node.lineno}: IO dependency in {package}: {module}")
-                if package == "ui" and module == "sqlite3" and where not in FOREIGN_SQL:
-                    errors.append(f"{path}:{node.lineno}: SQL in ui; use a storage port")
-                if package == "ui" and name == "sdd_runtime.cli":
+                if (
+                    package in ("ui", "factory")
+                    and module == "sqlite3"
+                    and where not in FOREIGN_SQL
+                ):
+                    errors.append(f"{path}:{node.lineno}: SQL in {package}; use a storage port")
+                if package in ("ui", "factory") and name == "sdd_runtime.cli":
                     errors.append(f"{path}:{node.lineno}: compose through sdd_runtime.composition")
                 if module.startswith("sdd_") and module[4:] not in allowed:
                     if module in COMPOSITION.get(where, set()):

@@ -16,7 +16,7 @@ import {
   relativeTime,
   t,
 } from "../core/i18n.js";
-import { refresh, store } from "../core/store.js";
+import { refresh, runs, store } from "../core/store.js";
 import { attempt, toastError } from "../ui/toast.js";
 import { registerView } from "./shell.js";
 
@@ -53,6 +53,9 @@ function meterBar(label, value, max, hint) {
 
 function budgetPanel() {
   const { totals, settings } = store.state;
+  // A budget smaller than the open work stops the queue midway; say it upfront.
+  const open = runs().filter((r) => r.status !== "accepted").length;
+  const small = open > settings.max_calls - totals.calls;
   const calls = h("input", {
     name: "max_calls",
     type: "number",
@@ -81,6 +84,13 @@ function budgetPanel() {
     "section",
     { class: "panel" },
     h("h2", {}, t("usage.budgetTitle")),
+    small
+      ? h(
+          "p",
+          { class: "attention tone-waiting" },
+          t("usage.budgetSmall", { open, max: settings.max_calls }),
+        )
+      : null,
     meterBar(t("usage.allCalls"), totals.calls, settings.max_calls),
     meterBar(
       t("usage.planningCalls"),
@@ -299,6 +309,7 @@ function draw() {
       state.totals,
       state.settings,
       state.usage,
+      runs().filter((r) => r.status !== "accepted").length,
       window.ffaiPreferences.language,
     ],
     () =>

@@ -1,9 +1,11 @@
-"""Task use cases of the operator UI: create, control, answer, decompose, recover.
+"""Work use cases: create, control, answer, approve a breakdown, recover.
 
 Every mutation goes through a versioned engine command. Decomposition is
-deterministic: a requirement's tickets step declares structured tickets, the
-operator approves them, and only then are they admitted as paused child ticket
-runs with their dependencies. Admission is idempotent per ticket id.
+deterministic: a feature's breakdown step declares structured tickets, the operator
+approves the specification and the tickets, and only then are the tickets admitted
+as paused child runs with their dependencies and owned repositories. Admission is
+idempotent per ticket. On approval the specification and the breakdown become the
+feature's artifacts, kept by the factory, never written into the project.
 """
 
 import re
@@ -13,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
-from sdd_core.codec import integer, mapping, object_json, result_load, sequence, text
+from sdd_core.codec import flag, integer, mapping, sequence, text
 from sdd_core.memory import TicketDraft, tickets_of
 from sdd_core.models import Json, Run
 from sdd_core.ports import Conflict
@@ -21,15 +23,13 @@ from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_workflows.templates import question_example
 
-from sdd_ui.diagnostics import record
-from sdd_ui.flightlog import FlightLog
-from sdd_ui.flows import INTENTS, FlowLibrary
-from sdd_ui.workspace import WorkspaceCatalog
+from sdd_factory.catalog import Artifact, ProjectCatalog
+from sdd_factory.diagnostics import record
+from sdd_factory.flows import FlowLibrary
+from sdd_factory.journal import FlightLog
+from sdd_factory.model import INTENT_KIND, INTENTS, LANGUAGES, TaskRecord, language_rule
 
-KIND_OF_INTENT = {"requirement": "requirement", "ticket": "ticket"}
 SPECIFICATION_CHARS = 20000
-LANGUAGES = {"ru": "Russian", "en": "English"}
-
 
 CYRILLIC = dict(
     zip(
@@ -40,6 +40,34 @@ CYRILLIC = dict(
 )
 
 
+def ticket_scope(root: Path, paths: tuple[str, ...]) -> tuple[str, ...]:
+    """The repositories a ticket owns, so independent tickets run side by side.
+
+    Each owned path maps to the Git repository folder that contains it (one or two
+    levels below the workspace). Any path outside a known repository means the
+    ticket claims the whole workspace.
+    """
+    found: set[str] = set()
+    for raw in paths:
+        parts = Path(raw.replace("\\", "/")).parts
+        if not parts or Path(raw).is_absolute() or ".." in parts:
+            return ()
+        for depth in (2, 1):
+            if len(parts) >= depth and (root.joinpath(*parts[:depth]) / ".git").exists():
+                found.add("/".join(parts[:depth]))
+                break
+        else:
+            return ()
+    # Nested repositories collapse into the outer one: scopes must not contain each other.
+    return tuple(
+        sorted(
+            path
+            for path in found
+            if not any(other != path and path.startswith(other + "/") for other in found)
+        )
+    )
+
+
 def slug(title: str, suffix: str) -> str:
     """A readable run id from a title (Cyrillic is transliterated) plus a unique suffix."""
     latin = "".join(CYRILLIC.get(char, char) for char in title.lower())
@@ -47,11 +75,25 @@ def slug(title: str, suffix: str) -> str:
     return f"{base}-{suffix}"
 
 
+def tickets_markdown(title: str, drafts: tuple[TicketDraft, ...], ids: dict[str, str]) -> str:
+    lines = [f"# Тикеты · {title}", ""]
+    for draft in drafts:
+        lines += [f"## {draft.id} · {draft.title}", f"Задача: `{ids[draft.id]}`", ""]
+        if draft.goal:
+            lines += [draft.goal, ""]
+        if draft.depends_on:
+            lines += ["Зависит от: " + ", ".join(draft.depends_on), ""]
+        if draft.paths:
+            lines += ["Владеет: " + ", ".join(draft.paths), ""]
+        lines += ["Приёмка:", *[f"- {item}" for item in draft.acceptance], ""]
+    return "\n".join(lines)
+
+
 class TaskService:
     def __init__(
         self,
         engine: Engine,
-        catalog: WorkspaceCatalog,
+        catalog: ProjectCatalog,
         flows: FlowLibrary,
         log: FlightLog,
         bind: Callable[[str], None],
@@ -87,30 +129,24 @@ class TaskService:
             identifier,
             definition,
             workspace,
-            self._context(language, text(doc.get("context", ""), "context")),
+            language_rule(language) + text(doc.get("context", ""), "context"),
             revision(workspace),
             time.time(),
             tuple(text(x, "dependency") for x in sequence(doc.get("dependencies", []))),
         )
-        metadata: dict[str, Json] = {
-            "project": project_id,
-            "language": language,
-            "title": title or run.id,
-            "kind": KIND_OF_INTENT.get(intent, "task"),
-        }
-        if intent:
-            metadata["intent"] = intent
-        self.catalog.save_task(run.id, metadata)
+        self.catalog.save_task(
+            run.id,
+            TaskRecord(
+                project=project_id,
+                title=title or run.id,
+                kind=INTENT_KIND.get(intent, "task"),
+                language=language,
+                intent=intent,
+            ),
+        )
         self.bind(run.id)
         self.log.record("task_created", run=run.id, intent=intent or "definition")
         return asdict(run)
-
-    @staticmethod
-    def _context(language: str, body: str) -> str:
-        return (
-            f"Response language: {LANGUAGES[language]}. Write user-facing questions, summaries"
-            " and explanations in this language; keep protocol keys in English.\n" + body
-        )
 
     def demo(self, doc: dict[str, Json]) -> dict[str, object]:
         """A human-only task in a sample folder: shows a question without a model."""
@@ -128,10 +164,21 @@ class TaskService:
         )
         self.engine.command(run.id, "resume", uuid.uuid4().hex, run.version, time.time())
         title = "Пример вопроса команды" if language == "ru" else "Team question example"
-        self.catalog.save_task(
-            run.id, {"title": title, "language": language, "project": "", "kind": "task"}
-        )
+        self.catalog.save_task(run.id, TaskRecord(title=title, language=language))
         return asdict(self.engine.dispatch(run.id, time.time(), uuid.uuid4().hex))
+
+    def rename(self, doc: dict[str, Json]) -> dict[str, Json]:
+        """Correct a task's title after creation."""
+        identifier = text(doc.get("id"), "id")
+        title = text(doc.get("title"), "title").strip()
+        if not title:
+            raise ValueError("A title is required")
+        current = self.catalog.task(identifier)
+        self.engine.store.get(identifier)
+        record = current.changed(title=title[:200])
+        self.catalog.update_task(identifier, record)
+        self.log.record("task_renamed", run=identifier)
+        return record.document()
 
     # Control ------------------------------------------------------------------
 
@@ -151,7 +198,10 @@ class TaskService:
 
         `scope` "startable" resumes paused tasks whose dependencies are accepted;
         "all" resumes every paused task (the rest wait for their dependencies).
-        Optional `kind` and `plan` narrow it to the board's current filter.
+        Optional `kind`, `plan` and `ids` narrow it to what the operator selected
+        (the board filter, a plan row, one task). `with_dependencies` also resumes
+        the paused prerequisites of every unfinished selected task, transitively
+        within the project, so work that waits on other work moves.
         Each task is commanded at its own current version; moved tasks are skipped.
         """
         if command not in ("resume", "pause"):
@@ -162,19 +212,24 @@ class TaskService:
             raise ValueError("Unknown scope")
         kind = text(doc.get("kind", ""), "kind")
         plan = text(doc.get("plan", ""), "plan")
-        metadata = self.catalog.task_metadata()
+        ids = {text(x, "id") for x in sequence(doc.get("ids", []))}
+        with_dependencies = flag(doc.get("with_dependencies", False), "with_dependencies")
+        records = self.catalog.tasks()
 
         def wanted(run: Run) -> bool:
-            meta = metadata.get(run.id, {})
-            return (not kind or meta.get("kind", "task") == kind) and (
-                not plan or meta.get("plan") == plan
+            item = records.get(run.id, TaskRecord())
+            return (
+                (not kind or item.kind == TaskRecord.load({"kind": kind}).kind)
+                and (not plan or item.plan == plan)
+                and (not ids or run.id in ids)
             )
 
-        chosen = [
-            run
-            for run in self._project_runs(project_id)
-            if wanted(run) and self._eligible(command, run, scope)
-        ]
+        project = self.project_runs(project_id)
+        selected = [run for run in project if wanted(run)]
+        chosen = [run for run in selected if self._eligible(command, run, scope)]
+        if command == "resume" and with_dependencies:
+            unfinished = [run for run in selected if run.status != "accepted"]
+            chosen += self._prerequisites(unfinished, {run.id for run in project})
         done: list[str] = []
         skipped = 0
         for run in chosen:
@@ -189,9 +244,27 @@ class TaskService:
             scope=scope,
             task_kind=kind,
             plan=plan,
+            tasks=len(ids),
+            with_dependencies=with_dependencies,
             count=len(done),
         )
         return {"changed": list[Json](done), "skipped": skipped}
+
+    def _prerequisites(self, selected: list[Run], project: set[str]) -> list[Run]:
+        """Resumable prerequisites of `selected` outside it, within the project."""
+        seen = {run.id for run in selected}
+        found: list[Run] = []
+        frontier = list(selected)
+        with self.engine.store.unit() as db:
+            while frontier:
+                for dependency in db.dependencies(frontier.pop().id):
+                    if dependency.id in seen or dependency.id not in project:
+                        continue
+                    seen.add(dependency.id)
+                    frontier.append(dependency)
+                    if self._eligible("resume", dependency, "all"):
+                        found.append(dependency)
+        return found
 
     def _eligible(self, command: str, run: Run, scope: str) -> bool:
         if run.status == "accepted" or run.active is not None:
@@ -205,17 +278,17 @@ class TaskService:
         with self.engine.store.unit() as db:
             return all(dependency.status == "accepted" for dependency in db.dependencies(run.id))
 
-    def _project_runs(self, project_id: str) -> list[Run]:
-        """Runs of a project: by recorded metadata, else by workspace (older imports)."""
+    def project_runs(self, project_id: str) -> list[Run]:
+        """Runs of a project: by their record, else by workspace (older imports)."""
         project = self.catalog.project(project_id)
-        metadata = self.catalog.task_metadata()
+        records = self.catalog.tasks()
         workspaces = {str(p["id"]): str(p["workspace"]) for p in self.catalog.projects()}
         with self.engine.store.unit() as db:
             runs = db.runs()
-            locations = {run.id: db.location(run.id)[0] for run in runs}
+            locations = dict(db.locations())
 
         def owner(run: Run) -> str:
-            declared = str(metadata.get(run.id, {}).get("project", ""))
+            declared = records.get(run.id, TaskRecord()).project
             if declared in workspaces:
                 return declared
             return next((k for k, v in workspaces.items() if v == locations[run.id]), "")
@@ -251,8 +324,8 @@ class TaskService:
         run_id = text(doc.get("id"), "id")
         outcome = text(doc.get("outcome"), "outcome")
         drafts = tickets_of(self.engine.facts(run_id)) if outcome == "approved" else ()
-        # Publish the ticket flow before the answer, so approval never half-applies.
-        definition = self._ticket_definition(run_id) if drafts else ""
+        # Publish the ticket flows before the answer, so approval never half-applies.
+        definitions = self._ticket_definitions(run_id, drafts)
         choices = {
             key: text(value, "choice") for key, value in mapping(doc.get("choices", {})).items()
         }
@@ -268,43 +341,45 @@ class TaskService:
             integer(doc.get("version"), "version"),
             time.time(),
         )
-        created = self._admit(run, drafts, definition) if drafts else []
+        created = self._admit(run, drafts, definitions) if drafts else []
         self.log.record("answered", run=run_id, outcome=outcome, tickets=len(created))
         return {**asdict(run), "admitted": list[Json](created)}
 
     def preview(self, run_id: str) -> list[dict[str, object]]:
-        """Tickets awaiting approval on a requirement, for the approval dialog."""
+        """Tickets awaiting approval on a feature, for the approval dialog."""
         try:
             return [asdict(draft) for draft in tickets_of(self.engine.facts(run_id))]
         except ValueError:
             return []
 
-    def _ticket_definition(self, run_id: str) -> str:
-        meta = self.catalog.task_metadata().get(run_id, {})
-        return self.flows.ensure(
-            "ticket", str(meta.get("project", "")), str(meta.get("language", "ru"))
-        )
-
-    def _specification(self, run_id: str) -> str:
-        """The latest specification the planner produced before its breakdown."""
+    def _ticket_definitions(self, run_id: str, drafts: tuple[TicketDraft, ...]) -> dict[str, str]:
+        """Each ticket's workflow: the project's ticket template with its owners' checks."""
+        if not drafts:
+            return {}
+        item = self.catalog.task(run_id)
         with self.engine.store.unit() as db:
-            documents = db.recent_results(run_id, 12)
-        results = [result_load(document) for document in documents]
-        breakdown = next(
-            (i for i, r in enumerate(results) if object_json(r.data or "{}").get("tickets")), None
-        )
-        if breakdown is None:
-            return ""
-        for result in results[breakdown + 1 :]:
-            if result.outcome == "done" and "answer" not in object_json(result.data or "{}"):
+            root = Path(db.location(run_id)[0])
+        return {
+            draft.id: self.flows.ensure(
+                "ticket", item.project, item.language, ticket_scope(root, draft.paths)
+            )
+            for draft in drafts
+        }
+
+    def specification(self, run_id: str) -> str:
+        """The latest specification the feature's specification step produced."""
+        for result in self.engine.outputs(run_id, "specification"):
+            if result.outcome == "done":
                 return result.reason[:SPECIFICATION_CHARS]
         return ""
 
-    def _admit(self, parent: Run, drafts: tuple[TicketDraft, ...], definition: str) -> list[str]:
-        meta = self.catalog.task_metadata().get(parent.id, {})
+    def _admit(
+        self, parent: Run, drafts: tuple[TicketDraft, ...], definitions: dict[str, str]
+    ) -> list[str]:
+        feature = self.catalog.task(parent.id)
         with self.engine.store.unit() as db:
             root = Path(db.location(parent.id)[0])
-        specification = self._specification(parent.id)
+        specification = self.specification(parent.id)
         ids = {draft.id: self._child_id(parent.id, draft.id) for draft in drafts}
         created: list[str] = []
         for draft in drafts:
@@ -314,31 +389,73 @@ class TaskService:
                 continue  # admitted before: approval is idempotent per ticket
             except KeyError:
                 pass
-            language = str(meta.get("language", "ru"))
             run = self.engine.create(
                 child,
-                definition,
+                definitions[draft.id],
                 root,
-                self._context(language, draft.context(specification)),
+                language_rule(feature.language) + draft.context(specification),
                 None,
                 time.time(),
                 tuple(ids[dependency] for dependency in draft.depends_on),
+                ticket_scope(root, draft.paths),
             )
             self.catalog.save_task(
                 run.id,
-                {
-                    "project": meta.get("project", ""),
-                    "language": language,
-                    "title": draft.title,
-                    "kind": "ticket",
-                    "parent": parent.id,
-                    "plan": meta.get("plan", ""),
-                },
+                TaskRecord(
+                    project=feature.project,
+                    title=draft.title,
+                    kind="ticket",
+                    language=feature.language,
+                    parent=parent.id,
+                    plan=feature.plan,
+                ),
             )
             self.bind(run.id)
             created.append(run.id)
+        title = feature.title or parent.id
+        self.catalog.save_artifact(Artifact(parent.id, "specification", specification))
+        self.catalog.save_artifact(
+            Artifact(
+                parent.id,
+                "tickets",
+                tickets_markdown(title, drafts, ids),
+                [{**asdict(draft), "run": ids[draft.id]} for draft in drafts],
+            )
+        )
+        self._export(parent.id)
         self.log.record("tickets_admitted", run=parent.id, tickets=list[Json](created))
         return created
+
+    # Artifacts -------------------------------------------------------------------
+
+    def artifacts_folder(self, run_id: str) -> Path:
+        """Where the factory exports a feature's documents for people to read."""
+        project = self.catalog.task(run_id).project or "_"
+        return self.engine.store.path.parent / "artifacts" / project / run_id
+
+    def _export(self, run_id: str) -> None:
+        folder = self.artifacts_folder(run_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        title = self.catalog.task(run_id).title or run_id
+        stored = self.catalog.artifacts(run_id)
+        if "specification" in stored:
+            text = f"# {title}\n\n{stored['specification'].content}\n"
+            (folder / "spec.md").write_text(text, encoding="utf-8")
+        if "tickets" in stored:
+            (folder / "tickets.md").write_text(stored["tickets"].content, encoding="utf-8")
+
+    def documents(self, run_id: str) -> dict[str, object]:
+        """The feature's specification (PRD) and ticket breakdown: approved or in progress."""
+        stored = self.catalog.artifacts(run_id)
+        approved = "specification" in stored
+        specification = stored["specification"].content if approved else self.specification(run_id)
+        tickets = stored["tickets"].data if "tickets" in stored else self.preview(run_id)
+        return {
+            "specification": specification,
+            "tickets": tickets,
+            "approved": approved,
+            "folder": str(self.artifacts_folder(run_id)) if approved else "",
+        }
 
     @staticmethod
     def _child_id(parent: str, ticket: str) -> str:

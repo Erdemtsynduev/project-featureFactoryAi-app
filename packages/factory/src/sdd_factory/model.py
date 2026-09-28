@@ -1,0 +1,83 @@
+"""The factory's vocabulary, typed: what the operator creates, approves and runs.
+
+- A **feature** is the input: its specification (a PRD) is written, broken into
+  tickets and approved once; its tickets then run. A plan is one feature's source.
+- A **ticket** is one vertical slice of a feature: implementation, checks,
+  independent review, merge.
+- A **task** is a single run of a whole workflow without child tickets.
+
+Records are application metadata beside the engine's runs. They are versioned by
+replacement: `TaskRecord.load` reads every earlier spelling (a feature was once
+stored as kind "requirement").
+"""
+
+from dataclasses import dataclass, fields, replace
+from typing import Literal
+
+from sdd_core.models import Json
+
+type Kind = Literal["feature", "ticket", "task"]
+KINDS: tuple[Kind, ...] = ("feature", "ticket", "task")
+EARLIER_KINDS = {"requirement": "feature"}
+
+# Intents offered when creating work, in the order the dialog shows them, with the
+# template each one runs.
+INTENTS = ("feature", "main-flow", "ticket")
+INTENT_KIND: dict[str, Kind] = {"feature": "feature", "main-flow": "task", "ticket": "ticket"}
+
+LANGUAGES = {"ru": "Russian", "en": "English"}
+
+
+@dataclass(frozen=True)
+class TaskRecord:
+    project: str = ""
+    title: str = ""
+    kind: Kind = "task"
+    language: str = "ru"
+    parent: str = ""  # the feature a ticket was cut from
+    plan: str = ""  # the plan a feature (and its tickets) came from
+    rows: tuple[str, ...] = ()  # plan rows a feature covers
+    source: str = ""  # the source document of a feature, workspace-relative
+    intent: str = ""
+    legacy_id: str = ""  # identity in the legacy orchestrator, when imported
+
+    @classmethod
+    def load(cls, document: dict[str, Json]) -> "TaskRecord":
+        raw = str(document.get("kind", "task"))
+        spelled = EARLIER_KINDS.get(raw, raw)
+        kind: Kind = next((known for known in KINDS if known == spelled), "task")
+        rows = document.get("rows")
+        return cls(
+            project=str(document.get("project", "")),
+            title=str(document.get("title", "")),
+            kind=kind,
+            language=str(document.get("language", "ru")),
+            parent=str(document.get("parent", "")),
+            plan=str(document.get("plan", "")),
+            rows=tuple(str(row) for row in rows) if isinstance(rows, list) else (),
+            source=str(document.get("source", "")),
+            intent=str(document.get("intent", "")),
+            legacy_id=str(document.get("legacy_id", "")),
+        )
+
+    def document(self) -> dict[str, Json]:
+        """The stored and served form; empty optional fields are omitted."""
+        found: dict[str, Json] = {}
+        for item in fields(self):
+            value = getattr(self, item.name)
+            if isinstance(value, tuple):
+                value = list[Json](value)
+            if value or item.name in ("project", "title", "kind", "language"):
+                found[item.name] = value
+        return found
+
+    def changed(self, **changes: object) -> "TaskRecord":
+        return replace(self, **changes)  # type: ignore[arg-type]
+
+
+def language_rule(language: str) -> str:
+    """The first line of every brief: which language user-facing text uses."""
+    return (
+        f"Response language: {LANGUAGES.get(language, 'Russian')}. Write user-facing questions,"
+        " summaries and explanations in this language; keep protocol keys in English.\n"
+    )

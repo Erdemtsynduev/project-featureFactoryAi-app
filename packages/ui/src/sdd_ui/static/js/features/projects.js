@@ -79,6 +79,12 @@ export function openProjectDialog(project = null) {
     placeholder: t("project.checksPlaceholder"),
     spellcheck: "false",
   });
+  const repositoryChecks = h("textarea", {
+    name: "repository_checks",
+    rows: "3",
+    placeholder: t("project.repositoryChecksPlaceholder"),
+    spellcheck: "false",
+  });
   const isolation = h("input", {
     type: "checkbox",
     name: "isolation",
@@ -111,6 +117,12 @@ export function openProjectDialog(project = null) {
     ),
     field(t("project.language"), language),
     field(t("project.checks"), checks, t("project.checksHint"), true),
+    field(
+      t("project.repositoryChecks"),
+      repositoryChecks,
+      t("project.repositoryChecksHint"),
+      true,
+    ),
     h(
       "fieldset",
       { class: "wide checks" },
@@ -134,6 +146,9 @@ export function openProjectDialog(project = null) {
     workspace.value = project.workspace;
     language.value = project.language || "ru";
     checks.value = joinCommand(project.checks);
+    repositoryChecks.value = Object.entries(project.repository_checks || {})
+      .map(([repo, argv]) => `${repo}: ${joinCommand(argv)}`)
+      .join("\n");
     isolation.checked = project.isolation !== false;
     autoResolve.checked = project.auto_resolve !== false;
   } else {
@@ -167,8 +182,19 @@ export function openProjectDialog(project = null) {
     save.disabled = true;
     try {
       let parsed;
+      const perRepository = {};
       try {
         parsed = splitCommand(checks.value);
+        // One line per repository: "libraries/terrain: <absolute program> <arguments>".
+        for (const line of repositoryChecks.value.split("\n")) {
+          if (!line.trim()) continue;
+          // A repository path is relative, so its first colon ends it.
+          const at = line.indexOf(":");
+          if (at < 1) throw Error();
+          perRepository[line.slice(0, at).trim()] = splitCommand(
+            line.slice(at + 1).trim(),
+          );
+        }
       } catch {
         throw Error(t("project.checksInvalid"));
       }
@@ -178,6 +204,7 @@ export function openProjectDialog(project = null) {
         workspace: workspace.value.trim(),
         language: language.value,
         checks: parsed,
+        repository_checks: perRepository,
         isolation: isolation.checked,
         auto_resolve: autoResolve.checked,
       });

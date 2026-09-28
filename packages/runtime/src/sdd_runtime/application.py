@@ -7,13 +7,14 @@ from sdd_core import machine, questions
 from sdd_core.codec import (
     canonical,
     digest,
-    object_json,
     result_json,
+    result_load,
     run_json,
     run_load,
 )
 from sdd_core.graph import validate
-from sdd_core.models import Result, Run
+from sdd_core.models import Json, Result, Run, Workflow
+from sdd_core.options import StepOptions
 from sdd_core.ports import Conflict, StaleVersion, StateStore, Workspace
 from sdd_core.records import AdmissionRecords
 from sdd_core.sdk import ProjectAdapter
@@ -47,6 +48,13 @@ class ApplicationEngine:
         self.max_queue_planning_calls = max_queue_planning_calls
         self.max_agents = max_agents
         self.max_operations = max_operations
+        # Published workflows are immutable and content-addressed: safe to cache.
+        self._flows: dict[str, Workflow] = {}
+
+    def _flow(self, identifier: str) -> Workflow:
+        if identifier not in self._flows:
+            self._flows[identifier] = self.store.workflow(identifier)
+        return self._flows[identifier]
 
     def create(
         self,
@@ -117,8 +125,13 @@ class ApplicationEngine:
         count = sum(("agent" if row[0] == "agent" else "operation") == category for row in active)
         if count >= (self.max_agents if category == "agent" else self.max_operations):
             return False
-        if any(self.workspace.overlaps(claim, other) for other in db.unfinished_claims(run_id)):
-            return False
+        for other, held in db.unfinished_claims(run_id):
+            if not self.workspace.overlaps(claim, held):
+                continue
+            # Workflows are prefetched outside the transaction; unknown ones hold.
+            flow = self._flows.get(other.workflow_digest)
+            if flow is None or machine.holds_claim(other, flow):
+                return False
         return not any(self.workspace.overlaps(claim, other) for _, other in active)
 
     def _over_budget(self, calls: int, planning_calls: int, planning: bool) -> bool:
@@ -127,6 +140,21 @@ class ApplicationEngine:
             and self.max_queue_planning_calls is not None
             and planning_calls >= self.max_queue_planning_calls
         )
+
+    def admissible(self, run_id: str) -> bool:
+        """Could the run take a slot and its paths now? A cheap check the coordinator
+        makes before any expensive observation (lanes, Git revisions)."""
+        with self.store.unit() as db:
+            run = db.run(run_id)
+            claim = db.location(run_id)[1]
+            others = db.unfinished_claims(run_id)
+        for other, _ in others:
+            self._flow(other.workflow_digest)
+        kind = self._flow(run.workflow_digest).step(run.step).kind
+        if kind in ("condition", "finish", "human"):
+            return True
+        with self.store.unit() as db:
+            return self._admitted(db, run_id, kind, claim)
 
     def dispatch(self, run_id: str, now: float, attempt_id: str) -> Run:
         for _ in range(RETRIES):
@@ -141,7 +169,13 @@ class ApplicationEngine:
             run = db.run(run_id)
             root, claim = db.location(run_id)
             results = db.results(run_id)
-        workflow = self.store.workflow(run.workflow_digest)
+            others = db.unfinished_claims(run_id)
+        if not machine.dispatchable(run, now):
+            # Paused, answered, blocked or sleeping since the caller looked: skip, never block.
+            raise Conflict("Task is not dispatchable now")
+        for other, _ in others:
+            self._flow(other.workflow_digest)
+        workflow = self._flow(run.workflow_digest)
         step = workflow.step(run.step)
         kind = step.kind
         facts = "{}"
@@ -157,7 +191,7 @@ class ApplicationEngine:
                     self.workspace.verify(result, root, run.revision)
         with self.store.unit() as db:
             if kind == "agent" and transition.effects:
-                planning = object_json(step.config).get("purpose") == "planning"
+                planning = StepOptions.parse(step.config).planning
                 if self._over_budget(*db.queue_usage(), planning):
                     return db.apply(
                         run,
@@ -222,7 +256,7 @@ class ApplicationEngine:
             transition = machine.recover(
                 run, now, termination_confirmed=confirmed, reason=reason, observed_revision=revision
             )
-            target = object_json(workflow.step(run.step).config).get("recovery_step")
+            target = StepOptions.parse(workflow.step(run.step).config).recovery_step or None
             if confirmed and target and transition.state.status == "waiting":
                 if not isinstance(target, str) or workflow.step(target).mutates:
                     raise ValueError("Recovery requires a read-only step")
@@ -262,6 +296,17 @@ class ApplicationEngine:
                 return "{}"
             return next((r.data for r in db.results(run_id) if r.attempt_id == previous), "{}")
 
+    def outputs(self, run_id: str, product: str) -> tuple[Result, ...]:
+        """Processed results of the run's steps that declare `produces: <product>`, newest
+        first. A product is what a step's result is for: a specification, tickets."""
+        workflow = self._flow(self.store.get(run_id).workflow_digest)
+        steps = {
+            step.id for step in workflow.steps if StepOptions.parse(step.config).produces == product
+        }
+        with self.store.unit() as db:
+            found = db.step_results(run_id)
+        return tuple(result_load(document) for step, document in found if step in steps)
+
     def asked(self, run_id: str) -> str:
         """Questions for the waiting human step: the agent's, else the step's own."""
         facts = self.facts(run_id)
@@ -270,8 +315,8 @@ class ApplicationEngine:
         run = self.store.get(run_id)
         if run.active is None:
             return "{}"
-        preset = object_json(self.store.workflow(run.workflow_digest).step(run.active.step).config)
-        return canonical({"questions": preset.get("questions", [])})
+        step = self.store.workflow(run.workflow_digest).step(run.active.step)
+        return canonical({"questions": list[Json](StepOptions.parse(step.config).questions)})
 
     def answer(
         self,
@@ -308,10 +353,8 @@ class ApplicationEngine:
         if run.active is None:
             return None
         step = self.store.workflow(run.workflow_digest).step(run.active.step)
-        settings = object_json(step.config)
-        if step.kind != "human" or not (
-            run.auto_answer or settings.get("auto_answer") == "recommended"
-        ):
+        settings = StepOptions.parse(step.config)
+        if step.kind != "human" or not (run.auto_answer or settings.auto_answer == "recommended"):
             return None
         try:
             decision = questions.recommended(self.asked(run_id))
@@ -319,9 +362,7 @@ class ApplicationEngine:
             return None
         if decision is None:
             return None
-        outcome = settings.get("auto_outcome", step.transitions[0][0])
-        if not isinstance(outcome, str):
-            raise ValueError("auto_outcome must be text")
+        outcome = settings.auto_outcome or step.transitions[0][0]
         text, data = decision
         result = Result(
             run.active.id, run.active.generation, outcome, text, run.revision, data=data
@@ -373,7 +414,7 @@ class ApplicationEngine:
                 raise Conflict("Stale recovery request")
             if run.active or run.status not in ("blocked", "waiting"):
                 raise ValueError("Recovery requires an inactive blocked or waiting task")
-            target = object_json(workflow.step(run.step).config).get("recovery_step")
+            target = StepOptions.parse(workflow.step(run.step).config).recovery_step or None
             if not isinstance(target, str) or workflow.step(target).mutates:
                 raise ValueError("Workflow has no read-only recovery path")
             return db.apply(run, machine.reconcile(run, target, observed, now))

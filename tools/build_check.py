@@ -17,7 +17,7 @@ def run(args: list[str], cwd: Path = ROOT) -> None:
 clean()
 for path in [
     ROOT / "packages" / name
-    for name in ("core", "storage", "runtime", "providers", "workflows", "usage", "ui")
+    for name in ("core", "storage", "runtime", "providers", "workflows", "usage", "factory", "ui")
 ] + [ROOT, ROOT / "examples/extension"]:
     run(
         [
@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix="sdd-wheel-check-") as temp:
     venv.create(folder / "venv", with_pip=True)
     python = folder / ("venv/Scripts/python.exe" if os.name == "nt" else "venv/bin/python")
     run(
-        [str(python), "-m", "pip", "install", "--find-links", str(DIST), "sdd-runtime==0.2.0"],
+        [str(python), "-m", "pip", "install", "--find-links", str(DIST), "sdd-runtime==0.3.0"],
         folder,
     )
     run(
@@ -55,8 +55,8 @@ with tempfile.TemporaryDirectory(prefix="sdd-wheel-check-") as temp:
             "install",
             "--find-links",
             str(DIST),
-            "feature-factory-ai==0.2.0",
-            "sdd-example-extension==0.2.0",
+            "feature-factory-ai==0.3.0",
+            "sdd-example-extension==0.3.0",
         ],
         folder,
     )

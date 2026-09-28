@@ -1,6 +1,6 @@
 """Workflow templates, validation and publication for the operator UI.
 
-A task is created from an intent ("requirement", "main-flow", "ticket") rather
+A task is created from an intent ("feature", "main-flow", "ticket") rather
 than from a digest the operator had to publish by hand: the template is built
 for the project (its checks, lanes and language), validated against the
 installed handlers and published. Publication is content-addressed, so the same
@@ -12,28 +12,29 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
-from sdd_core.codec import canonical, object_json, sequence, text, workflow_load
+from sdd_core.codec import canonical, mapping, sequence, text, workflow_load
 from sdd_core.graph import validate
 from sdd_core.models import Json, Workflow
+from sdd_core.options import StepOptions
 from sdd_core.profiles import resolve_profiles
 from sdd_core.sdk import Registry, handler_key
 from sdd_runtime.engine import Engine
 from sdd_runtime.profiles import load_profiles
 from sdd_workflows.templates import (
     CheckCommand,
+    approved_feature,
     command_demo,
     feature,
     interview,
     localized,
     main_flow,
-    requirement,
     ticket,
     with_checks,
 )
 
-# Intents offered when creating a task, in the order the dialog shows them.
-INTENTS = ("requirement", "main-flow", "ticket")
-TEMPLATES = (*INTENTS, "feature", "interview", "demo")
+from sdd_factory.model import INTENTS
+
+TEMPLATES = (*INTENTS, "approved-feature", "interview", "demo")
 
 
 class FlowLibrary:
@@ -47,7 +48,15 @@ class FlowLibrary:
         self.engine, self.config = engine, config
         self.handlers, self.project = handlers, project
 
-    def template(self, name: str, project_id: str = "", language: str = "ru") -> Workflow:
+    def template(
+        self,
+        name: str,
+        project_id: str = "",
+        language: str = "ru",
+        repositories: tuple[str, ...] = (),
+    ) -> Workflow:
+        """The project's version of a template. A ticket owning `repositories` runs the
+        checks configured for them; otherwise the project's checks."""
         if name not in TEMPLATES:
             raise ValueError("Unknown template")
         project = self.project(project_id)
@@ -56,16 +65,16 @@ class FlowLibrary:
             flow = command_demo(sys.executable)
         elif name == "ticket":
             flow = ticket(
-                (CheckCommand(tuple(checks), title="checks"),) if checks else (),
+                self._ticket_checks(project, checks, repositories),
                 isolated=project.get("isolation", True) is not False,
                 auto_resolve=project.get("auto_resolve", True) is not False,
             )
         else:
             flow = {
                 "feature": feature,
+                "approved-feature": approved_feature,
                 "main-flow": main_flow,
                 "interview": interview,
-                "requirement": requirement,
             }[name]()
         flow = localized(flow, language)
         return flow if name == "demo" else with_checks(flow, checks)
@@ -87,9 +96,29 @@ class FlowLibrary:
         flow = workflow_load(canonical(document))
         return {"workflow": asdict(flow), "digest": self._verified(flow, publish)}
 
-    def ensure(self, name: str, project_id: str, language: str) -> str:
+    @staticmethod
+    def _ticket_checks(
+        project: dict[str, Json], checks: list[str], repositories: tuple[str, ...]
+    ) -> tuple[CheckCommand, ...]:
+        configured = mapping(project.get("repository_checks", {}))
+        owned = [
+            CheckCommand(
+                tuple(text(x, "check") for x in sequence(configured[repository])),
+                repository,
+                title=f"checks · {repository}",
+            )
+            for repository in repositories
+            if sequence(configured.get(repository, []))
+        ]
+        if owned:
+            return tuple(owned)
+        return (CheckCommand(tuple(checks), title="checks"),) if checks else ()
+
+    def ensure(
+        self, name: str, project_id: str, language: str, repositories: tuple[str, ...] = ()
+    ) -> str:
         """Digest of the project's version of a template, published on first use."""
-        digest = self._verified(self.template(name, project_id, language), True)
+        digest = self._verified(self.template(name, project_id, language, repositories), True)
         assert digest is not None
         return digest
 
@@ -100,7 +129,7 @@ class FlowLibrary:
         handlers = self.handlers()
         for step in flow.steps:
             if step.kind == "check" and step.handler == "command":
-                argv = sequence(object_json(step.config).get("argv", []))
+                argv = StepOptions.parse(step.config).argv
                 if not argv or not Path(text(argv[0], "executable")).is_absolute():
                     raise ValueError(
                         "Configure an absolute check executable in the project or step"

@@ -7,19 +7,22 @@ import time
 from sdd_core.codec import canonical
 from sdd_core.machine import WAIT_RETRY_LIMIT
 from sdd_core.models import Result, Step, Workflow
+from sdd_factory.model import TaskRecord
 from sdd_ui.queue import REVIVE_AFTER
 from sdd_ui.service import WorkspaceService
 
 
 def planning_flow() -> Workflow:
     # A check stands in for the planning agent: the test supplies its result.
-    argv = canonical({"argv": [sys.executable, "-c", "pass"]})
+    argv = [sys.executable, "-c", "pass"]
+    spec = canonical({"argv": argv, "produces": "specification"})
+    tickets = canonical({"argv": argv, "produces": "tickets"})
     return Workflow(
-        "requirement",
+        "feature",
         "spec",
         (
-            Step("spec", "check", "command", transitions=(("done", "tickets"),), config=argv),
-            Step("tickets", "check", "command", transitions=(("done", "approve"),), config=argv),
+            Step("spec", "check", "command", transitions=(("done", "tickets"),), config=spec),
+            Step("tickets", "check", "command", transitions=(("done", "approve"),), config=tickets),
             Step(
                 "approve",
                 "human",
@@ -48,7 +51,9 @@ def test_approval_creates_ticket_tasks_once_with_dependencies(tmp_path, monkeypa
         root.mkdir()
         service.mutate("project", {"id": "app", "name": "App", "workspace": str(root)})
         ticket = service.engine.store.publish(Workflow("ticket", "done", (Step("done", "finish"),)))
-        monkeypatch.setattr(service.flows, "ensure", lambda name, project, language: ticket)
+        monkeypatch.setattr(
+            service.flows, "ensure", lambda name, project, language, repositories=(): ticket
+        )
         definition = service.engine.store.publish(planning_flow())
         run = service.mutate(
             "create",
@@ -79,7 +84,6 @@ def test_approval_creates_ticket_tasks_once_with_dependencies(tmp_path, monkeypa
             "kind": "ticket",
             "language": "ru",
             "parent": identifier,
-            "plan": "",
             "project": "app",
             "title": "Pay screen",
         }
@@ -92,6 +96,14 @@ def test_approval_creates_ticket_tasks_once_with_dependencies(tmp_path, monkeypa
         assert runs[children[1]]["attention"]["code"] == "paused"
         log = service.flight(run=identifier)
         assert any(entry["kind"] == "tickets_admitted" for entry in log)
+        # The factory keeps the specification and the tickets, not the project.
+        documents = service.detail(identifier)["documents"]
+        assert documents["specification"] == "SPEC: pay by card"
+        folder = tmp_path / "artifacts" / "app" / identifier
+        assert documents["folder"] == str(folder)
+        assert "SPEC: pay by card" in (folder / "spec.md").read_text(encoding="utf-8")
+        assert "## api · Pay endpoint" in (folder / "tickets.md").read_text(encoding="utf-8")
+        assert not (root / "artifacts").exists()
         assert service.state()["totals"]["calls"] == 0
     finally:
         service.coordinator.close()
@@ -180,6 +192,62 @@ def test_bulk_resume_respects_dependencies_and_project(tmp_path):
         paused = service.mutate("pause-many", {"project": "app"})
         assert sorted(paused["changed"]) == ["base", "child"]
         assert any(e["kind"] == "bulk_resume" for e in service.flight())
+    finally:
+        service.coordinator.close()
+
+
+def test_bulk_resume_by_plan_ids_and_dependencies(tmp_path):
+    """A plan starts as a unit: its filter is honoured and outside prerequisites can follow."""
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        root = tmp_path / "app"
+        root.mkdir()
+        service.mutate("project", {"id": "app", "name": "app", "workspace": str(root)})
+        flow = Workflow("empty", "done", (Step("done", "finish"),))
+        definition = service.engine.store.publish(flow)
+
+        def create(identifier, plan, dependencies=()):
+            service.engine.create(
+                identifier, definition, root, "", "rev", time.time(), tuple(dependencies)
+            )
+            service.catalog.save_task(
+                identifier,
+                TaskRecord(project="app", kind="ticket", title=identifier, plan=plan),
+            )
+
+        create("root", "p0")
+        create("base", "p0", ["root"])
+        create("first", "p1", ["base"])
+        create("second", "p1", ["first"])
+        create("other", "p2")
+        state = {r["id"]: r for r in service.state()["runs"]}
+        assert state["second"]["dependencies"] == ["first"]
+
+        result = service.mutate("resume-many", {"project": "app", "scope": "all", "plan": "p1"})
+        assert sorted(result["changed"]) == ["first", "second"]
+        assert service.engine.store.get("base").paused
+        service.mutate("pause-many", {"project": "app", "plan": "p1"})
+
+        result = service.mutate(
+            "resume-many",
+            {"project": "app", "scope": "all", "plan": "p1", "with_dependencies": True},
+        )
+        assert sorted(result["changed"]) == ["base", "first", "root", "second"]
+        assert service.engine.store.get("other").paused
+
+        service.mutate("pause-many", {"project": "app"})
+        result = service.mutate(
+            "resume-many", {"project": "app", "scope": "all", "ids": ["second"]}
+        )
+        assert result["changed"] == ["second"]
+        entry = [e for e in service.flight() if e["kind"] == "bulk_resume"][-1]
+        assert entry["tasks"] == 1 and entry["with_dependencies"] is False
+        # An already resumed task still pulls in what it waits for.
+        result = service.mutate(
+            "resume-many",
+            {"project": "app", "scope": "all", "ids": ["second"], "with_dependencies": True},
+        )
+        assert sorted(result["changed"]) == ["base", "first", "root"]
     finally:
         service.coordinator.close()
 

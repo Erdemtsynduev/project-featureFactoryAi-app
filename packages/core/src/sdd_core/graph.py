@@ -2,8 +2,8 @@
 
 import re
 
-from sdd_core.codec import object_json
 from sdd_core.models import Workflow
+from sdd_core.options import StepOptions
 
 
 def validate(workflow: Workflow, mandatory: tuple[str, ...] = ()) -> None:
@@ -28,13 +28,12 @@ def validate(workflow: Workflow, mandatory: tuple[str, ...] = ()) -> None:
             raise ValueError("Unknown kind")
         if not 1 <= step.max_visits <= 100 or not 1 <= step.timeout <= 86400:
             raise ValueError("Unbounded step")
-        config = object_json(step.config)
-        recovery = config.get("recovery_step")
-        if recovery is not None and (
-            not isinstance(recovery, str)
-            or recovery not in steps
-            or steps[recovery].kind != "agent"
-            or steps[recovery].mutates
+        settings = StepOptions.parse(step.config)
+        if settings.unknown:
+            raise ValueError(f"Unknown step options on {step.id}: {', '.join(settings.unknown)}")
+        recovery = settings.recovery_step
+        if recovery and (
+            recovery not in steps or steps[recovery].kind != "agent" or steps[recovery].mutates
         ):
             raise ValueError("Recovery target must be an existing read-only agent step")
         edges = dict(step.transitions)

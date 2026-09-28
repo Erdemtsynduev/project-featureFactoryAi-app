@@ -5,6 +5,7 @@ from typing import Literal
 
 from sdd_core.codec import canonical, object_json
 from sdd_core.models import Workflow
+from sdd_core.options import StepOptions
 
 
 @dataclass(frozen=True)
@@ -45,9 +46,7 @@ def resolve_profiles(workflow: Workflow, profiles: tuple[AgentProfile, ...]) -> 
         profile = catalog[step.profile]
         if step.mutates and profile.permissions != "workspace-write":
             raise ValueError(f"Read-only profile on mutating step: {step.id}")
-        config = object_json(step.config)
-        config["profile_snapshot"] = object_json(canonical(asdict(profile)))
-        steps.append(
-            replace(step, handler="", timeout=profile.timeout_seconds, config=canonical(config))
-        )
+        snapshot = object_json(canonical(asdict(profile)))
+        config = StepOptions.parse(step.config).changed(profile_snapshot=snapshot).render()
+        steps.append(replace(step, handler="", timeout=profile.timeout_seconds, config=config))
     return replace(workflow, steps=tuple(steps))

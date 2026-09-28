@@ -5,7 +5,7 @@ from sdd_core.codec import workflow_json, workflow_load
 from sdd_core.graph import validate
 from sdd_core.models import Step, Workflow
 from sdd_core.schema import workflow_schema
-from sdd_workflows.templates import CheckCommand, feature, interview, main_flow, ticket
+from sdd_workflows.templates import CheckCommand, approved_feature, interview, main_flow, ticket
 
 CHECK = CheckCommand(("C:/Python/python.exe", "-m", "pytest"), timeout=120, title="pytest")
 
@@ -14,7 +14,7 @@ CHECK = CheckCommand(("C:/Python/python.exe", "-m", "pytest"), timeout=120, titl
     "flow",
     [
         main_flow(),
-        feature(),
+        approved_feature(),
         interview(),
         ticket(()),
         ticket((CHECK,)),

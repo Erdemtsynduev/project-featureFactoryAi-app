@@ -33,14 +33,22 @@ to the previous place; the drawer closes with ×, Escape or a click on the backd
 
 ## Starting work, progress and notifications
 
-A queue only takes resumed tasks. **Продолжить задачи…** on the board opens a
-dialog with two choices — tasks ready to start (all dependencies accepted) or every
-paused task (the rest wait for their dependencies) — together with the process
-slots, the remaining call budget and blocked tasks it will not touch; **Пауза всем**
-asks before pausing. Starting the queue while no task of the project is resumed
-opens the same dialog instead of silently running an idle queue. Dragging a card
-to In progress says what happens next (queued, waiting for a dependency, queue
-paused).
+A queue only takes resumed tasks. **Запустить** on a card or in the drawer resumes
+the task and, when the queue is paused, starts it too; if other resumed tasks would
+start with it, a dialog asks first (**Только разрешить задачу** resumes this one
+alone). **Запустить задачи…** on the board, **Запустить план** on a plan row and
+**Запустить вместе с зависимостями** in the drawer open one dialog for many tasks:
+the board filter, one plan or one task. It offers tasks ready to start (all
+dependencies accepted) or every paused task (the rest wait for their dependencies),
+lists the paused prerequisites outside the selection (other plans, no plan) with a
+switch to start them too, names blocked prerequisites it cannot start, and warns
+when the tasks outnumber the calls left in the queue budget. The server applies the
+same selection (`resume-many` with `kind`, `plan`, `ids`, `with_dependencies`);
+prerequisites are followed transitively within the project. **Пауза всем** and a
+plan's **Пауза** ask before pausing. Starting the queue while no task of the
+project is resumed opens the dialog instead of silently running an idle queue.
+Dragging a card to In progress only resumes it and says what happens next (queued,
+waiting for a dependency, queue paused).
 
 A running step shows a spinner, its elapsed time and the share of its timeout on
 the card. In the drawer, **Сейчас** adds the timeout moment, how long ago the agent
@@ -86,6 +94,41 @@ approved specification. Admission is idempotent per ticket. **Вернуть н�
 доработку** requires a comment and routes back to the specification. Without the
 `claude` and `codex` profiles, approval is refused before anything is recorded.
 
+## Features, plans and where artifacts live
+
+The factory's input is a **feature**. Every feature takes the same path, as in
+mobile-sdd-factory (a Jira task → proposal, requirements, acceptance, constraints →
+decomposition → subtasks) and AI Hero (grill me → PRD → PRD to issues → TDD per issue):
+
+1. **Specification** — a PRD: problem, solution, numbered user stories,
+   implementation and testing decisions, acceptance criteria `AC-n` traced to the
+   source, out of scope. When a decision only you can make is missing, the agent
+   asks structured questions first.
+2. **Tickets** — tracer-bullet vertical slices with goal, acceptance, `depends_on`
+   (only real blockers, so independent tickets run in parallel) and the repository
+   folders each owns; `HITL:` marks a ticket that needs a person inside it.
+3. **Your approval** of the specification and tickets as a whole.
+4. **Ticket runs** — implementation on its own lane, project checks, independent
+   review, merge. A ticket claims only the repositories it owns.
+
+A feature comes from **New task → Большая фича**, or from a **plan**: a plan file
+`.kimi-plans/NNN_*.md` becomes one feature `feature_<NNN>` whose scope is the plan's
+open and partial rows (closed and rejected rows are context). Rows the old queue
+already decomposed into tickets are not in scope again; those tickets are listed in
+the feature's brief. **Обновить планы из файлов** (`plans-sync`) creates a feature per
+plan that has uncovered open rows, and a follow-up feature `feature_<NNN>_<n>` for rows
+added later (research adds rows). **Пересоздать доску из планов** (`plans-rebuild`)
+backs the database up, removes never-started runs of the earlier per-row import
+(carrying their recorded specification drafts into the features) and syncs. Nothing
+edits plan files or starts work.
+
+The specification and the tickets belong to the factory, not to the project: they are
+recorded results in its database, shown in the feature's drawer under **Документы
+фичи** (with **Скачать spec.md**) and written on approval to
+`<data folder>/artifacts/<project>/<feature>/spec.md` and `tickets.md`. The project
+repository receives only the tickets' code. Read-only runs (specifications) do not
+hold their folder between attempts, so many features advance side by side.
+
 ## Board, cards and the attention reason
 
 Columns follow one server-side derivation (`sdd_ui.attention`) that names the first
@@ -93,28 +136,39 @@ thing blocking each task and the action that resolves it: answer, retry, reconci
 connect a profile, resume, start the queue — or why it waits (a limit reset, a
 resting profile, dependencies). **Queue** holds paused and waiting tasks,
 **In progress** running and queued ones, **Needs you** answers and blockers,
-**Done** accepted ones. Every card shows kind, title, step and runner, the reason
-line and its one-click action; requirements show ticket progress. The nav badge
-counts tasks that need you.
+**Done** accepted ones. Every card shows kind, plan, title, step and runner, the
+reason line and its one-click action; requirements show ticket progress, tickets
+their parent. A task waiting for dependencies names them by title. The nav badge
+counts tasks that need you; tasks that need you in another project (or without a
+project) are listed above the board and in Overview with a link there.
 
-Drag cards between Queue and In progress to pause or resume. Nothing can be dragged
-into Done: acceptance belongs to gates and review. Search, kind chips and the plan
-filter persist per browser. **Дерево** shows plans with requirements and their
-tickets nested.
+Columns show 40 cards and **Показать ещё** pages further. Drag cards between Queue
+and In progress to pause or resume. Nothing can be dragged into Done: acceptance
+belongs to gates and review. Search, kind chips and the plan filter persist per
+browser.
+
+**По планам** shows one collapsible row per plan (Epic-style swimlanes): counts per
+column, progress, how many tasks outside the plan it waits for, **Запустить план**
+and **Пауза**; an open row holds the same four columns for that plan only. Rows
+render their cards only when open, so a hundred plans stay cheap; the open rows are
+remembered. Overview's plan list opens the plan's row.
 
 ## Task drawer
 
-Top: the attention line with its action, every available command (Продолжить,
-Пауза, Остановить, Повторить, Сверить и восстановить), the switch **Агент выбирает
-рекомендованные ответы** and the task's path through its workflow.
+Top: the attention line with its action; for a task waiting on others, **Ждёт
+приёмки N задач** with each prerequisite, its state and a link, plus **Запустить
+вместе с зависимостями** when any of them is paused; the other available commands
+(Запустить, Пауза, Остановить, Повторить, Сверить и восстановить — the one already
+in the attention line is not repeated), the switch **Агент выбирает рекомендованные
+ответы** and, folded, the task's path through its workflow.
 
 - **Обсуждение**: the question picker (digits or arrows choose, Enter moves on, the
   recommended option is preselected, **Принять все рекомендации**), the ticket
   approval, results with their notes and token counts, and messages to the next
   step. Answer and message drafts survive closing and reloads.
 - **Детали**: facts (flow version, step and runner, calls, tokens, cost, folder),
-  parent and child tasks, task memory, the original brief, the lane, the current
-  instruction and raw results.
+  parent and child tasks, **Ждёт задачи** and **От неё зависят**, task memory, the
+  original brief, the lane, the current instruction and raw results.
 - **Журнал**: the flight log entries of the task, the engine journal, **Скачать
   разбор (JSON)** (state, journal, log entries and log tails of the latest attempt)
   and, when the workflow has a read-only recovery step, **Сверить и восстановить**,
@@ -123,9 +177,12 @@ Top: the attention line with its action, every available command (Продолж
 
 ## Workflows
 
-The editor draws the workflow as a pipeline: numbered main stages, a recovery lane,
-bundled failure wires. **+** on a wire inserts a step, the circle on a step's right
-edge starts a link to the next step you pick (with an outcome the step does not
+The editor opens in **Просмотр**: fields are disabled, the graph has no edit
+handles and selecting a step shows what it does. **Редактирование** enables editing
+(the choice is remembered; unpublished edits open in edit mode). The editor draws
+the workflow as a pipeline: numbered main stages, a recovery lane, bundled failure
+wires. **+** on a wire inserts a step, the circle on a step's right edge starts a
+link to the next step you pick (with an outcome the step does not
 route yet), Delete removes a selected link and **Связь вручную** edits
 source/outcome/target directly. Inspector fields apply as soon as they change —
 there is no separate "apply" — and renaming a step rewires its incoming links and
@@ -164,7 +221,9 @@ without a report are marked unreported, never zero. Cost prices those tokens at
 public API rates (`sdd-usage`), not a subscription bill. Model calls are reserved
 when a step starts, so the queue budget (default 40 calls, 8 of them planning,
 cumulative over the database) cannot be exceeded through failures; raise it and
-retry blocked tasks explicitly. **Квоты аккаунта Codex** reads account windows
+retry blocked tasks explicitly. When the project has more unfinished tasks than
+calls left, the budget panel says so before the queue runs out midway.
+**Квоты аккаунта Codex** reads account windows
 through a temporary Codex app-server without a model turn; it refreshes when this
 page opens and the last check is older than ten minutes. Other providers expose no
 quota API; their limits appear only in error messages, which the engine classifies.
@@ -186,6 +245,14 @@ one (its id and folder are fixed). The check command accepts a command line or a
 JSON array; its program must be an absolute path. Without a check command generic
 check steps are bypassed and review still gates the work.
 
+**Приложение…** at the bottom of the rail restarts the server (code updates apply, the
+queue state is kept, the page reloads itself) or quits it; both wait for active agent
+runs. The application checks every 30 seconds whether the engine code on disk is newer
+than the running code and then offers **Перезапустить**.
+
+A project may name **checks per repository** (`folder: command`, one per line): a
+ticket runs the checks of the repositories it owns, otherwise the project's checks.
+
 Theme and language persist per browser; System follows the OS. Interface copy is
 keyed (`static/js/i18n/ru.js`, `en.js`, checked by `tests/test_ui_i18n.py`); user
 content, agent output and prompts are never translated. Enable browser notifications
@@ -193,7 +260,7 @@ explicitly for new questions, blockers and accepted tasks while the page is open
 
 ## Legacy orchestrator queue
 
-`python -m sdd_ui.legacy <portfolios/<id>.sqlite3> --database <ui.db> --apply` creates
+`python -m sdd_factory.legacy <portfolios/<id>.sqlite3> --database <ui.db> --apply` creates
 a new project named after the legacy workspace and moves every unfinished item into it
 as paused runs (the legacy database is read-only and never modified). Plan rows that
 were never decomposed become **requirement** runs; unfinished tickets become
@@ -209,7 +276,10 @@ Plain ES modules, no build step and no Node.js at runtime:
 |---|---|
 | `js/core/` | `dom` (element builder), `api` (HTTP client, ETag polling), `store` (snapshot, project scope, selectors), `i18n`, `storage` |
 | `js/ui/` | `dialog` (modal/drawer, confirm), `toast`, `draft` (form drafts) |
-| `js/features/` | One module per screen or concern: `shell`, `board`, `task-drawer`, `answers`, `new-task`, `projects`, `flows`, `agents`, `usage`, `journal`, `team`, `onboarding`, `notifications`, `commands`, `vocabulary` |
+| `js/features/` | One module per screen or concern: `shell`, `board`, `task-drawer`, `answers`, `new-task`, `projects`, `flows`, `agents`, `usage`, `journal`, `team`, `onboarding`, `notifications`, `commands`, `vocabulary`, `bulk`, `dashboard` |
+| `js/board/` | The board's parts: `state` (filters, open plans, paging), `cards` (cards and columns), `plans` (plan rows and actions) |
+| `js/drawer/` | The task drawer's tabs: `discussion`, `details` (dependencies, documents), `log`, `live`, shared `parts` |
+| `js/flows/` | The workflow editor's `state` (draft, mode, elements) and `inspector` |
 | `js/graph/` | `pipeline` (SVG workflow drawing) and `office` (canvas scene) |
 | `css/` | `app.css` (tokens and components), `pipeline.css`, `office.css` |
 
@@ -226,7 +296,9 @@ $env:FFAI_UI_TESTS = '1'
 
 Or install Chromium with `python -m playwright install chromium` and omit the
 channel. Browser tests use temporary databases and make zero model calls; screenshots
-go to ignored `reports/ui/`. On September 28 the nine scenarios passed in installed
-Edge on Windows (welcome, answer drafts, pipeline editing, new-task drafts, filters
-and mobile width, budgets, drag and drop with theme/language and the question
-picker, notifications, back navigation). Firefox and WebKit are not qualified.
+go to ignored `reports/ui/`. On September 28 the eleven scenarios passed in installed
+Edge on Windows (welcome, answer drafts, read-only view and pipeline editing,
+new-task drafts, filters and mobile width, budgets, drag and drop with
+theme/language and the question picker, notifications, bulk start, starting a plan
+with an outside dependency and column paging, back navigation). Firefox and WebKit
+are not qualified.

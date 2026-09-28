@@ -61,7 +61,7 @@ def test_subscription_wait_does_not_reset_call_budget(tmp_path):
         3,
     )
     assert state.status == "waiting" and dict(state.visits)["check"] == 0
-    with pytest.raises(ValueError, match="Timer"):
+    with pytest.raises(Conflict, match="not dispatchable"):
         engine.dispatch("one", 100, "b")
     coordinator.close()
 

@@ -3,7 +3,8 @@
 ## Dependency direction
 
 `providers -> core <- storage`; `runtime services -> core`; `workflows -> core`;
-`usage -> core`; `ui -> core, runtime, providers, workflows, usage`.
+`usage -> core`; `factory -> core, runtime, workflows`;
+`ui -> factory, core, runtime, providers, workflows, usage`.
 `sdd_runtime.composition` is the local composition root (SQLite storage, Git, local files
 and the handler registry); the CLI and the UI both compose through it, and the UI never
 imports the CLI or `sdd_storage`. Core and usage import no OS, process, filesystem,
@@ -194,41 +195,47 @@ it holds an attempt — and the tick continues with the others. Only a failure t
 it stops the queue, because then state could not be kept durable.
 
 Application metadata (projects, plans, task labels, preferences) is behind the
-`sdd_core.catalog.CatalogRecords` port. SQLite schema version 3 owns its tables
+`sdd_core.catalog.CatalogRecords` port. SQLite schema version 4 owns its tables
 (adopting the ones earlier releases created from the UI, after a verified backup);
-`MemoryCatalog` is the volatile double. The UI has no SQL except the read-only
-importer of foreign sdd-orchestrator databases (`sdd_ui.legacy`).
+`MemoryCatalog` is the volatile double. Neither the factory nor the UI runs SQL except
+the read-only importer of foreign sdd-orchestrator databases (`sdd_factory.legacy`).
 
 The UI service locks only the coordinator and queue settings. Board reads and engine
 commands run concurrently with the queue through short transactions and CAS, so a long
 tick never freezes the board. `/api/state` carries an ETag; polling revalidates it and
 an unchanged board is answered with 304.
 
-## Operator application layer (2026-09-28)
+## The factory: application layer (sdd-factory)
 
-`sdd_ui.service.WorkspaceService` is only the composition root of the local UI: it
-wires use-case services and maps HTTP action names to them.
+`sdd-factory` is the product between the engine and its interfaces. It depends on
+core, runtime and workflows; the UI (`sdd-ui`) is an HTTP adapter and console over it.
 
 | Module | Responsibility |
 |---|---|
-| `queue` | Queue settings, the coordinator's lifecycle, the work loop, status watching and revival after limits |
-| `agents` | Profiles file, handler registry replacement, discovery-backed connection, rotation, rest release, Codex quotas |
-| `flows` | Templates for a project, validation against installed handlers, publication, readiness per task kind |
-| `tasks` | Task creation by kind, commands, messages, answers, ticket admission, recovery with an incident briefing |
-| `attention` | The single "why is this task (not) moving" derivation and its resolving action |
-| `flightlog`, `diagnostics` | Append-only flight log and per-task incident records |
+| `model` | The vocabulary, typed: `TaskRecord` (feature, ticket, task), intents, the language rule |
+| `catalog` | `ProjectCatalog`: projects (with checks per repository), plan summaries, task records (correctable), artifacts |
+| `tasks` | Creating work by intent, commands, bulk start/pause with dependencies, answers, approval of a breakdown (ticket admission, artifacts), recovery |
+| `plans` | A plan document becomes one feature; follow-up features for new rows; rebuilding a board from plans |
+| `sources` | `FeatureSource` port and `MarkdownPlans` (numbered `.kimi-plans/NNN_*.md`) |
+| `flows` | Templates for a project (feature, ticket with its repositories' checks, main flow), validation, publication |
+| `journal`, `diagnostics` | Append-only flight log and per-task incident records |
+| `legacy` | Import of the legacy sdd-orchestrator queue: pure translation and the read-only importer (`python -m sdd_factory.legacy`) |
 
-Every action is recorded in the flight log with its outcome; failures are recorded
-before the error reaches the client. The queue watcher logs transitions into
-`blocked` and `waiting` once per change.
+A feature takes one path: a specification step (`produces: specification`), a
+breakdown step (`produces: tickets`, structured tickets validated by
+`sdd_core.memory.tickets_of`), the operator's approval, then its tickets run. Only the
+approval admits tickets: each ticket's workflow (with the checks of the repositories it
+owns) is published first, then the answer is applied, then each ticket becomes a paused
+dependent run scoped to its repositories. The specification and the tickets are stored
+as the feature's artifacts (`ui_artifacts`, schema version 4) and exported to
+`<data>/artifacts/<project>/<feature>/`; the project repository only receives code.
+The engine finds a product by the step option that declares it (`Engine.outputs`),
+not by guessing from result shapes.
 
-Decomposition is deterministic. A planning step opts into structured ticket output
-with `{"emits": "tickets"}` in its config; the agent result schema then requires
-`tickets`, validated by `sdd_core.memory.tickets_of` (unique ids, known acyclic
-dependencies) before routing. Only a human approval of the requirement admits them:
-the ticket workflow is published first, then the answer is applied, then each ticket
-becomes a paused dependent run whose context is the ticket plus the approved
-specification. Admission is idempotent per derived run id.
+Step options are typed (`sdd_core.options.StepOptions`): purpose, produces, recovery
+step, auto answer and outcome, preset questions, title, command argv/cwd/error pattern,
+profile snapshot. Publication refuses unknown options, so a misspelt option fails
+early instead of being ignored at run time. `emits: tickets` is still read.
 
 Every agent result may carry `notes` (0-5 durable facts). They form the task memory
 shared by later steps and by other agents, so a fallback profile or a fresh session
@@ -239,6 +246,26 @@ waits, usually provider limits) is retried by the running queue after 30 minutes
 rest when its agent profile or a rotation member is available, at most five times
 per session and only while the `revive` queue setting is on. Queue budgets apply.
 
+## Console (sdd-ui)
+
+`sdd_ui.service.WorkspaceService` composes the factory, the queue and the agents and
+maps HTTP action names to use cases. `queue` owns the coordinator's lifecycle and the
+queue settings (stored in the control database; an earlier `<db>.ui.json` is adopted
+once), `agents` the profiles file (shared with the CLI's `--config`) and rotation,
+`attention` the single "why is this task (not) moving" derivation.
+
+The board's read model is a projection per run with server-derived fields: attention,
+lane, dependencies and waits, and the model calls still needed; locations and
+dependencies are read in one query each, and the snapshot carries workflows without
+their prompts (the editor reads `/api/definition`). The task drawer reads a run in
+full. `/api/state` carries an ETag; an unchanged board is answered with 304.
+
+The coordinator only considers runs whose prerequisites are accepted (`runnable`) and
+asks `Engine.admissible` (dependencies, slots, claimed paths) before any expensive
+observation, so a full queue does not run Git for every waiting ticket. Read-only runs
+do not hold their claim between attempts (`machine.holds_claim`), and a run the
+operator paused while it was being dispatched is skipped, not blocked.
+
 The browser client is a set of ES modules (`static/js`) with keyed dictionaries for
-Russian and English; it holds no workflow or acceptance logic and renders the
-server's attention reason instead of deriving task state itself.
+Russian and English; it holds no workflow or acceptance logic and renders the server's
+read model instead of deriving task state itself.

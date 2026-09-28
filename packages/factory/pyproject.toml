@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdd-factory"
+version = "0.3.0"
+license = "MIT"
+license-files = ["LICENSE"]
+description = "Feature Factory application layer: features, specifications, tickets and plans"
+requires-python = ">=3.12"
+dependencies = ["sdd-runtime[local]==0.3.0", "sdd-workflows==0.3.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sdd_factory = ["py.typed"]

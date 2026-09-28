@@ -27,8 +27,6 @@ export default {
   "help.open": "How it works",
 
   "app.close": "Quit application",
-  "app.closeConfirm":
-    "The server will stop. Pause the queue and let active runs finish first. The shortcut starts it again.",
   "app.stopped": "Application stopped",
   "app.stoppedHint":
     "You can close this tab. The shortcut starts the application again.",
@@ -113,14 +111,14 @@ export default {
     "Latin letters, digits, - and _. Useful when the CLI refers to the task.",
   "task.startNow": "Queue it now (otherwise it starts paused)",
   "task.create": "Create task",
-  "task.createdPaused": "Task created paused. Press Resume when ready.",
+  "task.createdPaused": "Task created paused. Press Start when ready.",
   "task.createdQueued": "Task queued. It starts while the queue runs.",
   "task.needsAgents": "This kind of task needs connected agent profiles.",
 
-  "intent.requirement.title": "Large feature → specification → tickets",
-  "intent.requirement.text":
+  "intent.feature.title": "Large feature → specification → tickets",
+  "intent.feature.text":
     "An agent studies the code, writes a specification and asks questions, then splits it into tickets. You approve the breakdown — the tickets appear on the board and run in dependency order.",
-  "intent.requirement.path":
+  "intent.feature.path":
     "Specification ⇄ your answers → tickets → your approval → N ticket tasks",
   "intent.main-flow.title": "Whole task in one run",
   "intent.main-flow.text":
@@ -142,8 +140,8 @@ export default {
   "draft.discardText": "The typed text will be deleted.",
 
   "board.view": "View",
-  "board.mode.live": "Columns",
-  "board.mode.plans": "Tree",
+  "board.mode.live": "By status",
+  "board.mode.plans": "By plan",
   "board.kind": "Task kind",
   "board.all": "All",
   "board.search": "Search",
@@ -160,18 +158,16 @@ export default {
   "board.empty.needs": "No questions or blockers",
   "board.empty.done": "Accepted results appear here",
   "board.noMatches": "No matches",
-  "board.more": "{count} more. Refine the filter.",
-  "board.dropBlocked":
-    "A blocked task cannot simply resume — open it and press Retry.",
+  "board.dropBlocked": "A blocked task cannot simply be started — open it and press Retry.",
 
   "card.ticketsDone": "tickets: {done} of {count}",
-  "card.from": "from {id}",
+  "card.from": "↳ {title}",
   "card.calls": { one: "{count} call", other: "{count} calls" },
 
-  "kind.requirement": "Requirement",
+  "kind.feature": "Feature",
   "kind.ticket": "Ticket",
   "kind.task": "Task",
-  "kind.plural.requirement": "Requirements",
+  "kind.plural.feature": "Features",
   "kind.plural.ticket": "Tickets",
   "kind.plural.task": "Tasks",
 
@@ -195,13 +191,13 @@ export default {
   "attention.profile_resting":
     "Profile “{detail}” and its fallbacks rest after a limit. It continues by itself.",
   "attention.waiting": "Waiting until {until} ({in}): {detail}",
-  "attention.paused": "Paused — press Resume.",
+  "attention.paused": "Paused — press Start.",
   "attention.dependencies": "Waiting for acceptance of: {detail}",
   "attention.queue_paused": "Ready — start the queue.",
   "attention.queued": "Queued; starts when a slot is free.",
 
-  "command.resume": "Resume",
-  "command.resumeHint": "Let the task work while the queue runs",
+  "command.resume": "Start",
+  "command.resumeHint": "The task starts when a slot is free and its dependencies are accepted. A paused queue is started too (or you are asked).",
   "command.pause": "Pause",
   "command.pauseHint": "The current step finishes; no new step starts",
   "command.stop": "Stop",
@@ -213,7 +209,7 @@ export default {
     "Hand the incident to the read-only reconcile step; the task stays paused",
   "command.answer": "Answer",
   "command.agents": "Open agents",
-  "command.done.resume": "Task resumed",
+  "command.done.resume": "Task allowed to work",
   "command.done.pause": "Task paused",
   "command.done.stop": "Stop requested",
   "command.done.retry": "Block cleared; the step repeats",
@@ -246,8 +242,7 @@ export default {
   "help.flows.text":
     "A large feature goes through specification (the agent may ask questions) → ticket breakdown → your approval. After approval each ticket becomes its own task on the board with its dependencies and runs the ticket workflow: implement → checks → review → merge. A whole task does everything in one run without child tasks. A ready ticket starts with implementation.",
   "help.queue.title": "The queue",
-  "help.queue.text":
-    "New tasks start paused. Resume lets a task work; Start queue turns execution on. Two agents and one operation run at a time; dependencies and overlapping folders are respected automatically. Every card says why it is waiting and what to press.",
+  "help.queue.text": "New tasks start paused. Start lets a task work and starts a paused queue (you are asked when other tasks would start with it). Two agents and one operation run at a time; dependencies and overlapping folders are respected automatically. A whole plan starts with “Start plan” on the board's “By plan” view. Every card says why it is waiting and what to press.",
   "help.answers.title": "Questions and approvals",
   "help.answers.text":
     "Agent questions come with options and a recommendation — choose with digits or arrows. The answer continues the same agent session without re-reading the task. The “agent picks recommended answers” switch answers by itself while the queue runs.",
@@ -434,9 +429,9 @@ export default {
   "kindStep.finish": "finish",
 
   "template.main-flow": "Whole task (main flow)",
-  "template.requirement": "Requirement → tickets",
+  "template.feature": "Requirement → tickets",
   "template.ticket": "Ticket: implement → checks → review",
-  "template.feature": "Approved task",
+  "template.approved-feature": "Approved task",
   "template.interview": "Interview",
   "template.demo": "Check without a model",
 
@@ -651,7 +646,7 @@ export default {
   "notify.system": "Show system notifications while this page is open",
   "log.kind.question": "Agent question",
   "log.kind.accepted": "Task accepted",
-  "log.kind.bulk_resume": "Tasks resumed",
+  "log.kind.bulk_resume": "Tasks started",
   "log.kind.bulk_pause": "Tasks paused",
   "about.engine": "Engine v{version}",
   "about.open": "Library versions",
@@ -664,12 +659,11 @@ export default {
   "about.notInstalled": "not installed",
   "about.hint":
     "All libraries are released with one version and pin each other exactly. Tasks pin their workflow version, not the engine.",
-  "bulk.open": "Resume tasks…",
+  "bulk.open": "Start tasks…",
   "bulk.pause": "Pause all",
-  "bulk.title": "Resume tasks · {project}",
-  "bulk.explain":
-    "Resume lets a task work. The queue takes it when a slot is free and all its dependencies are accepted. Nothing runs around the queue.",
-  "bulk.which": "Which tasks to resume",
+  "bulk.title": "Start tasks · {project}",
+  "bulk.explain": "Start allows a task to work. The queue takes it when a slot is free and all its dependencies are accepted. Nothing runs around the queue.",
+  "bulk.which": "Which tasks to start",
   "bulk.scope.startable.title": "Ready to start: {count}",
   "bulk.scope.startable.text":
     "Dependencies already accepted — the queue starts with these.",
@@ -678,25 +672,15 @@ export default {
     "The rest wait for their dependencies and start as those are accepted.",
   "bulk.fact.slots":
     "Two agents and one operation run at a time; the rest wait in the queue.",
-  "bulk.fact.budget":
-    "Model calls left in the queue budget: {left} of {max}. Change it under Usage and limits.",
   "bulk.fact.blocked":
     "Blocked tasks ({count}) are not touched — each has its own reason; open them.",
   "bulk.startQueue": "Start the queue right away",
-  "bulk.resume": "Resume",
-  "bulk.resumed": {
-    one: "{count} task resumed",
-    other: "{count} tasks resumed",
-  },
+  "bulk.resume": "Start",
   "bulk.nothingToPause": "No tasks can be paused",
-  "bulk.pauseTitle": "Pause everything?",
-  "bulk.pauseText":
-    "Tasks of “{project}” ({count}) stop taking new steps. Current steps finish.",
+  "bulk.pauseTitle": "Pause?",
   "bulk.paused": { one: "{count} task paused", other: "{count} tasks paused" },
-  "bulk.nothingResumed":
-    "The queue only takes resumed tasks, and every task is paused. Choose which to resume.",
-  "bulk.queueIdle":
-    "The queue is running, but no task is resumed — nothing will run.",
+  "bulk.nothingResumed": "The queue only takes started tasks, and every task is paused. Choose which to start.",
+  "bulk.queueIdle": "The queue is running, but no task is allowed to work — nothing will happen.",
   "time.hm": "{h} h {m} min",
   "time.ms": "{m} min {s} s",
   "time.s": "{s} s",
@@ -712,7 +696,7 @@ export default {
   "task.nextTitle": "What happens next",
   "task.scope":
     "The task lives in project “{project}”: agents work in {path}, answer in the project language and run its check command.",
-  "intent.requirement.steps":
+  "intent.feature.steps":
     "An analyst studies the code and writes a specification | Decisions only you can make arrive as questions with options under Needs you | A planner splits the specification into tickets | You approve the breakdown or send it back | Each ticket appears on the board as its own task and goes through implementation, checks, review and merge",
   "intent.main-flow.steps":
     "Specification and plan within one task | Implementation | Project checks | Independent review | Acceptance — no child tasks",
@@ -720,10 +704,8 @@ export default {
     "Implementation on its own branch | Project checks | Independent review | Fast-forward merge and acceptance",
   "intent.custom.steps":
     "The task follows the steps of the chosen published version | Its path shows in the task drawer",
-  "bulk.filtered":
-    "The board filter applies: {filter}. Only these tasks are resumed.",
-  "bulk.filterHint":
-    "To resume part of the tasks (only tickets or one plan), choose a board filter first.",
+  "bulk.filtered": "Board filter applies: {filter}. Only these tasks start.",
+  "bulk.filterHint": "To start one plan as a whole, switch the board to “By plan” and press “Start plan” on its row.",
   "nav.overview": "Overview",
   "overview.needs": "Needs you · {count}",
   "overview.all": "All on the board",
@@ -733,7 +715,7 @@ export default {
     other:
       "Nobody is working; {count} queued tasks wait for a slot or dependencies.",
   },
-  "overview.idle": "Nobody is working. Resume tasks and start the queue.",
+  "overview.idle": "Nobody is working. Start tasks or a plan on the board.",
   "overview.agents": "Agents",
   "overview.manage": "Manage",
   "overview.plans": "Plans",
@@ -741,10 +723,102 @@ export default {
   "overview.tile.running": "Running",
   "overview.tile.queued": "queued: {count}",
   "overview.tile.startable": "Ready to start",
-  "overview.tile.startableHint": "resume…",
+  "overview.tile.startableHint": "start…",
   "overview.tile.accepted": "Accepted",
   "overview.tile.callsHint": "queue budget",
   "board.group.startable": "Ready to start · {count}",
   "board.group.later": "Waiting for dependencies or paused · {count}",
   "agents.editConnection": "Change this CLI's profile",
+  "board.showMore": "Show {count} more",
+  "board.shown": "Showing {shown} of {total}",
+  "board.elsewhere": "You are also needed elsewhere:",
+  "card.plan": "Plan {id}",
+  "plans.start": "Start plan",
+  "plans.pause": "Pause",
+  "plans.external": {
+    one: "waits for {count} task outside the plan",
+    other: "waits for {count} tasks outside the plan",
+  },
+  "plans.expandAll": "Expand all",
+  "plans.collapseAll": "Collapse all",
+  "attention.dependenciesMore": "and {count} more",
+  "command.done.start": "Task and queue started",
+  "start.queueTitle": "Start the queue too?",
+  "start.queueText": {
+    one: "The queue is paused. Starting it also starts {count} other task that is already allowed to work.",
+    other: "The queue is paused. Starting it also starts {count} other tasks that are already allowed to work.",
+  },
+  "start.onlyTask": "Only allow this task",
+  "bulk.planTitle": "Start plan · {plan}",
+  "bulk.taskTitle": "Start with dependencies · {task}",
+  "bulk.resumed": {
+    one: "{count} task started",
+    other: "{count} tasks started",
+  },
+  "bulk.deps.title": {
+    one: "Also start {count} task they depend on",
+    other: "Also start {count} tasks they depend on",
+  },
+  "bulk.deps.text": "They are outside the selection — in other plans or without a plan. Without them the selected tasks keep waiting.",
+  "bulk.deps.blocked": {
+    one: "{count} more dependency is blocked — open it and press Retry.",
+    other: "{count} more dependencies are blocked — open them and press Retry.",
+  },
+  "bulk.pauseScope": "Tasks ({count}) of “{scope}” stop taking new steps. Current steps finish.",
+  "detail.deps.waits": "Waits for",
+  "detail.deps.blocks": "Needed by",
+  "detail.deps.start": "Start with dependencies",
+  "detail.deps.pending": {
+    one: "Waiting for {count} task to be accepted",
+    other: "Waiting for {count} tasks to be accepted",
+  },
+  "detail.pathNow": "Workflow path · now: {step}",
+  "overview.tile.split": "requirements {req} · tickets {tix}",
+  "overview.plansAll": "All plans",
+  "flows.mode.view": "View",
+  "flows.mode.edit": "Edit",
+  "flows.viewHint": "View mode: pick a step to see what it does. Switch to Edit to change the workflow.",
+  "usage.budgetSmall": "Open tasks in the project: {open}, while the budget is {max} calls for the whole database. Each task needs several calls: raise the budget for a large plan or the queue stops.",
+  "plans.about.title": "How a plan becomes work",
+  "plans.about.steps": "The factory's input is a feature. A plan in .kimi-plans becomes one feature: its scope is the plan's open and partly done rows | Specification (a PRD, as in AI Hero): an agent studies the plan and the code, asks when your decision is needed and writes problem, solution, user stories, implementation and testing decisions, acceptance criteria AC-1… | Tickets: the specification is cut into vertical slices with acceptance, dependencies and owning repositories | You approve the specification and tickets as a whole (Needs you); the tickets appear in the plan | A ticket: implementation on its own branch, checks, independent review, merge; independent tickets run in parallel | The factory keeps the specification and tickets (feature card → Documents); the project only receives code. New plan rows — Refresh plans from files creates a follow-up feature",
+  "plans.synced": "Plans: {plans}. New features: {created}.",
+  "plans.file": "File: {path} · in the file {done} done, {partial} partial, {open} open",
+  "bulk.estimate": "At least {calls} model calls are needed, {planning} of them planning. Left in the queue budget: {left} of {max}, planning {pleft} of {pmax}.",
+  "bulk.raiseTo": "Raise the budgets to {calls} / {planning}",
+  "bulk.raised": "Queue budgets raised",
+  "bulk.approvals": {
+    one: "{count} feature stops for your approval of its specification and tickets (Needs you).",
+    other: "{count} features stop for your approval of their specification and tickets (Needs you).",
+  },
+  "log.kind.plans_synced": "Plans refreshed from files",
+  "plans.progressHint": "Rows the plan file marks done [x] out of all its rows",
+  "log.kind.unblocked": "False block released",
+  "plans.action.sync": "Refresh plans from files",
+  "plans.action.rebuild": "Rebuild the board from plans",
+  "plans.rebuilt": "Never-started tasks of the old per-row import removed: {removed}. Features created: {created}.",
+  "plans.rebuildTitle": "Rebuild the board from plans?",
+  "plans.rebuildText": "The database is backed up first. Then never-started requirements of the old per-row import leave the board (their recorded specification drafts move into the features), and every plan gets one feature: specification → tickets → your approval. Started tasks and tickets with old contracts stay.",
+  "log.kind.plans_converted": "Plans converted to the factory format",
+  "log.kind.board_rebuilt": "Board rebuilt from plans",
+  "detail.documents": "Feature documents",
+  "detail.specification": "Specification (PRD)",
+  "detail.breakdown": {
+    one: "Tickets: {count}",
+    other: "Tickets: {count}",
+  },
+  "detail.downloadSpec": "Download spec.md",
+  "detail.artifacts": "Factory files: {path}",
+  "app.menu": "Application…",
+  "app.title": "Application",
+  "app.explain": "Restart stops the server and starts it again right away: code updates apply, the queue state is kept and the page reloads itself. Quit stops the server and pauses the queue; the shortcut starts it again. Both need no agent runs to be active.",
+  "app.restart": "Restart",
+  "app.restarting": "Restarting the application…",
+  "app.restartSlow": "The application did not come back within a minute. Start it from the shortcut.",
+  "app.updateReady": "The engine code on disk is newer than the running code — a restart applies the update.",
+  "app.updateShort": "Update available",
+  "log.kind.application_restarting": "Application restarting",
+  "project.repositoryChecks": "Checks per repository",
+  "project.repositoryChecksPlaceholder": "libraries/terrain: C:\\Python\\python.exe -m pytest",
+  "project.repositoryChecksHint": "One line per repository: folder, colon, command. A ticket runs the checks of the repositories it owns; otherwise the project's checks.",
+  "log.kind.task_renamed": "Task renamed",
 };

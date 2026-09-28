@@ -1,7 +1,7 @@
 # Changelog
 
 All libraries (`sdd-core`, `sdd-storage`, `sdd-runtime`, `sdd-providers`,
-`sdd-workflows`, `sdd-usage`, `sdd-ui`) and the `feature-factory-ai` product are
+`sdd-workflows`, `sdd-usage`, `sdd-factory`, `sdd-ui`) and the `feature-factory-ai` product are
 released together with one version and pin each other exactly. The engine version
 is shown in the UI rail, in **About the engine** and by `ffai --version`.
 `tests/test_versions.py` rejects a release where versions or pins diverge.
@@ -10,6 +10,37 @@ A version bump follows Semantic Versioning: a breaking change to a published
 contract (workflow schema, result schema, storage schema, HTTP actions) needs a new
 minor version before 1.0 and a migration; existing tasks stay pinned to the workflow
 digest they were created with.
+
+## 0.3.0 — 2026-09-28
+
+Breaking (pre-1.0 minor): storage schema 4, the workflow template names and the
+task kind vocabulary changed; existing databases migrate on open after a backup,
+and existing tasks keep their pinned workflow digests.
+
+- New `sdd-factory` application layer: typed task records (feature, ticket, task)
+  that can be corrected, the project catalog with checks per repository, feature
+  and ticket use cases, plan sources and the legacy import
+  (`python -m sdd_factory.legacy`); `sdd-ui` is the console over it.
+- The input is a feature: a specification (PRD) and a breakdown into vertical
+  slices, approved once; a plan file becomes one feature over its open rows, new
+  rows become follow-up features, and the board can be rebuilt from plans with a
+  backup. Specifications and tickets are stored as feature artifacts and exported
+  by the factory, never written into the project.
+- Templates: `feature` is specification → tickets → approval; the former
+  `feature` is `approved-feature`. Intents are `feature`, `main-flow`, `ticket`.
+- Typed step options (`sdd_core.options.StepOptions`); publication refuses unknown
+  options; steps declare what they produce (`produces: specification | tickets`).
+- Core: a task paused during its own dispatch is skipped instead of blocked; only
+  a run that dispatched a mutating step holds its paths between attempts; the
+  coordinator checks slots and claims before lanes and Git and only considers runs
+  whose prerequisites are accepted.
+- Queue settings live in the control database; the console restarts itself
+  (keeping a running queue running) and offers a restart when newer code is
+  installed.
+- Board: status and plan views, column paging, plan start with outside
+  dependencies and call estimates, dependencies in the task drawer, feature
+  documents; the board snapshot is projected and derived on the server.
+- Front end split into `js/board`, `js/drawer` and `js/flows` modules.
 
 ## 0.2.0 — 2026-09-28
 

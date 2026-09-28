@@ -92,13 +92,70 @@ def test_dependencies_and_backups(tmp_path):
         engine.store.backup(target)
 
 
+def two_step_flow(store, mutates):
+    return store.publish(
+        Workflow(
+            "edit" if mutates else "read",
+            "work",
+            (
+                Step("work", "operation", "fake", transitions=(("done", "next"),), mutates=mutates),
+                Step("next", "operation", "fake", transitions=(("done", "finish"),)),
+                Step("finish", "finish"),
+            ),
+        )
+    )
+
+
 def test_unfinished_run_retains_workspace_between_attempts(tmp_path):
-    engine, definition, workspace = setup(tmp_path)
-    engine.create("two", definition, workspace, "task", "rev", 1)
-    engine.command("two", "resume", "resume2", 0, 2)
-    engine.dispatch("one", 2, "a")
-    engine.complete("one", Result("a", 1, "done", "ok", "rev"), 3)
+    engine, _, workspace = setup(tmp_path)
+    editing = two_step_flow(engine.store, mutates=True)
+    for name in ("edit", "other"):
+        engine.create(name, editing, workspace, "task", "rev", 1)
+        engine.command(name, "resume", "resume-" + name, 0, 2)
+    engine.dispatch("edit", 2, "a")
+    engine.complete("edit", Result("a", 1, "done", "ok", "rev"), 3)
     with pytest.raises(Conflict):
-        engine.dispatch("two", 4, "b")
-    engine.dispatch("one", 5, "finish")
-    assert engine.dispatch("two", 6, "b").active is not None
+        engine.dispatch("other", 4, "b")  # "edit" may have left partial changes
+    engine.dispatch("edit", 5, "c")
+    engine.complete("edit", Result("c", 2, "done", "ok", "rev"), 6)
+    engine.dispatch("edit", 7, "finish")
+    assert engine.dispatch("other", 8, "b").active is not None
+
+
+def test_read_only_run_does_not_hold_workspace_between_attempts(tmp_path):
+    """Planning runs that only read do not serialize everything behind them."""
+    engine, _, workspace = setup(tmp_path)
+    reading = two_step_flow(engine.store, mutates=False)
+    for name in ("first", "second"):
+        engine.create(name, reading, workspace, "task", "rev", 1)
+        engine.command(name, "resume", "resume-" + name, 0, 2)
+    engine.dispatch("first", 2, "a")
+    engine.complete("first", Result("a", 1, "done", "ok", "rev"), 3)
+    assert engine.dispatch("second", 4, "b").active is not None
+
+
+def test_dispatch_of_a_task_paused_meanwhile_is_skipped_not_blocked(tmp_path):
+    """The coordinator reads, the operator pauses, then dispatch runs: skip quietly."""
+    engine, _, _ = setup(tmp_path)
+    engine.command("one", "pause", "pause", 1, 2)
+    with pytest.raises(Conflict, match="not dispatchable"):
+        engine.dispatch("one", 3, "a")
+    state = engine.store.get("one")
+    assert state.status == "ready" and state.paused and state.active is None
+
+
+def test_runnable_excludes_waiting_runs_and_admission_is_checked_cheaply(tmp_path):
+    """The coordinator only considers runs that could start and asks before observing."""
+    engine, definition, workspace = setup(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    engine.create("later", definition, workspace, "task", "rev", 1, ("one",))
+    engine.command("later", "resume", "resume-later", 0, 2)
+    engine.create("free", definition, other, "task", "rev", 1)
+    engine.command("free", "resume", "resume-free", 0, 2)
+    with engine.store.unit() as db:
+        assert "later" not in db.runnable()  # waits for "one"
+        assert {"one", "free"} <= set(db.runnable())
+    assert engine.admissible("free")
+    engine.dispatch("one", 3, "a")  # takes the only operation slot
+    assert not engine.admissible("free")

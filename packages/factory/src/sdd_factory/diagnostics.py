@@ -14,7 +14,7 @@ from sdd_core.models import Json, Run
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import attempt_folder
 
-from sdd_ui.flightlog import FlightLog
+from sdd_factory.journal import FlightLog
 
 TAIL_CHARS = 1500
 FILES = ("stderr.log", "stdout.log", "exit.json", "rotation.json")

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load
 from sdd_core.models import Result
+from sdd_core.options import StepOptions
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Packet, Registry, handler_key
 
@@ -81,7 +82,7 @@ class Coordinator:
                 if step.kind not in ("agent", "check", "operation"):
                     continue
                 manifest = self.registry.get(handler_key(step)).manifest
-                required_profile = object_json(step.config).get("profile_snapshot")
+                required_profile = StepOptions.parse(step.config).profile_snapshot
                 if not step.handler and step.profile != "default" and required_profile is None:
                     raise ValueError("Resolve named profiles when creating the run with --config")
                 if (
@@ -248,9 +249,9 @@ class Coordinator:
             or (run.wake_at and run.wake_at > now)
         ):
             return False
-        with self.engine.store.unit() as db:
-            waiting = any(dep.status != "accepted" for dep in db.dependencies(run_id))
-        if waiting:
+        # Cheap checks first: dependencies, process slots and claimed paths. Only a run
+        # that could start now pays for lanes and Git revisions.
+        if not self.engine.admissible(run_id):
             return False
         workflow = self.engine.store.workflow(run.workflow_digest)
         if any(step.handler.startswith("lane-") for step in workflow.steps):

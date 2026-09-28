@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from threading import RLock
 from typing import cast
 
+from sdd_core import machine
 from sdd_core.catalog import AgentCall
 from sdd_core.codec import digest, result_load, workflow_json
 from sdd_core.graph import validate
@@ -75,6 +76,16 @@ class MemoryUnit:
         workspace, _, claim, _ = self.state.inputs[identifier]
         return workspace, claim
 
+    def locations(self) -> tuple[tuple[str, str], ...]:
+        return tuple((key, inputs[0]) for key, inputs in self.state.inputs.items())
+
+    def dependency_edges(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (key, prerequisite)
+            for key, inputs in sorted(self.state.inputs.items())
+            for prerequisite in inputs[3]
+        )
+
     def policy(self, workspace: str) -> tuple[str, ...]:
         return self.state.policies.get(workspace, ())
 
@@ -91,9 +102,9 @@ class MemoryUnit:
             if record.kind not in ("human", "condition")
         )
 
-    def unfinished_claims(self, identifier: str) -> tuple[str, ...]:
+    def unfinished_claims(self, identifier: str) -> tuple[tuple[Run, str], ...]:
         return tuple(
-            self.location(key)[1]
+            (run, self.location(key)[1])
             for key, run in self.state.runs.items()
             if key != identifier and run.generation > 0 and run.status != "accepted"
         )
@@ -140,6 +151,13 @@ class MemoryUnit:
             for key in reversed(self.state.effects)
             if key in self.state.results and self.effect(key).run_id == run_id
         )[:limit]
+
+    def step_results(self, run_id: str) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (self.state.attempts[key].step, self.state.results[key][1])
+            for key in reversed(self.state.effects)
+            if key in self.state.results and self.effect(key).run_id == run_id
+        )
 
     def effect(self, attempt: str) -> EffectRecord:
         return self.state.effects[attempt]
@@ -194,7 +212,12 @@ class MemoryUnit:
                 (
                     key
                     for key, run in self.state.runs.items()
-                    if not run.paused and run.status not in ("accepted", "blocked")
+                    if not run.paused
+                    and run.status not in ("accepted", "blocked")
+                    and all(
+                        self.state.runs[needed].status == "accepted"
+                        for needed in self.state.inputs[key][3]
+                    )
                 ),
                 key=priority,
             )
@@ -264,6 +287,26 @@ class MemoryStore:
         with self._lock:
             return self._state.runs[identifier]
 
+    def discard(self, identifiers: tuple[str, ...]) -> tuple[str, ...]:
+        wanted = set(identifiers)
+        with self._lock:
+            state = self._state
+            for identifier in sorted(wanted):
+                if not machine.discardable(state.runs[identifier]):
+                    raise ValueError(f"Run {identifier} has started; it cannot be discarded")
+                if any(effect.run_id == identifier for effect in state.effects.values()):
+                    raise ValueError(f"Run {identifier} has effects; it cannot be discarded")
+            for key, inputs in state.inputs.items():
+                if key not in wanted and wanted & set(inputs[3]):
+                    raise ValueError(f"Run {key} depends on a discarded run")
+            for identifier in wanted:
+                for table in (state.runs, state.inputs, state.created, state.lanes):
+                    table.pop(identifier, None)
+            state.events[:] = [event for event in state.events if event[0] not in wanted]
+            for binding in [b for b in state.bindings if b[0] in wanted]:
+                del state.bindings[binding]
+        return tuple(sorted(wanted))
+
     def create(
         self,
         run: Run,
@@ -305,6 +348,7 @@ class MemoryCatalog:
             "preferences": {},
         }
         self.plan_documents: dict[tuple[str, str], str] = {}
+        self.artifact_documents: dict[tuple[str, str], str] = {}
 
     def projects(self) -> tuple[str, ...]:
         return tuple(v for _, v in sorted(self.documents["projects"].items()))
@@ -325,6 +369,22 @@ class MemoryCatalog:
     def save_task(self, identifier: str, document: str) -> None:
         self.store.get(identifier)
         self.documents["tasks"].setdefault(identifier, document)
+
+    def update_task(self, identifier: str, document: str) -> None:
+        if identifier not in self.documents["tasks"]:
+            raise KeyError(identifier)
+        self.documents["tasks"][identifier] = document
+
+    def artifacts(self, run: str) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (kind, value)
+            for (key, kind), value in sorted(self.artifact_documents.items())
+            if key == run
+        )
+
+    def save_artifact(self, run: str, kind: str, document: str) -> None:
+        self.store.get(run)
+        self.artifact_documents[run, kind] = document
 
     def preference(self, key: str) -> str | None:
         return self.documents["preferences"].get(key)

@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sdd-example-extension"
-version = "0.2.0"
+version = "0.3.0"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = ["sdd-core==0.2.0"]
+dependencies = ["sdd-core==0.3.0"]
 
 [project.entry-points."sdd.handlers"]
 example = "example_extension:ExampleHandler"

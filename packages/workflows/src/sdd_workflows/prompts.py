@@ -4,16 +4,20 @@ Protocol keys belong to this engine, not the legacy portfolio packet format.
 User-facing prose follows the response language recorded in the task context.
 """
 
-SPEC = """Read the requirement, recorded operator decisions and applicable AGENTS.md.
-Inspect current code and existing partial work before proposing changes. Preserve the
-entire original scope. Describe observable acceptance, binding constraints, and the
-highest practical verification seams (a public API or scenario rather than internals).
-Give each criterion a stable ID. Distinguish explicit exclusions from missing work.
-Do not ask about facts you can establish from the repository. Ask only unresolved
-product or architecture decisions; never invent the user's answer. Return questions
-with each decision in `questions` (id, question, 2-4 options, your recommended
-option) and explain the trade-offs behind each recommendation in reason.
-Otherwise return done with the complete bounded specification in reason. No edits.
+SPEC = """Write the specification (a PRD) of this feature. Read the brief, every source
+document it names (for a plan: the plan file, whose open rows are the scope and whose
+closed rows are context), recorded decisions, applicable AGENTS.md and the owning code.
+Establish repository facts yourself. Ask only product or architecture decisions that
+block the specification: return them in `questions` (id, question, 2-4 options, your
+recommended option) and explain each recommendation in reason; never invent an answer.
+Otherwise return done with the complete PRD in reason, in Markdown, with these sections:
+Problem; Solution; User stories (numbered "As a ..., I want ..., so that ...", covering
+every in-scope source row by its id); Implementation decisions (modules and interfaces,
+owning repositories, contracts and data changes; prefer deep modules with small
+interfaces); Testing decisions (what a good test is here, the seams and scenarios, prior
+art in the repository); Acceptance criteria (stable ids AC-1, AC-2 ..., observable and
+testable, each traced to source row ids); Out of scope; Open questions. Preserve the
+entire original scope and every recorded draft or decision; do not weaken them. No edits.
 """
 
 TICKETS = """Decompose the specification into dependency-ordered vertical slices.
@@ -26,14 +30,19 @@ child runs automatically. If that cannot fit the declared budget, return blocked
 with the required split instead of dropping scope. Return done with the tickets in reason.
 """
 
-BREAKDOWN = """Decompose the approved specification into dependency-ordered vertical slices
-that will run as separate tickets, each in a fresh session with only its own ticket and
-the specification. Each slice delivers one observable behavior across all necessary
-layers, including its tests. Do not create separate 'write tests' tickets or split by
-technical layer. Keep every ticket small enough for one implementation run. Give each a
-short stable id, title, goal, testable acceptance criteria (quote criterion IDs), the ids
-of tickets it depends on and the paths it owns. Preserve every original criterion.
-Return done with a readable summary of the breakdown in reason. No edits.
+BREAKDOWN = """Break the approved PRD into tickets: tracer-bullet vertical slices. Each
+ticket is a thin end-to-end slice through every layer it needs, including its tests and
+visual evidence, and is verifiable on its own. Never split by technical layer and never
+create separate "write tests" tickets. Prefer many thin slices, each small enough for one
+implementation run in a fresh session that sees only its ticket and the PRD. For each
+ticket give a short stable id (T1, T2 ...), a title, the goal (what to build, naming the
+user stories and AC ids it delivers; start it with "HITL:" when a human must review or
+decide inside the ticket), testable acceptance criteria refined from the PRD, `depends_on`
+with only the ticket ids it is truly blocked by (independent tickets run in parallel)
+and `paths` with the repository folders it owns (for example libraries/terrain,
+framework-rally). Every acceptance criterion of the PRD is covered by some ticket.
+Tickets the brief lists as already queued cover their scope: do not duplicate them.
+Return done with a readable summary table of the tickets in reason. No edits.
 """
 
 IMPLEMENT = """Read the specification, tickets, operator guidance, recent results and

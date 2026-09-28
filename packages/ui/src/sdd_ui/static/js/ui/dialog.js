@@ -106,7 +106,13 @@ export function closeAll() {
 }
 
 /** A yes/no question; resolves true only on explicit confirmation. */
-export function confirmDialog({ title, message, confirm, danger = false }) {
+export function confirmDialog({
+  title,
+  message,
+  confirm,
+  cancel,
+  danger = false,
+}) {
   return new Promise((resolve) => {
     let answer = false;
     const yes = h(
@@ -121,7 +127,7 @@ export function confirmDialog({ title, message, confirm, danger = false }) {
     const no = h(
       "button",
       { type: "button", onclick: () => dialog.close() },
-      t("action.cancel"),
+      cancel || t("action.cancel"),
     );
     const dialog = openDialog({
       title,

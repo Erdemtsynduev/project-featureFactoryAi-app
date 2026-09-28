@@ -11,6 +11,7 @@ import pytest
 from sdd_core import machine
 from sdd_core.codec import canonical, workflow_json, workflow_load
 from sdd_core.models import Result, Run, Step, Workflow
+from sdd_core.ports import Conflict
 from sdd_runtime.application import ApplicationEngine
 from sdd_runtime.files import atomic_write
 from sdd_runtime.git import GitProject
@@ -19,7 +20,7 @@ from sdd_storage.memory import MemoryStore
 from sdd_storage.store import Store
 from sdd_ui.server import create_server
 from sdd_ui.service import WorkspaceService
-from sdd_workflows.templates import feature, interview, main_flow
+from sdd_workflows.templates import approved_feature, interview, main_flow
 
 
 def test_planning_budget_is_distinct_from_implementation():
@@ -45,7 +46,7 @@ def test_planning_budget_is_distinct_from_implementation():
     assert state.status == "blocked" and state.calls == state.planning_calls == 1
     assert state.active is None
     assert workflow_load(workflow_json(flow)) == flow
-    assert feature().max_planning_calls == 0 and feature().entry == "approve"
+    assert approved_feature().max_planning_calls == 0 and approved_feature().entry == "approve"
     assert main_flow().max_planning_calls == 4
     assert interview().max_planning_calls == 4
     assert json.loads(interview().step("ask").config)["purpose"] == "planning"
@@ -71,7 +72,7 @@ def test_queue_budget_is_shared_and_survives_new_engine(tmp_path, backend):
         engine.command(name, "resume", name, 0, 1)
     assert engine.dispatch("one", 2, "first").active
     before = store.get("one")
-    with pytest.raises(ValueError, match="not dispatchable"):
+    with pytest.raises(Conflict, match="not dispatchable"):
         engine.dispatch("one", 2, "duplicate")
     assert store.get("one") == before
     restarted = ApplicationEngine(store, GitProject(), LocalWorkspace(), max_queue_calls=1)

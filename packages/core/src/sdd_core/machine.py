@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from sdd_core.codec import canonical, object_json
 from sdd_core.models import Attempt, Effect, Event, Json, Result, Run, Step, Transition, Workflow
+from sdd_core.options import StepOptions
 
 # Consecutive infrastructure waits ended in a block; the operator (or a revival
 # policy once limits have reset) retries explicitly.
@@ -145,6 +146,42 @@ def evaluate(step: Step, facts: str) -> str:
     return "true" if spelled == step.condition_value else "false"
 
 
+def dispatchable(run: Run, now: float) -> bool:
+    """Whether the operator state lets the current step start now."""
+    return not (
+        run.paused
+        or run.active
+        or run.status in ("blocked", "accepted")
+        or (run.wake_at is not None and run.wake_at > now)
+    )
+
+
+def discardable(run: Run) -> bool:
+    """A run that never started work leaves nothing behind when it is removed."""
+    return (
+        run.status != "accepted"
+        and run.generation == 0
+        and run.active is None
+        and run.calls == 0
+        and not run.completed
+    )
+
+
+def holds_claim(run: Run, workflow: Workflow) -> bool:
+    """Whether an unfinished run keeps its paths between attempts.
+
+    A run that has dispatched a mutating step may have left partial changes, so
+    overlapping work waits until it is accepted. A run that only read (planning,
+    questions, approvals, checks) holds nothing between its attempts.
+    """
+    if run.status == "accepted":
+        return False
+    visited = dict(run.visits)
+    return run.active is not None or any(
+        step.mutates and step.id in visited for step in workflow.steps
+    )
+
+
 def dispatch(
     run: Run, workflow: Workflow, now: float, attempt_id: str, facts: str = "{}"
 ) -> Transition:
@@ -191,7 +228,7 @@ def dispatch(
             "condition_evaluated",
             outcome,
         )
-    planning = step.kind == "agent" and object_json(step.config).get("purpose") == "planning"
+    planning = step.kind == "agent" and StepOptions.parse(step.config).planning
     if (
         planning
         and workflow.max_planning_calls is not None

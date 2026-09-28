@@ -7,6 +7,7 @@ from contextlib import closing, contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 
+from sdd_core import machine
 from sdd_core.codec import canonical, digest, run_json, run_load, workflow_json, workflow_load
 from sdd_core.graph import validate
 from sdd_core.models import Run, Transition, Workflow
@@ -55,8 +56,14 @@ CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY, document TEXT NOT NULL
 CREATE INDEX IF NOT EXISTS effects_kind ON effects(kind);
 """
 
-VERSION = 3
-MIGRATIONS = (MIGRATION_2, MIGRATION_3)
+# A feature's specification and ticket breakdown, kept by the factory.
+MIGRATION_4 = """
+CREATE TABLE IF NOT EXISTS ui_artifacts(run TEXT NOT NULL REFERENCES runs(id),
+    kind TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(run, kind));
+"""
+
+VERSION = 4
+MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4)
 
 
 class Store:
@@ -272,6 +279,37 @@ class Store:
                     (identifier, after, limit),
                 )
             ]
+
+    def discard(self, identifiers: tuple[str, ...]) -> tuple[str, ...]:
+        """Remove never-dispatched runs with their history, all or none.
+
+        Refused for a run that started work, has effects, or that a kept run
+        depends on. Used to rebuild a board from plans; back up first.
+        """
+        wanted = set(identifiers)
+        with self.transaction() as db:
+            for identifier in sorted(wanted):
+                if not machine.discardable(self.load(db, identifier)):
+                    raise ValueError(f"Run {identifier} has started; it cannot be discarded")
+                if db.execute(
+                    "SELECT 1 FROM effects WHERE run=? LIMIT 1", (identifier,)
+                ).fetchone():
+                    raise ValueError(f"Run {identifier} has effects; it cannot be discarded")
+            for run_id, prerequisite in db.execute("SELECT run,prerequisite FROM dependencies"):
+                if prerequisite in wanted and run_id not in wanted:
+                    raise ValueError(f"Run {run_id} depends on {prerequisite}")
+            rows = [(identifier,) for identifier in sorted(wanted)]
+            for statement in (
+                "DELETE FROM dependencies WHERE run=? OR prerequisite=?1",
+                "DELETE FROM events WHERE run=?",
+                "DELETE FROM bindings WHERE run=?",
+                "DELETE FROM lanes WHERE run=?",
+                "DELETE FROM ui_tasks WHERE id=?",
+                "DELETE FROM ui_artifacts WHERE run=?",
+                "DELETE FROM runs WHERE id=?",
+            ):
+                db.executemany(statement, rows)
+        return tuple(sorted(wanted))
 
     def backup(self, target: Path) -> None:
         if target.exists():

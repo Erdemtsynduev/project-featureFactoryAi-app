@@ -869,7 +869,7 @@ details[open] > summary {
   font-weight: 650;
   color: var(--muted);
 }
-.kind-requirement .kind-tag {
+.kind-feature .kind-tag {
   color: var(--req);
 }
 .kind-ticket .kind-tag {
@@ -925,30 +925,100 @@ details[open] > summary {
   font-size: 12px;
 }
 
-/* Plans tree ------------------------------------------------------------------ */
+/* Plans: one row per plan with its own columns --------------------------------- */
 
 .plans {
   display: grid;
+  gap: 8px;
+}
+.plans-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 10px;
+}
+.plans-about {
+  flex: 1 1 420px;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.plans-about > summary {
+  font-weight: 650;
+  font-size: 13.5px;
+}
+.plans-about-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.plans-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
 }
 .plan {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 10px 14px;
+  padding: 8px 12px;
+  min-width: 0;
 }
-.plan summary {
+.plan[open] {
+  padding-bottom: 12px;
+}
+.plan > summary {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
+  min-height: 36px;
+  min-width: 0;
 }
 .plan-name {
+  flex: 1 1 220px;
+  min-width: 0;
   font-weight: 650;
   color: var(--ink);
-  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-lanes {
+  display: inline-flex;
+  gap: 10px;
+  font: 600 12px var(--mono);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.plan-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.plan-count i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--muted);
+}
+.plan-count.lane-running i {
+  background: var(--run);
+}
+.plan-count.lane-needs i {
+  background: var(--accent);
+}
+.plan-count.lane-done i {
+  background: var(--ok);
 }
 .plan-bar {
-  width: 140px;
+  width: 120px;
   height: 6px;
   border-radius: 999px;
   background: var(--sunken);
@@ -962,36 +1032,125 @@ details[open] > summary {
 .plan-progress {
   font: 12px var(--mono);
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
-.plan-tree {
+.plan > summary button {
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+.plan-board {
+  margin-top: 10px;
+}
+.plan-board .lane {
+  min-height: 120px;
+  max-height: 60vh;
+}
+.lane-more {
   display: grid;
-  gap: 2px;
+  gap: 4px;
+  justify-items: center;
+  padding: 4px 0;
 }
-.tree-row {
-  justify-content: flex-start;
-  gap: 10px;
-  min-height: 34px;
-  padding-left: calc(10px + var(--depth, 0) * 24px);
-  border: 0;
-  background: transparent;
+
+/* Notices, dependencies and folded sections ----------------------------------- */
+
+.board-notice:empty {
+  display: none;
+}
+.elsewhere {
   font-weight: 500;
 }
-.tree-row:hover {
-  background: var(--sunken);
+.elsewhere button {
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 12.5px;
 }
-.tree-glyph {
-  color: var(--muted);
+.waiting-panel {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
 }
-.tree-title {
-  color: var(--ink);
-  font-weight: 600;
+.waiting-panel {
+  min-width: 0;
 }
-.tree-why {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
+.waiting-panel .panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+/* Dependency rows: one line each, the title truncates before its status. */
+.drawer-section .child-list li,
+.waiting-panel .child-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.drawer-section .child-list .link,
+.waiting-panel .child-list .link {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.child-list .pill {
+  flex: none;
+}
+.waiting-panel h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 13.5px;
+}
+.dep-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dep-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.facts-list li.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.run-path > summary {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.run-path[open] > summary {
+  margin-bottom: 8px;
+}
+.flows.viewing .edit-only,
+.flows:not(.viewing) .view-only {
+  display: none;
+}
+/* Read-only fields stay legible: plain text on a quiet surface. */
+.flows.viewing :is(input, select, textarea):disabled {
+  background: var(--raised);
+  color: var(--ink);
+  opacity: 1;
+  cursor: default;
+}
+.row.plan-row {
+  grid-template-columns: minmax(0, 1fr) 90px auto;
+}
+.plan-row .row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Welcome and help ------------------------------------------------------------ */
@@ -2317,4 +2476,53 @@ button.link {
 .team-panel .office {
   max-width: 100%;
   overflow-x: auto;
+}
+.plans-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+.kind-plan-review .kind-tag {
+  color: var(--warn);
+}
+.spec-doc > summary {
+  font-weight: 600;
+  font-size: 13px;
+}
+.spec-doc .brief {
+  max-height: 50vh;
+  overflow: auto;
+}
+.ticket-list {
+  margin: 8px 0 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+.ticket-list p {
+  margin: 2px 0;
+  color: var(--ink-2);
+}
+.update-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.update-note[hidden] {
+  display: none;
+}
+.update-note button {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 12px;
 }

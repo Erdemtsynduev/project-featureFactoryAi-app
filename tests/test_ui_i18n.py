@@ -54,10 +54,12 @@ def test_dynamic_key_families_are_complete():
         "tone.": ["done", "working", "waiting", "attention", "blocked", "idle"],
         "board.lane.": ["queue", "running", "needs", "done"],
         "board.empty.": ["queue", "running", "needs", "done"],
-        "command.done.": ["resume", "pause", "stop", "retry", "recover"],
+        "command.done.": ["resume", "start", "pause", "stop", "retry", "recover"],
+        "board.mode.": ["live", "plans"],
+        "flows.mode.": ["view", "edit"],
         "intent.": [
             f"{i}.{p}"
-            for i in ("requirement", "main-flow", "ticket", "custom")
+            for i in ("feature", "main-flow", "ticket", "custom")
             for p in ("title", "text", "path")
         ],
         "help.": [
@@ -67,7 +69,7 @@ def test_dynamic_key_families_are_complete():
         ],
         "welcome.": [f"{s}.{p}" for s in ("agents", "project", "task") for p in ("title", "text")],
         "nav.": ["overview", "board", "team", "flows", "agents", "usage", "journal"],
-        "template.": ["main-flow", "requirement", "ticket", "feature", "interview", "demo"],
+        "template.": ["main-flow", "feature", "ticket", "approved-feature", "interview", "demo"],
     }
     missing = {prefix + name for prefix, names in families.items() for name in names} - russian
     assert missing == set()

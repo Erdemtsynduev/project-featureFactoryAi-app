@@ -33,7 +33,19 @@ class CatalogRecords(Protocol):
 
     def tasks(self) -> tuple[tuple[str, str], ...]: ...
     def save_task(self, identifier: str, document: str) -> None:
-        """First write wins: task labels are fixed at creation."""
+        """Create a task record; an existing record is kept (creation is idempotent)."""
+        ...
+
+    def update_task(self, identifier: str, document: str) -> None:
+        """Replace an existing task record; unknown ids are an error."""
+        ...
+
+    def artifacts(self, run: str) -> tuple[tuple[str, str], ...]:
+        """(kind, document) pairs a run produced, such as its specification."""
+        ...
+
+    def save_artifact(self, run: str, kind: str, document: str) -> None:
+        """Upsert one artifact of a run by kind."""
         ...
 
     def preference(self, key: str) -> str | None: ...

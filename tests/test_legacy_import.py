@@ -7,11 +7,11 @@ import sys
 
 import pytest
 from sdd_core.graph import validate
+from sdd_factory.legacy.importer import apply, observe, read_source
+from sdd_factory.legacy.translate import EMPTY_TREE, Environment, run_id, translate
 from sdd_runtime.engine import Engine
 from sdd_storage.store import Store
-from sdd_ui.legacy import apply, observe, read_source
 from sdd_ui.workspace import WorkspaceCatalog
-from sdd_workflows.legacy import EMPTY_TREE, Environment, run_id, translate
 
 PYTHON = sys.executable
 
@@ -91,8 +91,7 @@ def test_translation_orders_dependencies_and_resolves_checks():
     requirement_plan, first, waiting, second, _ = plan.tickets
     assert requirement_plan.kind == "requirement" and requirement_plan.scope == (".kimi-plans",)
     assert (
-        requirement_plan.workflow.id == "requirement"
-        and "Not decomposed" in requirement_plan.context
+        requirement_plan.workflow.id == "feature" and "Not decomposed" in requirement_plan.context
     )
     assert waiting.dependencies == ("2_X",) and waiting.parent == "1_C"
     assert [(p.id, p.requirements, p.accepted, p.tickets) for p in plan.plans] == [
@@ -159,7 +158,7 @@ def test_apply_creates_paused_scoped_runs_idempotently(tmp_path):
         assert db.location("1_B_1")[1] == str(repo.resolve())
     assert catalog.task_metadata()["1_C_1"]["legacy_id"] == "1:C.1"
     assert apply(engine, catalog, source, plan, "ru")["kept"] == first["created"]
-    assert catalog.task_metadata()["2_X"]["kind"] == "requirement"
+    assert catalog.task_metadata()["2_X"]["kind"] == "feature"
     assert {p["id"] for p in catalog.plans()[first["project"]]} == {"1", "2"}
     with sqlite3.connect(legacy) as db:
         assert json.loads(db.execute("SELECT data FROM portfolio").fetchone()[0]) == portfolio()

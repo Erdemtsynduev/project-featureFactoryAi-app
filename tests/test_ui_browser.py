@@ -4,10 +4,12 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
 from sdd_core.models import Step, Workflow
+from sdd_factory.model import TaskRecord
 from sdd_ui.server import create_server
 from sdd_ui.service import WorkspaceService
 
@@ -117,6 +119,11 @@ def test_pipeline_edit_applies_on_change_and_persists(page, workshop):
     ready(page, url + "/#flows")
     stages = page.locator("#graph .stage")
     expect(stages.first).to_be_visible()
+    # The editor opens read-only: no edit controls, disabled fields.
+    expect(page.locator("#add-step")).to_be_hidden()
+    expect(page.locator('#step-form input[name="id"]')).to_be_disabled()
+    page.locator("#flow-edit").click()
+    expect(page.locator("#add-step")).to_be_visible()
     draft = lambda: json.loads(page.locator("#flow-json").input_value())  # noqa: E731
     expect(stages).to_have_count(len(draft()["steps"]))
     page.get_by_role("button", name="Разработка (agent)", exact=True).click()
@@ -200,16 +207,17 @@ def test_search_filters_persist_and_mobile_fits(page, workshop):
     expect(page.locator("#task-search")).to_have_value("missing")
     page.locator("#task-search").fill("")
     expect(page.locator("#board .card")).to_have_count(1)
-    page.get_by_role("button", name="Дерево", exact=True).click()
+    page.get_by_role("button", name="По планам", exact=True).click()
     page.reload()
     expect(page.locator("#plans-board")).to_have_class("active")
-    page.get_by_role("button", name="Колонки", exact=True).click()
+    page.get_by_role("button", name="По статусу", exact=True).click()
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     Path("reports/ui").mkdir(parents=True, exist_ok=True)
     page.screenshot(path="reports/ui/board-mobile.png", full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1000})
     page.goto(url + "/#overview")
+    page.locator(".team-panel > summary").click()  # folded while nobody works
     expect(page.locator("#office canvas")).to_be_visible()
     expect(page.locator(".overview-tiles")).to_contain_text("Нужны вы")
     page.screenshot(path="reports/ui/overview-desktop.png", full_page=True)
@@ -230,7 +238,7 @@ def test_budget_validation_and_persistence(page, workshop):
     form.locator('input[name="max_planning_calls"]').fill("3")
     form.get_by_role("button", name="Сохранить").click()
     expect(page.locator("#meters")).to_contain_text("0 / 12")
-    assert json.loads(service.queue.settings_path.read_text())["max_calls"] == 12
+    assert json.loads(service.catalog.records.preference("queue-settings"))["max_calls"] == 12
 
 
 def test_drag_drop_theme_language_and_question_demo(page, workshop, tmp_path):
@@ -341,8 +349,8 @@ def test_bulk_resume_dialog_and_queue_start_explain_what_happens(page, workshop,
     expect(dialog).to_contain_text("все стоят на паузе")
     expect(dialog.get_by_text("Готовые к старту: 1")).to_be_visible()
     expect(dialog.get_by_text("Все на паузе: 2")).to_be_visible()
-    dialog.get_by_role("button", name="Продолжить", exact=True).click()
-    expect(page.locator(".toast-success")).to_contain_text("Продолжена 1 задача")
+    dialog.get_by_role("button", name="Запустить", exact=True).click()
+    expect(page.locator(".toast-success")).to_contain_text("Запущена 1 задача")
     assert not service.engine.store.get("one").paused
     assert service.engine.store.get("two").paused
     assert service.settings["running"] is True
@@ -377,3 +385,59 @@ def test_back_navigation_opens_and_closes_task(page, workshop):
     expect(page.locator("dialog[open]")).to_have_count(0)
     assert service.state()["totals"]["calls"] == 0
     assert sys.executable
+
+
+def test_plan_starts_with_outside_dependencies_and_lanes_page(page, workshop, tmp_path):
+    from playwright.sync_api import expect
+
+    url, service = workshop
+    errors = []
+    page.on("pageerror", lambda error: errors.append(error))
+    root = tmp_path / "delta"
+    root.mkdir()
+    service.mutate("project", {"id": "delta", "name": "Delta", "workspace": str(root)})
+    flow = Workflow("empty", "done", (Step("done", "finish"),))
+    definition = service.engine.store.publish(flow)
+
+    def create(identifier, plan, title, dependencies=()):
+        service.engine.create(
+            identifier, definition, root, "", "rev", time.time(), tuple(dependencies)
+        )
+        service.catalog.save_task(
+            identifier, TaskRecord(project="delta", kind="ticket", title=title, plan=plan)
+        )
+
+    create("base", "p2", "Base contract")
+    create("feature", "p1", "Feature on top", ["base"])
+    for n in range(43):
+        create(f"filler-{n:02}", "p3", f"Filler {n:02}")
+    ready(page, url)
+    page.locator("#project-select").select_option("delta")
+    queue = page.locator('.lane[data-lane="queue"]')
+    expect(queue.locator(".card")).to_have_count(40)
+    queue.get_by_role("button", name="Показать ещё 5").click()
+    expect(queue.locator(".card")).to_have_count(45)
+
+    page.locator("#plans-board").click()
+    row = page.locator('.plan[data-plan="p1"]')
+    expect(row).to_contain_text("ждёт 1 задачу вне плана")
+    row.get_by_role("button", name="Запустить план").click()
+    dialog = page.locator("dialog[open]")
+    expect(dialog).to_contain_text("Запустить и 1 задачу, от которой они зависят")
+    expect(dialog).to_contain_text("Base contract")
+    dialog.get_by_label("Сразу запустить очередь").uncheck()
+    dialog.get_by_role("button", name="Запустить", exact=True).click()
+    expect(page.locator(".toast-success")).to_contain_text("Запущено 2 задачи")
+    assert not service.engine.store.get("feature").paused
+    assert not service.engine.store.get("base").paused
+    assert service.engine.store.get("filler-00").paused
+    assert service.settings["running"] is False
+
+    row.locator(".plan-name").click()
+    row.locator('.card[data-run="feature"]').click()
+    panel = page.locator(".waiting-panel")
+    expect(panel).to_contain_text("Ждёт приёмки 1 задачи")
+    panel.get_by_role("button", name="Base contract").click()
+    expect(page).to_have_url(url + "/#task/base")
+    assert service.state()["totals"]["calls"] == 0
+    assert not errors

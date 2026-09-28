@@ -1,6 +1,5 @@
-"""UI-owned project metadata and measured usage; execution remains in the engine."""
+"""Console catalog: agent discovery and measured usage over the factory catalog."""
 
-import re
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -17,14 +16,17 @@ from sdd_core.codec import (
     sequence,
     text,
 )
-from sdd_core.models import Json, Workflow
-from sdd_core.ports import Conflict
+from sdd_core.models import Workflow
+from sdd_factory.catalog import ProjectCatalog
 from sdd_providers.catalog import AgentAdapter, adapters
 from sdd_runtime.discovery import InstallationProbe, authenticate, discover
 from sdd_usage.pricing import cost
 
 
-class WorkspaceCatalog:
+class WorkspaceCatalog(ProjectCatalog):
+    """The factory's catalog plus what only the operator console needs: agent CLI
+    discovery and measured usage."""
+
     def __init__(
         self,
         records: CatalogRecords,
@@ -32,8 +34,7 @@ class WorkspaceCatalog:
         workflow: Callable[[str], Workflow],
     ) -> None:
         """`database` is the control database, kept outside every project workspace."""
-        self.records = records
-        self.database = database.resolve()
+        super().__init__(records, database)
         self.workflow = workflow
         self.discovery: list[dict[str, object]] = []
         self.probes: dict[str, tuple[InstallationProbe, ...]] = {}
@@ -56,61 +57,6 @@ class WorkspaceCatalog:
                     )
                     for c in sequence(item.get("candidates", []))
                 )
-
-    def projects(self) -> list[dict[str, Json]]:
-        return [object_json(document) for document in self.records.projects()]
-
-    def project(self, identifier: str) -> dict[str, Json]:
-        return next((p for p in self.projects() if p["id"] == identifier), {})
-
-    def save_project(self, doc: dict[str, Json]) -> dict[str, Json]:
-        identifier, name = text(doc.get("id"), "id"), text(doc.get("name"), "name").strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", identifier) or not name:
-            raise ValueError("Project needs a valid ID and name")
-        workspace = Path(text(doc.get("workspace"), "workspace")).resolve(strict=True)
-        if not workspace.is_dir() or self.database.is_relative_to(workspace):
-            raise ValueError("Project must be a folder outside the control database")
-        language = text(doc.get("language", "ru"), "language")
-        if language not in ("ru", "en"):
-            raise ValueError("Unsupported response language")
-        checks = [text(arg, "check argument") for arg in sequence(doc.get("checks", []))]
-        if checks and (not Path(checks[0]).is_absolute() or not Path(checks[0]).is_file()):
-            raise ValueError("Checks require an existing absolute executable")
-        for existing in self.projects():
-            if existing["id"] != identifier and Path(str(existing["workspace"])) == workspace:
-                raise Conflict("This workspace is already registered")
-            if existing["id"] == identifier and Path(str(existing["workspace"])) != workspace:
-                raise Conflict("Project workspace is immutable; add another project")
-        result: dict[str, Json] = {
-            "id": identifier,
-            "name": name,
-            "workspace": str(workspace),
-            "language": language,
-            "checks": list[Json](checks),
-            # Tickets run in their own worktree lane; conflicts go to an agent when autonomous.
-            "isolation": doc.get("isolation", True) is not False,
-            "auto_resolve": doc.get("auto_resolve", True) is not False,
-        }
-        self.records.save_project(identifier, canonical(result))
-        return result
-
-    def save_plans(self, project: str, plans: list[dict[str, Json]]) -> None:
-        """Plan groupings shown on the board; they are metadata, not runs."""
-        self.records.save_plans(
-            project, tuple((text(plan.get("id"), "id"), canonical(plan)) for plan in plans)
-        )
-
-    def plans(self) -> dict[str, list[dict[str, Json]]]:
-        found: dict[str, list[dict[str, Json]]] = defaultdict(list)
-        for project, document in self.records.plans():
-            found[project].append(object_json(document))
-        return dict(found)
-
-    def task_metadata(self) -> dict[str, dict[str, Json]]:
-        return {identifier: object_json(document) for identifier, document in self.records.tasks()}
-
-    def save_task(self, identifier: str, metadata: dict[str, Json]) -> None:
-        self.records.save_task(identifier, canonical(metadata))
 
     def discover(self) -> list[dict[str, object]]:
         """Installations plus native login state; bounded probes, no model requests.

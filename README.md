@@ -29,14 +29,14 @@ To install the commands globally from locally built wheels (the script clears st
 
 ```text
 uv run --locked python tools/wheels.py
-uv tool install --find-links ./dist feature-factory-ai==0.2.0
+uv tool install --find-links ./dist feature-factory-ai==0.3.0
 ffai-app
 ```
 
 Run `uv tool update-shell` and open a new terminal if the command directory is not
-on PATH. Update with `uv tool install --reinstall --find-links ./dist feature-factory-ai==0.2.0`;
+on PATH. Update with `uv tool install --reinstall --find-links ./dist feature-factory-ai==0.3.0`;
 uninstall with `uv tool uninstall feature-factory-ai`. Alternatively use
-`pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.2.0`.
+`pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.3.0`.
 The application is not published on PyPI: use local wheels, not an unrelated
 package with a similar name. The legacy `ff` and `sdd` commands are not installed.
 
@@ -185,7 +185,8 @@ verified evidence; a model's success claim alone is insufficient.
 | `sdd-runtime` | Application service, coordinator, executors, supervisor and CLI |
 | `sdd-providers` | CLI protocols, discovery and model catalogs |
 | `sdd-workflows` | Approved feature, full main flow and interview templates |
-| `sdd-ui` | Optional local visual workspace |
+| `sdd-factory` | Application layer: features, specifications, tickets, plans, artifacts |
+| `sdd-ui` | Optional local visual workspace over the factory |
 | `sdd-usage` | Dated model rate cards and API-equivalent cost of measured tokens |
 
 Python module names `sdd_*`, extension groups `sdd.handlers`, `sdd.agents`,

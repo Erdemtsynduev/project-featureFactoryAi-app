@@ -8,7 +8,7 @@ from sdd_core.machine import WAIT_RETRY_LIMIT
 from sdd_core.memory import brief, fit, notes, tickets_of
 from sdd_core.models import Attempt, Result, Run, Step
 from sdd_ui.attention import attention
-from sdd_workflows.templates import main_flow, requirement, with_checks
+from sdd_workflows.templates import feature, main_flow, with_checks
 
 
 def receipt(outcome: str, reason: str, **data: object) -> str:
@@ -70,8 +70,8 @@ def test_ticket_drafts_are_ordered_and_validated():
 
 
 def test_requirement_breakdown_declares_structured_tickets():
-    tickets = requirement().step("tickets")
-    assert '"emits":"tickets"' in tickets.config
+    tickets = feature().step("tickets")
+    assert '"produces":"tickets"' in tickets.config
 
 
 def test_project_without_checks_bypasses_generic_check_steps():

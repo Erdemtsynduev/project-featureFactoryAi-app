@@ -43,6 +43,16 @@ class SQLiteRuntimeRecords:
             )
         )
 
+    def step_results(self, run_id: str) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (str(row[0]), str(row[1]))
+            for row in self.db.execute(
+                "SELECT json_extract(e.payload,'$.attempt.step'), r.document FROM results r "
+                "JOIN effects e ON e.id=r.attempt WHERE e.run=? ORDER BY e.rowid DESC",
+                (run_id,),
+            )
+        )
+
     def effect(self, attempt: str) -> EffectRecord:
         row = self.db.execute(
             "SELECT e.*,r.workspace,EXISTS(SELECT 1 FROM execution_requests x WHERE x.attempt=e.id) AS external "
@@ -117,6 +127,9 @@ class SQLiteRuntimeRecords:
             for row in self.db.execute(
                 "SELECT r.id FROM runs r WHERE json_extract(state,'$.paused')=0 "
                 "AND json_extract(state,'$.status') NOT IN ('accepted','blocked') "
+                # A run waiting for a prerequisite is not a candidate at all.
+                "AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN runs p ON p.id=d.prerequisite "
+                "WHERE d.run=r.id AND json_extract(p.state,'$.status')<>'accepted') "
                 "ORDER BY COALESCE((SELECT max(e.at) FROM events e WHERE e.run=r.id AND e.kind='dispatched'),r.created),r.created,r.id"
             )
         )

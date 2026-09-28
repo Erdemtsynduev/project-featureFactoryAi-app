@@ -21,7 +21,7 @@ import { bindDraft } from "../ui/draft.js";
 import { toast, toastError } from "../ui/toast.js";
 import { go, openTask } from "./shell.js";
 
-const INTENTS = ["requirement", "main-flow", "ticket", "custom"];
+const INTENTS = ["feature", "main-flow", "ticket", "custom"];
 
 function intentCard(intent, selected, missing) {
   const input = h("input", {
@@ -65,7 +65,10 @@ export function openNewTask(preset = {}) {
   const project = currentProject();
   if (!project) return null;
   const readiness = store.state.intents || {};
-  const chosen = preset.intent || recall("last-intent", "requirement");
+  const remembered = recall("last-intent", "feature");
+  // An intent remembered under an earlier name falls back to a feature.
+  const chosen =
+    preset.intent || (INTENTS.includes(remembered) ? remembered : "feature");
   const intents = h(
     "fieldset",
     { class: "intents wide" },

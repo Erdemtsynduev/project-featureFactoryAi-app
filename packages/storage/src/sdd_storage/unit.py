@@ -48,6 +48,17 @@ class SQLiteUnit(SQLiteRuntimeRecords):
             raise KeyError(identifier)
         return str(row[0]), str(row[1])
 
+    def locations(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (str(row[0]), str(row[1])) for row in self.db.execute("SELECT id,workspace FROM runs")
+        )
+
+    def dependency_edges(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (str(row[0]), str(row[1]))
+            for row in self.db.execute("SELECT run,prerequisite FROM dependencies ORDER BY run")
+        )
+
     def relocate(self, identifier: str, workspace: str, claim: str) -> None:
         if (
             self.db.execute(
@@ -80,15 +91,13 @@ class SQLiteUnit(SQLiteRuntimeRecords):
             )
         )
 
-    def unfinished_claims(self, identifier: str) -> tuple[str, ...]:
-        return tuple(
-            str(row[0])
-            for row in self.db.execute(
-                "SELECT claim FROM runs WHERE id<>? AND json_extract(state,'$.generation')>0 "
-                "AND json_extract(state,'$.status')<>'accepted'",
-                (identifier,),
-            )
-        )
+    def unfinished_claims(self, identifier: str) -> tuple[tuple[Run, str], ...]:
+        rows = self.db.execute(
+            "SELECT id,claim FROM runs WHERE id<>? AND json_extract(state,'$.generation')>0 "
+            "AND json_extract(state,'$.status')<>'accepted'",
+            (identifier,),
+        ).fetchall()
+        return tuple((self.run(str(row[0])), str(row[1])) for row in rows)
 
     def results(self, identifier: str) -> tuple[Result, ...]:
         return tuple(

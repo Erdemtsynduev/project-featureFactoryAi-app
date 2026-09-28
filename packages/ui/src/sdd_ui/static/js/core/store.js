@@ -115,7 +115,7 @@ export function titleOf(run) {
   return meta(run).title || run.id;
 }
 
-export const KINDS = ["requirement", "ticket", "task"];
+export const KINDS = ["feature", "ticket", "task"];
 export function kindOf(run) {
   const kind = meta(run).kind;
   return KINDS.includes(kind) ? kind : "task";
@@ -137,21 +137,79 @@ export function childrenOf(run) {
 /** The board's kind and plan filter; bulk actions apply to the same tasks. */
 export const boardFilter = { kind: "", plan: "" };
 
-export function filteredRuns() {
-  return runs().filter(
-    (run) =>
-      (!boardFilter.kind || kindOf(run) === boardFilter.kind) &&
-      (!boardFilter.plan || meta(run).plan === boardFilter.plan),
+/** A plan's catalog entry: title, file path and row counts from the file. */
+export function planInfo(id) {
+  const plans = store.state?.plans || {};
+  const list = plans[store.project] || Object.values(plans).flat();
+  return list.find((p) => p.id === id) || null;
+}
+
+/** A plan's display name: "105 · Physics assemblies", or its id. */
+export function planTitle(id) {
+  return planInfo(id)?.title || id;
+}
+
+/** Tasks this one waits for (every prerequisite, accepted or not). */
+export function prerequisitesOf(task) {
+  return (task.dependencies || []).map((id) => ({ id, run: run(id) }));
+}
+
+/** Tasks that wait for this one. */
+export function dependentsOf(task) {
+  return (store.state?.runs || []).filter((r) =>
+    r.dependencies?.includes(task.id),
   );
 }
 
-/** Board column from the server's single attention reason. */
+/** Unaccepted prerequisites of `list`, transitively, that are not in `list`. */
+export function outsidePrerequisites(list) {
+  const seen = new Set(list.map((r) => r.id));
+  const found = [];
+  const frontier = [...list];
+  while (frontier.length)
+    for (const id of frontier.pop().dependencies || []) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const dependency = run(id);
+      if (!dependency || dependency.status === "accepted") continue;
+      found.push(dependency);
+      frontier.push(dependency);
+    }
+  return found;
+}
+
+/** Least model calls the tasks still need: an estimate for budgets. */
+export function callsNeeded(list) {
+  // Per-run estimates come from the server (sdd_ui.attention.calls_needed).
+  return list.reduce(
+    (sum, task) => ({
+      calls: sum.calls + (task.needs?.calls || 0),
+      planning: sum.planning + (task.needs?.planning || 0),
+    }),
+    { calls: 0, planning: 0 },
+  );
+}
+
+/** Tasks that need the operator in other projects (or without a project). */
+export function needsElsewhere() {
+  if (!store.state) return [];
+  const counts = new Map();
+  for (const r of store.state.runs) {
+    const owner = projectOf(r);
+    if (owner === store.project || laneOf(r) !== "needs") continue;
+    counts.set(owner, (counts.get(owner) || 0) + 1);
+  }
+  return [...counts].map(([id, count]) => ({
+    id,
+    count,
+    name: projects().find((p) => p.id === id)?.name,
+  }));
+}
+
+/** Board column of a task. */
 export function laneOf(run) {
-  const tone = run.attention?.tone;
-  if (tone === "done") return "done";
-  if (tone === "attention" || tone === "blocked") return "needs";
-  if (tone === "working") return "running";
-  return "queue";
+  // The server derives the lane with the attention reason (sdd_ui.attention.lane).
+  return run.lane || "queue";
 }
 
 /* Profiles ------------------------------------------------------------------ */

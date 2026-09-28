@@ -3,6 +3,7 @@
 
 import { h } from "../core/dom.js";
 import { formatTime, relativeTime, t } from "../core/i18n.js";
+import { titleOf } from "../core/store.js";
 
 const KNOWN_STEPS = new Set([
   "spec",
@@ -52,7 +53,7 @@ export function kindLabel(kind) {
   return t("kind." + kind);
 }
 
-export const KIND_GLYPH = { requirement: "◇", ticket: "▣", task: "○" };
+export const KIND_GLYPH = { feature: "◇", ticket: "▣", task: "○" };
 
 /** The server's attention reason as text, e.g. "Paused — press Resume". */
 export function attentionText(run) {
@@ -62,7 +63,22 @@ export function attentionText(run) {
     until: a.until ? formatTime(a.until) : "",
   };
   if (a.code === "waiting" && a.until) params.in = relativeTime(a.until);
+  if (a.code === "dependencies") params.detail = waitingFor(run);
   return t("attention." + (a.code || "queued"), params);
+}
+
+/** "ASM-12 — …, ASM-15 — … и ещё 2": titles instead of raw ids. */
+function waitingFor(run) {
+  const ids = run.pending_dependencies || [];
+  const names = ids.slice(0, 2).map((id) => {
+    const title = titleOf({ id });
+    return title.length > 40 ? title.slice(0, 39) + "…" : title;
+  });
+  const more =
+    ids.length > 2
+      ? " " + t("attention.dependenciesMore", { count: ids.length - 2 })
+      : "";
+  return names.join(", ") + more;
 }
 
 export function attentionTone(run) {

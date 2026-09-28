@@ -1,7 +1,7 @@
 /* Answering a waiting human step.
  *
  * Structured questions work like a CLI picker: arrows or digits choose, Enter
- * moves on, the recommended option is marked and preselected. A requirement's
+ * moves on, the recommended option is marked and preselected. A feature's
  * approval shows the proposed tickets; approving creates them on the board.
  * Choices and typed text are drafts until submitted. */
 

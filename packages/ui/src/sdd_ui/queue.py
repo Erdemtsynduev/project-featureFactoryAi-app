@@ -12,16 +12,15 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from sdd_core.catalog import CatalogRecords
 from sdd_core.codec import canonical, flag, integer, object_json
 from sdd_core.machine import WAIT_RETRY_LIMIT
 from sdd_core.models import Json, Run, Workflow
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Registry, handler_key
+from sdd_factory.journal import FlightLog
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
-from sdd_runtime.files import atomic_write
-
-from sdd_ui.flightlog import FlightLog
 
 DEFAULTS: dict[str, Json] = {
     "running": False,
@@ -35,12 +34,36 @@ MAX_REVIVALS = 5
 WATCH_EVERY = 1.0
 
 
+class QueueSettings:
+    """Queue settings kept in the control database with everything else.
+
+    An earlier release kept them in `<database>.ui.json`; that file is adopted once
+    and renamed, so there is one source of truth.
+    """
+
+    KEY = "queue-settings"
+
+    def __init__(self, records: CatalogRecords, earlier: Path) -> None:
+        self.records, self.earlier = records, earlier
+
+    def load(self) -> dict[str, Json]:
+        raw = self.records.preference(self.KEY)
+        if raw is None and self.earlier.is_file():
+            raw = canonical(object_json(self.earlier.read_text(encoding="utf-8")))
+            self.records.save_preference(self.KEY, raw)
+            self.earlier.replace(self.earlier.with_suffix(".json.adopted"))
+        return object_json(raw) if raw else {}
+
+    def save(self, settings: dict[str, Json]) -> None:
+        self.records.save_preference(self.KEY, canonical(settings))
+
+
 class QueueController:
     def __init__(
         self,
         engine: Engine,
         handlers: Registry,
-        settings_path: Path,
+        store: QueueSettings,
         health_path: Path,
         log: FlightLog,
         available: Callable[[str], bool],
@@ -49,12 +72,13 @@ class QueueController:
         # Guards the coordinator (its live hosts and handlers) and the queue settings.
         self.lock = threading.RLock()
         self.engine, self.handlers = engine, handlers
-        self.settings_path, self.health_path = settings_path, health_path
+        self.store, self.health_path = store, health_path
         self.log, self.available = log, available
-        stored = (
-            object_json(settings_path.read_text(encoding="utf-8")) if settings_path.exists() else {}
-        )
-        self.settings: dict[str, Json] = {**DEFAULTS, **stored, "running": False}
+        stored = store.load()
+        # Opening the application never starts work, except right after a restart
+        # the operator asked for: then the queue continues as it was.
+        resumed = bool(stored.pop("restarting", False)) and bool(stored.get("running"))
+        self.settings: dict[str, Json] = {**DEFAULTS, **stored, "running": resumed}
         self.coordinator = Coordinator(engine, handlers, health_path)
         self.error: str | None = None
         self.last_tick: float | None = None
@@ -76,7 +100,7 @@ class QueueController:
         self.engine.max_queue_planning_calls = planning
 
     def save(self) -> dict[str, Json]:
-        atomic_write(self.settings_path, canonical(self.settings))
+        self.store.save(self.settings)
         return dict(self.settings)
 
     def set_running(self, doc: dict[str, Json]) -> dict[str, Json]:
@@ -119,12 +143,15 @@ class QueueController:
     def alive(self) -> bool:
         return self.last_tick is not None and time.time() - self.last_tick < 5
 
-    def shutdown(self) -> None:
+    def shutdown(self, keep_running: bool = False) -> None:
         with self.lock:
             if self.coordinator.live:
                 raise Conflict("Pause the queue and wait for active executions before closing")
-            self.settings["running"] = False
-            self.save()
+            if keep_running:
+                self.store.save({**self.settings, "restarting": True})
+            else:
+                self.settings["running"] = False
+                self.save()
 
     # Work loop ----------------------------------------------------------------
 

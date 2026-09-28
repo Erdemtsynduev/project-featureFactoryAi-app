@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from sdd_core.codec import mapping, sequence, text
 from sdd_core.context import ContextRecord, assemble
 from sdd_core.models import Json, Workflow
-
-from sdd_workflows.templates import CheckCommand, requirement, ticket
+from sdd_workflows.templates import CheckCommand, feature, ticket
 
 # Git's well-known empty tree: "every file is new" for a repository the ticket creates.
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -404,7 +403,7 @@ def _requirement_plan(
         for name, body, priority in optional
         if body
     )
-    workflow = requirement(env.reviewer)
+    workflow = feature(env.reviewer)
     context, _ = assemble(tuple(records), "", workflow.max_input_chars - 4000)
     return TicketPlan(
         run_id(key),

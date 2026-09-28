@@ -139,7 +139,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--config", type=Path)
         command.add_argument("--mandatory", nargs="*", default=[])
     template = commands.add_parser("template")
-    template.add_argument("name", choices=["feature", "main-flow", "interview"])
+    template.add_argument("name", choices=["feature", "approved-feature", "main-flow", "interview"])
     template.add_argument("--output", type=Path, required=True)
     create = commands.add_parser("create")
     create.add_argument("definition")
@@ -299,12 +299,17 @@ def main() -> int:
         )
         return 0
     if args.action == "template":
-        from sdd_workflows.templates import feature, interview, main_flow
+        from sdd_workflows.templates import approved_feature, feature, interview, main_flow
 
         atomic_write(
             args.output,
             workflow_json(
-                {"feature": feature, "main-flow": main_flow, "interview": interview}[args.name]()
+                {
+                    "feature": feature,
+                    "approved-feature": approved_feature,
+                    "main-flow": main_flow,
+                    "interview": interview,
+                }[args.name]()
             ),
         )
         return 0

@@ -11,14 +11,20 @@ import { formatTime, money, t } from "../core/i18n.js";
 import { recall, remember } from "../core/storage.js";
 import {
   hasScope,
+  kindOf,
   laneOf,
   meta,
+  needsElsewhere,
+  planInfo,
+  planTitle,
   runnerOf,
   runs,
+  selectProject,
   stepOf,
   store,
   titleOf,
 } from "../core/store.js";
+import { showPlan } from "./board.js";
 import { openBulkResume } from "./bulk.js";
 import { primaryAction } from "./commands.js";
 import { welcome } from "./onboarding.js";
@@ -47,6 +53,13 @@ function numbers(list) {
     ).length,
     accepted: list.length - open.length,
     total: list.length,
+    split: ["feature", "ticket"].map((kind) => {
+      const of = list.filter((r) => kindOf(r) === kind);
+      const done = of.filter((r) => r.status === "accepted").length;
+      return `${done}/${of.length}`;
+    }),
+    mixed: list.some((r) => kindOf(r) === "feature") &&
+      list.some((r) => kindOf(r) === "ticket"),
   };
 }
 
@@ -99,6 +112,7 @@ function row(run, extra) {
 
 function needsPanel(list) {
   const needs = list.filter((r) => laneOf(r) === "needs");
+  const elsewhere = needsElsewhere();
   return panel(
     t("overview.needs", { count: needs.length }),
     needs.length > LIST
@@ -115,6 +129,24 @@ function needsPanel(list) {
           needs.slice(0, LIST).map((r) => row(r, attentionText(r))),
         )
       : h("p", { class: "hint" }, t("notify.nothingNeeded")),
+    elsewhere.length
+      ? h(
+          "p",
+          { class: "attention tone-attention elsewhere" },
+          h("span", {}, t("board.elsewhere")),
+          elsewhere.map(({ id, name, count }) =>
+            h(
+              "button",
+              {
+                type: "button",
+                class: "primary-soft",
+                onclick: () => selectProject(id),
+              },
+              `${name || t("project.loose")} · ${count}`,
+            ),
+          ),
+        )
+      : null,
   );
 }
 
@@ -282,26 +314,54 @@ function plansPanel(list) {
   for (const run of list) {
     const plan = meta(run).plan;
     if (!plan) continue;
-    const entry = plans.get(plan) || { total: 0, done: 0 };
+    const entry = plans.get(plan) || { total: 0, done: 0, needs: 0 };
+    entry.needs += laneOf(run) === "needs" ? 1 : 0;
     entry.total++;
     entry.done += run.status === "accepted" ? 1 : 0;
     plans.set(plan, entry);
   }
   if (!plans.size) return null;
+  // Plans that need you first, then the ones with the most work left.
   const top = [...plans.entries()]
-    .sort((a, b) => b[1].total - a[1].total)
+    .sort(
+      (a, b) =>
+        b[1].needs - a[1].needs ||
+        b[1].total - b[1].done - (a[1].total - a[1].done),
+    )
     .slice(0, 8);
   return panel(
     t("overview.plans"),
-    null,
+    h(
+      "button",
+      {
+        type: "button",
+        class: "ghost",
+        onclick: () => showPlan(""),
+      },
+      t("overview.plansAll"),
+    ),
     h(
       "ul",
       { class: "rows" },
-      top.map(([plan, { total, done }]) =>
-        h(
+      top.map(([plan, runsOf]) => {
+        // The plan file's own progress when known, else the board's.
+        const file = planInfo(plan);
+        const { total, done } = file?.requirements
+          ? { total: file.requirements, done: file.accepted || 0 }
+          : runsOf;
+        return h(
           "li",
-          { class: "row compact" },
-          h("span", { class: "mono" }, plan),
+          { class: "row compact plan-row" },
+          h(
+            "button",
+            {
+              type: "button",
+              class: "link row-title",
+              title: planTitle(plan),
+              onclick: () => showPlan(plan),
+            },
+            planTitle(plan),
+          ),
           h(
             "span",
             { class: "progress-track" },
@@ -310,15 +370,16 @@ function plansPanel(list) {
             }),
           ),
           h("small", { class: "mono" }, `${done}/${total}`),
-        ),
-      ),
+        );
+      }),
     ),
   );
 }
 
-function teamPanel() {
+function teamPanel(busy) {
   if (!team) team = teamWidget();
-  const open = recall("overview-team", true);
+  // The office carries information only while someone works; fold it otherwise.
+  const open = recall("overview-team", null) ?? busy;
   const details = h(
     "details",
     {
@@ -351,6 +412,8 @@ function draw() {
   const { totals, settings } = store.state;
   const inputs = [
     list,
+    needsElsewhere(),
+    store.state.plans,
     events,
     store.state.cooldowns,
     store.state.usage,
@@ -382,7 +445,13 @@ function draw() {
           n.startable ? t("overview.tile.startableHint") : "",
           n.startable ? () => openBulkResume() : null,
         ),
-        tile(t("overview.tile.accepted"), `${n.accepted} / ${n.total}`),
+        tile(
+          t("overview.tile.accepted"),
+          `${n.accepted} / ${n.total}`,
+          n.mixed
+            ? t("overview.tile.split", { req: n.split[0], tix: n.split[1] })
+            : "",
+        ),
         tile(
           t("meter.calls"),
           `${totals.calls} / ${settings.max_calls}`,
@@ -397,7 +466,7 @@ function draw() {
         needsPanel(list),
         runningPanel(list),
       ),
-      teamPanel(),
+      teamPanel(n.running > 0),
       h(
         "div",
         { class: "overview-grid three" },

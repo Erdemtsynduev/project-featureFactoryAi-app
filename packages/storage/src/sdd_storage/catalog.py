@@ -55,6 +55,31 @@ class SQLiteCatalog:
         with self.transaction() as db:
             db.execute("INSERT OR IGNORE INTO ui_tasks VALUES(?,?)", (identifier, document))
 
+    def update_task(self, identifier: str, document: str) -> None:
+        with self.transaction() as db:
+            changed = db.execute(
+                "UPDATE ui_tasks SET document=? WHERE id=?", (document, identifier)
+            ).rowcount
+            if changed != 1:
+                raise KeyError(identifier)
+
+    def artifacts(self, run: str) -> tuple[tuple[str, str], ...]:
+        with self.transaction() as db:
+            return tuple(
+                (str(row[0]), str(row[1]))
+                for row in db.execute(
+                    "SELECT kind, document FROM ui_artifacts WHERE run=? ORDER BY kind", (run,)
+                )
+            )
+
+    def save_artifact(self, run: str, kind: str, document: str) -> None:
+        with self.transaction() as db:
+            db.execute(
+                "INSERT INTO ui_artifacts VALUES(?,?,?) ON CONFLICT(run, kind) "
+                "DO UPDATE SET document=excluded.document",
+                (run, kind, document),
+            )
+
     def preference(self, key: str) -> str | None:
         with self.transaction() as db:
             row = db.execute("SELECT document FROM ui_state WHERE key=?", (key,)).fetchone()

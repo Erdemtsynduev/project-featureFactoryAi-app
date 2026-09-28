@@ -5,11 +5,12 @@
  *
  * Tasks do not need a hand-published flow: creating a task by its kind
  * publishes the project's version of the template. The editor is for custom
- * flows and for inspecting what each step does. */
+ * flows and for inspecting what each step does, so it opens read-only: fields
+ * are disabled and the graph has no edit handles until Edit is chosen. */
 
 import * as api from "../core/api.js";
 import { h, replace } from "../core/dom.js";
-import { formatTime, t } from "../core/i18n.js";
+import { t } from "../core/i18n.js";
 import { recall, remember } from "../core/storage.js";
 import {
   currentProject,
@@ -22,46 +23,23 @@ import { render as renderPipeline } from "../graph/pipeline.js";
 import { confirmDialog } from "../ui/dialog.js";
 import { attempt, toast, toastError } from "../ui/toast.js";
 import { go, registerView } from "./shell.js";
+import {
+  buildInspector,
+  fillEdges,
+  fillInspector,
+} from "../flows/inspector.js";
+import { editor, nodes, persist, showSaved } from "../flows/state.js";
 import { stepName } from "./vocabulary.js";
 
 const TEMPLATES = [
   "main-flow",
-  "requirement",
-  "ticket",
   "feature",
+  "ticket",
+  "approved-feature",
   "interview",
   "demo",
 ];
-const KINDS = ["agent", "check", "human", "condition", "operation", "finish"];
-
-const editor = {
-  flow: null,
-  selected: 0,
-  zoom: 1,
-  connecting: null,
-  selectedEdge: null,
-  size: { width: 1, height: 1 },
-  saved: null, // time of the last local save
-  dirty: false, // edited since loaded or published
-};
 let root = null;
-let nodes = {};
-
-/* Draft persistence ------------------------------------------------------------ */
-
-function persist() {
-  editor.saved = Date.now() / 1000;
-  editor.dirty = true;
-  remember("flow-draft", { flow: editor.flow, saved: editor.saved });
-  showSaved();
-}
-
-function showSaved() {
-  if (nodes.saved)
-    nodes.saved.textContent = editor.saved
-      ? t("flows.savedAt", { time: formatTime(editor.saved) })
-      : "";
-}
 
 async function replaceDraft(flow, message) {
   if (editor.dirty && editor.flow) {
@@ -151,6 +129,30 @@ function freeId() {
   return "step" + n;
 }
 
+function setEditing(on) {
+  editor.editing = on;
+  remember("flow-editing", on);
+  editor.connecting = null;
+  editor.selectedEdge = null;
+  applyMode();
+  drawGraph();
+}
+
+/** Viewing disables every field and hides the controls that change the draft. */
+function applyMode() {
+  const on = editor.editing;
+  nodes.root.classList.toggle("viewing", !on);
+  for (const field of nodes.root.querySelectorAll(
+    ".flow-meta :is(input, select), #step-form :is(input, select, textarea)",
+  ))
+    field.disabled = !on;
+  nodes.json.readOnly = !on;
+  for (const [button, mode] of nodes.modes) {
+    button.classList.toggle("active", mode === on);
+    button.setAttribute("aria-pressed", String(mode === on));
+  }
+}
+
 function drawGraph() {
   const focused = nodes.graph.contains(document.activeElement)
     ? document.activeElement.getAttribute("aria-label")
@@ -179,6 +181,18 @@ function drawGraph() {
       editor.selectedEdge = null;
       draw();
     },
+    ...(editor.editing ? editing(flow) : {}),
+  });
+  if (focused)
+    (
+      nodes.graph.querySelector(`[aria-label="${CSS.escape(focused)}"]`) ||
+      nodes.graph
+    ).focus();
+}
+
+/** Graph handlers that change the draft; absent in view mode. */
+function editing(flow) {
+  return {
     onEdge: (source, outcome, target) => {
       editor.selectedEdge = [source, outcome];
       nodes.edgeSource.value = source;
@@ -217,12 +231,7 @@ function drawGraph() {
       editor.selectedEdge = null;
       drawGraph();
     },
-  });
-  if (focused)
-    (
-      nodes.graph.querySelector(`[aria-label="${CSS.escape(focused)}"]`) ||
-      nodes.graph
-    ).focus();
+  };
 }
 
 function fit() {
@@ -258,186 +267,6 @@ function removeEdge() {
   editor.selectedEdge = null;
   persist();
   draw();
-}
-
-/* Inspector -------------------------------------------------------------------- */
-
-function input(name, attrs = {}) {
-  return h("input", { name, ...attrs });
-}
-
-function buildInspector() {
-  const fields = {
-    id: input("id", { required: true, spellcheck: "false" }),
-    kind: h(
-      "select",
-      { name: "kind" },
-      KINDS.map((k) => h("option", { value: k }, t("kindStep." + k))),
-    ),
-    profile: input("profile", {
-      list: "profile-names",
-      placeholder: "default",
-      spellcheck: "false",
-    }),
-    handler: input("handler", { list: "handler-names", spellcheck: "false" }),
-    timeout: input("timeout", { type: "number", min: "1" }),
-    max_visits: input("max_visits", { type: "number", min: "1" }),
-    transitions: input("transitions", {
-      spellcheck: "false",
-      placeholder: "done=review, failed=diagnose",
-    }),
-    condition_key: input("condition_key", {
-      placeholder: "answer.mode",
-      spellcheck: "false",
-    }),
-    condition_value: input("condition_value"),
-    prompt: h("textarea", { name: "prompt", rows: "8" }),
-    config: h("textarea", { name: "config", rows: "3", spellcheck: "false" }),
-    required: input("required", { type: "checkbox" }),
-    gate: input("gate", { type: "checkbox" }),
-    mutates: input("mutates", { type: "checkbox" }),
-  };
-  const label = (key, node, wide) =>
-    h(
-      "label",
-      { class: wide ? "field wide" : "field" },
-      h("span", {}, t("flows.field." + key)),
-      node,
-    );
-  const form = h(
-    "form",
-    {
-      id: "step-form",
-      class: "form-grid",
-      onsubmit: (e) => e.preventDefault(),
-      onchange: applyStep,
-    },
-    label("id", fields.id),
-    label("kind", fields.kind),
-    label("profile", fields.profile),
-    label("handler", fields.handler),
-    label("timeout", fields.timeout),
-    label("max_visits", fields.max_visits),
-    label("transitions", fields.transitions, true),
-    label("condition_key", fields.condition_key),
-    label("condition_value", fields.condition_value),
-    label("prompt", fields.prompt, true),
-    label("config", fields.config, true),
-    h(
-      "div",
-      { class: "wide checks" },
-      ["required", "gate", "mutates"].map((key) =>
-        h(
-          "label",
-          { title: t(`flows.field.${key}Hint`) },
-          fields[key],
-          h("span", {}, t("flows.field." + key)),
-        ),
-      ),
-    ),
-  );
-  nodes.stepFields = fields;
-  return form;
-}
-
-function fillInspector() {
-  const step = editor.flow.steps[editor.selected];
-  nodes.inspectorTitle.textContent = step
-    ? `${stepName(step)} · ${step.kind}`
-    : t("flows.pickStep");
-  if (!step) return;
-  const f = nodes.stepFields;
-  for (const key of [
-    "id",
-    "kind",
-    "handler",
-    "timeout",
-    "max_visits",
-    "condition_key",
-    "condition_value",
-    "prompt",
-    "config",
-  ])
-    if (document.activeElement !== f[key]) f[key].value = step[key] ?? "";
-  f.profile.value = step.profile || "default";
-  f.transitions.value = step.transitions
-    .map((pair) => pair.join("="))
-    .join(", ");
-  for (const key of ["required", "gate", "mutates"])
-    f[key].checked = !!step[key];
-}
-
-function applyStep() {
-  const flow = editor.flow;
-  const old = flow.steps[editor.selected];
-  if (!old) return;
-  const f = nodes.stepFields;
-  try {
-    const id = f.id.value.trim();
-    if (!id) throw Error(t("flows.idRequired"));
-    if (flow.steps.some((s, i) => i !== editor.selected && s.id === id))
-      throw Error(t("flows.idTaken"));
-    JSON.parse(f.config.value || "{}");
-    const transitions = f.transitions.value.trim()
-      ? f.transitions.value.split(",").map((part) => {
-          const pair = part.split("=").map((s) => s.trim());
-          if (pair.length !== 2 || !pair[0] || !pair[1])
-            throw Error(t("flows.transitionFormat"));
-          return pair;
-        })
-      : [];
-    flow.steps[editor.selected] = {
-      ...old,
-      id,
-      kind: f.kind.value,
-      handler: f.handler.value.trim(),
-      profile: f.profile.value.trim() || "default",
-      timeout: Number(f.timeout.value) || old.timeout,
-      max_visits: Number(f.max_visits.value) || old.max_visits,
-      transitions,
-      condition_key: f.condition_key.value,
-      condition_value: f.condition_value.value,
-      prompt: f.prompt.value,
-      config: f.config.value || "{}",
-      required: f.required.checked,
-      gate: f.gate.checked,
-      mutates: f.mutates.checked,
-    };
-    if (old.id !== id) renameStep(old.id, id);
-    persist();
-    drawGraph();
-    fillEdges();
-    nodes.json.value = JSON.stringify(flow, null, 2);
-    nodes.inspectorTitle.textContent = `${stepName(flow.steps[editor.selected])} · ${f.kind.value}`;
-  } catch (error) {
-    toastError(error);
-  }
-}
-
-function renameStep(from, to) {
-  const flow = editor.flow;
-  for (const step of flow.steps) {
-    step.transitions = step.transitions.map(([o, target]) => [
-      o,
-      target === from ? to : target,
-    ]);
-    const config = JSON.parse(step.config || "{}");
-    if (config.recovery_step === from) {
-      config.recovery_step = to;
-      step.config = JSON.stringify(config);
-    }
-  }
-  if (flow.entry === from) flow.entry = to;
-}
-
-function fillEdges() {
-  const options = () =>
-    editor.flow.steps.map((s) => h("option", { value: s.id }, stepName(s)));
-  for (const select of [nodes.edgeSource, nodes.edgeTarget]) {
-    const value = select.value;
-    replace(select, options());
-    if (editor.flow.steps.some((s) => s.id === value)) select.value = value;
-  }
 }
 
 /* Meta and actions ------------------------------------------------------------- */
@@ -532,7 +361,8 @@ async function deleteStep() {
 /* View ------------------------------------------------------------------------- */
 
 function build() {
-  const n = (nodes = {});
+  for (const key of Object.keys(nodes)) delete nodes[key];
+  const n = nodes;
   n.template = h(
     "select",
     { id: "template", "aria-label": t("flows.template") },
@@ -546,11 +376,16 @@ function build() {
     id: "saved-flows",
     "aria-label": t("flows.versions"),
     onchange: async (e) => {
-      const item = store.state.definitions.find(
-        (d) => d.digest === e.target.value,
-      );
+      const digest = e.target.value;
       e.target.value = "";
-      if (item) await replaceDraft(item.workflow, t("flows.versionOpened"));
+      if (!digest) return;
+      try {
+        // The board's snapshot omits prompts; the editor opens the full version.
+        const workflow = await api.get("definition", { digest });
+        await replaceDraft(workflow, t("flows.versionOpened"));
+      } catch (error) {
+        toastError(error);
+      }
     },
   });
   n.flowId = h("input", { id: "flow-id", onchange: captureMeta });
@@ -599,11 +434,22 @@ function build() {
   n.json = h("textarea", { id: "flow-json", rows: "14", spellcheck: "false" });
   const labelled = (key, node) =>
     h("label", { class: "field" }, h("span", {}, t(key)), node);
+  n.modes = [
+    [false, "flows.mode.view", "flow-view"],
+    [true, "flows.mode.edit", "flow-edit"],
+  ].map(([mode, key, id]) => [
+    h(
+      "button",
+      { type: "button", id, onclick: () => setEditing(mode) },
+      t(key),
+    ),
+    mode,
+  ]);
   const zoom = (delta) => () => {
     editor.zoom = Math.min(1.6, Math.max(0.4, editor.zoom + delta));
     drawGraph();
   };
-  return h(
+  n.root = h(
     "div",
     { class: "flows" },
     h(
@@ -613,6 +459,11 @@ function build() {
       h(
         "div",
         { class: "toolbar" },
+        h(
+          "div",
+          { class: "segmented", role: "group" },
+          n.modes.map(([button]) => button),
+        ),
         n.template,
         h(
           "button",
@@ -674,10 +525,11 @@ function build() {
           h("button", { type: "button", onclick: fit }, t("flows.fit")),
         ),
         n.graph,
-        h("p", { class: "hint" }, t("flows.graphHint")),
+        h("p", { class: "hint edit-only" }, t("flows.graphHint")),
+        h("p", { class: "hint view-only" }, t("flows.viewHint")),
         h(
           "details",
-          { class: "edge-details" },
+          { class: "edge-details edit-only" },
           h("summary", {}, t("flows.manualEdge")),
           h(
             "form",
@@ -709,7 +561,12 @@ function build() {
           { class: "form-actions" },
           h(
             "button",
-            { type: "button", id: "add-step", onclick: addStep },
+            {
+              type: "button",
+              id: "add-step",
+              class: "edit-only",
+              onclick: addStep,
+            },
             t("flows.addStep"),
           ),
           n.saved,
@@ -724,7 +581,7 @@ function build() {
             {
               type: "button",
               id: "publish",
-              class: "primary",
+              class: "primary edit-only",
               onclick: () => check(true),
             },
             t("flows.publish"),
@@ -737,10 +594,10 @@ function build() {
         { class: "panel inspector" },
         h("span", { class: "eyebrow" }, t("flows.inspector")),
         n.inspectorTitle,
-        buildInspector(),
+        buildInspector(() => drawGraph()),
         h(
           "div",
-          { class: "form-actions" },
+          { class: "form-actions edit-only" },
           h(
             "button",
             {
@@ -762,6 +619,7 @@ function build() {
             {
               type: "button",
               id: "import-json",
+              class: "edit-only",
               onclick: async () => {
                 try {
                   const flow = JSON.parse(n.json.value);
@@ -780,6 +638,7 @@ function build() {
     h("datalist", { id: "profile-names" }),
     h("datalist", { id: "handler-names" }),
   );
+  return n.root;
 }
 
 function fillLists() {
@@ -812,6 +671,7 @@ function fillLists() {
 
 function draw() {
   if (!root || !editor.flow) return;
+  applyMode();
   fillMeta();
   drawGraph();
   fillEdges();
@@ -827,6 +687,7 @@ async function ensureDraft() {
     editor.flow = saved.flow;
     editor.saved = saved.saved;
     editor.dirty = !!saved.saved;
+    if (editor.dirty) editor.editing = true;
     return;
   }
   try {

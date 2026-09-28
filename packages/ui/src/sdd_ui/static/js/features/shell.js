@@ -21,7 +21,7 @@ import {
   laneOf,
 } from "../core/store.js";
 import { attempt, toast } from "../ui/toast.js";
-import { confirmDialog } from "../ui/dialog.js";
+import { openDialog } from "../ui/dialog.js";
 
 const views = new Map();
 let current = null;
@@ -241,7 +241,9 @@ export function startShell() {
   byId("nav-back").onclick = () =>
     depth > 0 ? history.back() : go("overview");
   byId("queue-toggle").onclick = toggleQueue;
-  byId("close-app").onclick = closeApplication;
+  byId("close-app").onclick = () => applicationDialog();
+  byId("update-restart").onclick = () => applicationDialog();
+  watchForUpdates();
   window.addEventListener("popstate", (event) => {
     depth = event.state?.depth || 0;
     routeNow();
@@ -254,21 +256,93 @@ export function startShell() {
   onStore(store, "mount");
 }
 
-async function closeApplication() {
-  const ok = await confirmDialog({
-    title: t("app.close"),
-    message: t("app.closeConfirm"),
-    confirm: t("app.close"),
-    danger: true,
+/* Application: restart (applies code updates, keeps the queue state) or quit. */
+
+let updateAvailable = false;
+
+/** Poll for code newer than the running server; a restart would apply it. */
+function watchForUpdates() {
+  const check = async () => {
+    try {
+      const info = await api.get("info", { stale: 1 });
+      updateAvailable = !!info.stale;
+      byId("update-note").hidden = !updateAvailable;
+    } catch {
+      /* Offline: the connection indicator already says so. */
+    }
+  };
+  check();
+  setInterval(check, 30000);
+}
+
+function applicationDialog() {
+  const choose = (action) => async () => {
+    dialog.close(true);
+    if (action === "restart") await restartApplication();
+    else await closeApplication();
+  };
+  const dialog = openDialog({
+    title: t("app.title"),
+    size: "narrow",
+    body: [
+      updateAvailable
+        ? h("p", { class: "attention tone-attention" }, t("app.updateReady"))
+        : null,
+      h("p", {}, t("app.explain")),
+    ],
+    footer: [
+      h(
+        "button",
+        { type: "button", class: "danger-soft", onclick: choose("close") },
+        t("app.close"),
+      ),
+      h("span", { class: "spacer" }),
+      h(
+        "button",
+        { type: "button", onclick: () => dialog.close() },
+        t("action.cancel"),
+      ),
+      h(
+        "button",
+        { type: "button", class: "primary", onclick: choose("restart") },
+        t("app.restart"),
+      ),
+    ],
   });
-  if (!ok) return;
+}
+
+function freeze(message) {
+  stopPolling();
+  document
+    .querySelectorAll("button, select, input, textarea")
+    .forEach((n) => (n.disabled = true));
+  byId("queue-status").textContent = message;
+}
+
+async function closeApplication() {
   await attempt(async () => {
     await api.post("shutdown", {});
-    stopPolling();
-    document
-      .querySelectorAll("button, select, input, textarea")
-      .forEach((n) => (n.disabled = true));
-    byId("queue-status").textContent = t("app.stopped");
+    freeze(t("app.stopped"));
     toast(t("app.stoppedHint"), { timeout: 0 });
+  });
+}
+
+/** Ask the server to restart itself, wait for the new process, then reload the page. */
+async function restartApplication() {
+  const before = (await api.get("info")).started;
+  await attempt(async () => {
+    await api.post("restart", {});
+    freeze(t("app.restarting"));
+    toast(t("app.restarting"), { timeout: 0 });
+    for (let tries = 0; tries < 120; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        const info = await api.get("info");
+        if (info.started !== before) return location.reload();
+      } catch {
+        /* The old server is gone and the new one is not up yet. */
+      }
+    }
+    toast(t("app.restartSlow"), { tone: "error", timeout: 0 });
   });
 }
