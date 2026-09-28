@@ -11,6 +11,12 @@ contract (workflow schema, result schema, storage schema, HTTP actions) needs a 
 minor version before 1.0 and a migration; existing tasks stay pinned to the workflow
 digest they were created with.
 
+## 0.3.1 — 2026-09-28
+
+- The orchestrator assumes no plan layout: a project names its **plans folder**
+  (project settings; empty means no plans), and the legacy import derives it from
+  the imported plan paths. Requirements plan in the folder of their own plan file.
+
 ## 0.3.0 — 2026-09-28
 
 Breaking (pre-1.0 minor): storage schema 4, the workflow template names and the

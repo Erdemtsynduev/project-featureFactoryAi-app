@@ -3,8 +3,9 @@
 Every feature takes the same path: a specification (a PRD, with questions when a
 decision is missing), a breakdown into tickets (vertical slices), the operator's
 approval, then its tickets run. A plan document from a `FeatureSource` (by default
-the project's `.kimi-plans/NNN_*.md`) only supplies a feature's scope: its open and
-partial rows. The specification and the tickets belong to the factory.
+numbered Markdown files in the project's plans folder) only supplies a feature's
+scope: its open and partial rows. The specification and the tickets belong to the
+factory.
 
 `sync` creates one paused feature `feature_<NNN>` per plan whose open rows are not
 covered yet; rows added to the file later (research adds rows) become a follow-up
@@ -15,6 +16,7 @@ starts work.
 
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from sdd_core import machine
@@ -43,10 +45,14 @@ class PlanService:
         catalog: ProjectCatalog,
         flows: FlowLibrary,
         log: FlightLog,
-        source: FeatureSource | None = None,
+        sources: Callable[[dict[str, Json]], FeatureSource] | None = None,
     ) -> None:
+        """`sources(project)` chooses where a project's plans come from; by default the
+        numbered Markdown files in the folder the project names."""
         self.engine, self.catalog, self.flows, self.log = engine, catalog, flows, log
-        self.source = source or MarkdownPlans()
+        self.sources = sources or (
+            lambda project: MarkdownPlans(str(project.get("plans_folder", "")))
+        )
 
     def _project(self, doc: dict[str, Json]) -> tuple[str, dict[str, Json], Path]:
         project_id = str(doc.get("project", ""))
@@ -67,7 +73,9 @@ class PlanService:
         language = str(project.get("language", "ru"))
         only = str(doc.get("plan", ""))
         plans = [
-            plan for plan in self.source.documents(workspace) if not only or plan.number == only
+            plan
+            for plan in self.sources(project).documents(workspace)
+            if not only or plan.number == only
         ]
         if only and not plans:
             raise ValueError(f"No plan {only} in the project's plan source")
@@ -174,8 +182,8 @@ class PlanService:
         Started runs, legacy tickets with their contracts, features and anything a
         kept run depends on stay untouched.
         """
-        project_id, _, workspace = self._project(doc)
-        self.source.documents(workspace)  # refuse before changing anything
+        project_id, project, workspace = self._project(doc)
+        self.sources(project).documents(workspace)  # refuse before changing anything
         records = self.catalog.tasks()
         with self.engine.store.unit() as unit:
             runs = {run.id: run for run in unit.runs()}

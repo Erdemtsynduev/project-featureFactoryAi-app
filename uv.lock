@@ -249,7 +249,7 @@ wheels = [
 
 [[package]]
 name = "feature-factory-ai"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "sdd-factory" },
@@ -820,12 +820,12 @@ wheels = [
 
 [[package]]
 name = "sdd-core"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/core" }
 
 [[package]]
 name = "sdd-example-extension"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "examples/extension" }
 dependencies = [
     { name = "sdd-core" },
@@ -836,7 +836,7 @@ requires-dist = [{ name = "sdd-core", editable = "packages/core" }]
 
 [[package]]
 name = "sdd-factory"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/factory" }
 dependencies = [
     { name = "sdd-runtime", extra = ["local"] },
@@ -851,7 +851,7 @@ requires-dist = [
 
 [[package]]
 name = "sdd-providers"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/providers" }
 dependencies = [
     { name = "sdd-core" },
@@ -862,7 +862,7 @@ requires-dist = [{ name = "sdd-core", editable = "packages/core" }]
 
 [[package]]
 name = "sdd-runtime"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/runtime" }
 dependencies = [
     { name = "psutil" },
@@ -884,7 +884,7 @@ provides-extras = ["local"]
 
 [[package]]
 name = "sdd-storage"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/storage" }
 dependencies = [
     { name = "sdd-core" },
@@ -895,7 +895,7 @@ requires-dist = [{ name = "sdd-core", editable = "packages/core" }]
 
 [[package]]
 name = "sdd-ui"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/ui" }
 dependencies = [
     { name = "sdd-factory" },
@@ -916,7 +916,7 @@ requires-dist = [
 
 [[package]]
 name = "sdd-usage"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/usage" }
 dependencies = [
     { name = "sdd-core" },
@@ -927,7 +927,7 @@ requires-dist = [{ name = "sdd-core", editable = "packages/core" }]
 
 [[package]]
 name = "sdd-workflows"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "packages/workflows" }
 dependencies = [
     { name = "sdd-core" },

@@ -79,6 +79,11 @@ export function openProjectDialog(project = null) {
     placeholder: t("project.checksPlaceholder"),
     spellcheck: "false",
   });
+  const plansFolder = h("input", {
+    name: "plans_folder",
+    placeholder: t("project.plansFolderPlaceholder"),
+    spellcheck: "false",
+  });
   const repositoryChecks = h("textarea", {
     name: "repository_checks",
     rows: "3",
@@ -118,6 +123,12 @@ export function openProjectDialog(project = null) {
     field(t("project.language"), language),
     field(t("project.checks"), checks, t("project.checksHint"), true),
     field(
+      t("project.plansFolder"),
+      plansFolder,
+      t("project.plansFolderHint"),
+      true,
+    ),
+    field(
       t("project.repositoryChecks"),
       repositoryChecks,
       t("project.repositoryChecksHint"),
@@ -146,6 +157,7 @@ export function openProjectDialog(project = null) {
     workspace.value = project.workspace;
     language.value = project.language || "ru";
     checks.value = joinCommand(project.checks);
+    plansFolder.value = project.plans_folder || "";
     repositoryChecks.value = Object.entries(project.repository_checks || {})
       .map(([repo, argv]) => `${repo}: ${joinCommand(argv)}`)
       .join("\n");
@@ -205,6 +217,7 @@ export function openProjectDialog(project = null) {
         language: language.value,
         checks: parsed,
         repository_checks: perRepository,
+        plans_folder: plansFolder.value.trim(),
         isolation: isolation.checked,
         auto_resolve: autoResolve.checked,
       });

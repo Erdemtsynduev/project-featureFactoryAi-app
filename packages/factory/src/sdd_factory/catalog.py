@@ -70,6 +70,12 @@ class ProjectCatalog:
             repository_checks[Path(repository).as_posix()] = list[Json](
                 checks_of(argv, "repository check")
             )
+        plans_folder = text(doc.get("plans_folder", ""), "plans_folder").strip().strip("/\\")
+        if plans_folder:
+            folder = (workspace / plans_folder).resolve()
+            if not folder.is_relative_to(workspace) or not folder.is_dir():
+                raise ValueError(f"Plans folder is not a folder in the workspace: {plans_folder}")
+            plans_folder = folder.relative_to(workspace).as_posix()
         for existing in self.projects():
             if existing["id"] != identifier and Path(str(existing["workspace"])) == workspace:
                 raise Conflict("This workspace is already registered")
@@ -82,6 +88,8 @@ class ProjectCatalog:
             "language": language,
             "checks": list[Json](checks),
             "repository_checks": repository_checks,
+            # Where the project keeps plan documents that become features; optional.
+            "plans_folder": plans_folder,
             # Tickets run in their own worktree lane; conflicts go to an agent when autonomous.
             "isolation": doc.get("isolation", True) is not False,
             "auto_resolve": doc.get("auto_resolve", True) is not False,

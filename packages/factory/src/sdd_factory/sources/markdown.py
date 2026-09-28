@@ -1,6 +1,6 @@
 """Plan documents: a project's numbered Markdown plans and their requirement rows.
 
-A plan is a file such as `.kimi-plans/110_RALLY_FH4_UPDATE_PLAN.md`: a title, a
+A plan is a numbered file such as `plans/110_RALLY_UPDATE.md`: a title, a
 preamble (goals, rules such as "research first", findings) and rows
 
     - [ ] **FH-07** — requirement text
@@ -109,7 +109,9 @@ def row_run_id(number: str, row: PlanRow) -> str:
 class MarkdownPlans:
     """A `FeatureSource` over a folder of numbered Markdown plans in the workspace."""
 
-    def __init__(self, folder: str = ".kimi-plans") -> None:
+    def __init__(self, folder: str) -> None:
+        if not folder:
+            raise ValueError("The project has no plans folder; set it in the project settings")
         self.folder = folder
 
     def documents(self, workspace: Path) -> list[PlanDocument]:

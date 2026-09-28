@@ -26,7 +26,13 @@ from sdd_runtime.engine import Engine
 from sdd_runtime.platform import NO_WINDOW
 
 from sdd_factory.catalog import ProjectCatalog
-from sdd_factory.legacy.translate import PLACEHOLDER, Environment, ImportPlan, translate
+from sdd_factory.legacy.translate import (
+    PLACEHOLDER,
+    Environment,
+    ImportPlan,
+    plans_folder,
+    translate,
+)
 from sdd_factory.model import TaskRecord
 
 
@@ -157,6 +163,7 @@ def apply(
 ) -> dict[str, Json]:
     """Create every planned run paused; identical existing runs are kept."""
     project_id = re.sub(r"[^a-z0-9_-]", "-", source.name.lower()).strip("-")[:64] or source.project
+    folder = plans_folder([info.path for info in plan.plans])
     if not catalog.project(project_id):
         catalog.save_project(
             {
@@ -165,6 +172,7 @@ def apply(
                 "workspace": str(source.workspace),
                 "language": language,
                 "checks": [],
+                "plans_folder": folder if (source.workspace / folder).is_dir() else "",
                 "isolation": any(
                     step.handler == "lane-integrate"
                     for ticket in plan.tickets

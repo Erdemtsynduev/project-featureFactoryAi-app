@@ -112,7 +112,8 @@ decomposition → subtasks) and AI Hero (grill me → PRD → PRD to issues → 
    review, merge. A ticket claims only the repositories it owns.
 
 A feature comes from **New task → Большая фича**, or from a **plan**: a plan file
-`.kimi-plans/NNN_*.md` becomes one feature `feature_<NNN>` whose scope is the plan's
+`NNN_*.md` in the project's **plans folder** (a project setting; none by default)
+becomes one feature `feature_<NNN>` whose scope is the plan's
 open and partial rows (closed and rejected rows are context). Rows the old queue
 already decomposed into tickets are not in scope again; those tickets are listed in
 the feature's brief. **Обновить планы из файлов** (`plans-sync`) creates a feature per

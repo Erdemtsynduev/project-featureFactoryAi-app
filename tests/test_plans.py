@@ -32,7 +32,7 @@ STEPPED = Workflow(
 
 
 def test_parse_plan_reads_rows_marks_details_and_rules():
-    plan = parse_plan(".kimi-plans/110_RALLY_PLAN.md", PLAN)
+    plan = parse_plan("plans/110_RALLY_PLAN.md", PLAN)
     assert plan.number == "110" and plan.title == "110 · Rally: большое обновление"
     assert [(r.id, r.mark, r.open) for r in plan.rows] == [
         ("FH-01", "x", False),
@@ -50,9 +50,11 @@ def test_parse_plan_reads_rows_marks_details_and_rules():
 def game(tmp_path, monkeypatch):
     service = WorkspaceService(tmp_path / "ui.db")
     root = tmp_path / "game"
-    (root / ".kimi-plans").mkdir(parents=True)
-    (root / ".kimi-plans" / "110_RALLY_PLAN.md").write_text(PLAN, encoding="utf-8")
-    service.mutate("project", {"id": "game", "name": "Game", "workspace": str(root)})
+    (root / "plans").mkdir(parents=True)
+    (root / "plans" / "110_RALLY_PLAN.md").write_text(PLAN, encoding="utf-8")
+    service.mutate(
+        "project", {"id": "game", "name": "Game", "workspace": str(root), "plans_folder": "plans"}
+    )
     flow = service.engine.store.publish(STEPPED)
     monkeypatch.setattr(
         service.flows, "ensure", lambda name, project, language, repositories=(): flow
@@ -72,12 +74,12 @@ def test_sync_makes_one_feature_per_plan_and_a_follow_up_for_new_rows(tmp_path, 
         assert service.engine.store.get("feature_110").paused
         with service.engine.store.unit() as unit:
             brief = unit.context("feature_110")
-        assert ".kimi-plans/110_RALLY_PLAN.md" in brief and "FH-02 (partial" in brief
+        assert "plans/110_RALLY_PLAN.md" in brief and "FH-02 (partial" in brief
         assert "FH-01" not in brief.split("Scope:")[1]
         assert service.mutate("plans-sync", {"project": "game"})["created"] == []
 
         # A research row adds a row: it becomes a follow-up feature on its own.
-        path = root / ".kimi-plans" / "110_RALLY_PLAN.md"
+        path = root / "plans" / "110_RALLY_PLAN.md"
         path.write_text(PLAN + "- [ ] **FH-04** — Кабина: руль и приборы.\n", encoding="utf-8")
         follow = service.mutate("plans-sync", {"project": "game", "plan": "110"})
         assert follow["created"] == ["feature_110_2"]
@@ -173,3 +175,21 @@ def test_task_blocked_by_the_old_dispatch_race_is_released_on_start(tmp_path):
         assert any(e["kind"] == "unblocked" for e in restarted.flight(run="stuck"))
     finally:
         restarted.coordinator.close()
+
+
+def test_a_project_without_a_plans_folder_has_no_plans(tmp_path):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        root = tmp_path / "app"
+        root.mkdir()
+        service.mutate("project", {"id": "app", "name": "App", "workspace": str(root)})
+        assert service.catalog.project("app")["plans_folder"] == ""
+        with pytest.raises(ValueError, match="no plans folder"):
+            service.mutate("plans-sync", {"project": "app"})
+        with pytest.raises(ValueError, match="not a folder"):
+            service.mutate(
+                "project",
+                {"id": "app", "name": "App", "workspace": str(root), "plans_folder": "missing"},
+            )
+    finally:
+        service.coordinator.close()

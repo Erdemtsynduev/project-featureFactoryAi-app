@@ -780,7 +780,7 @@ export default {
   "flows.viewHint": "View mode: pick a step to see what it does. Switch to Edit to change the workflow.",
   "usage.budgetSmall": "Open tasks in the project: {open}, while the budget is {max} calls for the whole database. Each task needs several calls: raise the budget for a large plan or the queue stops.",
   "plans.about.title": "How a plan becomes work",
-  "plans.about.steps": "The factory's input is a feature. A plan in .kimi-plans becomes one feature: its scope is the plan's open and partly done rows | Specification (a PRD, as in AI Hero): an agent studies the plan and the code, asks when your decision is needed and writes problem, solution, user stories, implementation and testing decisions, acceptance criteria AC-1… | Tickets: the specification is cut into vertical slices with acceptance, dependencies and owning repositories | You approve the specification and tickets as a whole (Needs you); the tickets appear in the plan | A ticket: implementation on its own branch, checks, independent review, merge; independent tickets run in parallel | The factory keeps the specification and tickets (feature card → Documents); the project only receives code. New plan rows — Refresh plans from files creates a follow-up feature",
+  "plans.about.steps": "The factory's input is a feature. A plan from the project's plans folder (project settings → Plans folder) becomes one feature: its scope is the plan's open and partly done rows | Specification (a PRD, as in AI Hero): an agent studies the plan and the code, asks when your decision is needed and writes problem, solution, user stories, implementation and testing decisions, acceptance criteria AC-1… | Tickets: the specification is cut into vertical slices with acceptance, dependencies and owning repositories | You approve the specification and tickets as a whole (Needs you); the tickets appear in the plan | A ticket: implementation on its own branch, checks, independent review, merge; independent tickets run in parallel | The factory keeps the specification and tickets (feature card → Documents); the project only receives code. New plan rows — Refresh plans from files creates a follow-up feature",
   "plans.synced": "Plans: {plans}. New features: {created}.",
   "plans.file": "File: {path} · in the file {done} done, {partial} partial, {open} open",
   "bulk.estimate": "At least {calls} model calls are needed, {planning} of them planning. Left in the queue budget: {left} of {max}, planning {pleft} of {pmax}.",
@@ -821,4 +821,7 @@ export default {
   "project.repositoryChecksPlaceholder": "libraries/terrain: C:\\Python\\python.exe -m pytest",
   "project.repositoryChecksHint": "One line per repository: folder, colon, command. A ticket runs the checks of the repositories it owns; otherwise the project's checks.",
   "log.kind.task_renamed": "Task renamed",
+  "project.plansFolder": "Plans folder",
+  "project.plansFolderPlaceholder": "plans",
+  "project.plansFolderHint": "A folder in the project with numbered Markdown plans (NNN_name.md). Each plan becomes a feature: specification → tickets. Empty — no plans.",
 };

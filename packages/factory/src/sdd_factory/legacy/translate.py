@@ -65,8 +65,16 @@ class ImportPlan:
     plans: tuple[PlanInfo, ...] = ()
 
 
-# Requirement runs plan in this folder; their claim must not cover code repositories.
-PLANNING_SCOPE = ".kimi-plans"
+def planning_scope(path: str) -> tuple[str, ...]:
+    """A requirement plans in the folder of its plan file, never in code repositories."""
+    folder = path.replace("\\", "/").rpartition("/")[0]
+    return (folder,) if folder else ()
+
+
+def plans_folder(paths: list[str]) -> str:
+    """The one folder every legacy plan file lives in, or "" when they differ."""
+    folders = {path.replace("\\", "/").rpartition("/")[0] for path in paths if path}
+    return folders.pop() if len(folders) == 1 else ""
 
 
 def plan_title(plan: str, path: str) -> str:
@@ -411,7 +419,7 @@ def _requirement_plan(
         title[:200],
         plan,
         context,
-        (PLANNING_SCOPE,),
+        planning_scope(str(origin.get("path", ""))),
         (),
         workflow,
         (),

@@ -216,7 +216,7 @@ core, runtime and workflows; the UI (`sdd-ui`) is an HTTP adapter and console ov
 | `catalog` | `ProjectCatalog`: projects (with checks per repository), plan summaries, task records (correctable), artifacts |
 | `tasks` | Creating work by intent, commands, bulk start/pause with dependencies, answers, approval of a breakdown (ticket admission, artifacts), recovery |
 | `plans` | A plan document becomes one feature; follow-up features for new rows; rebuilding a board from plans |
-| `sources` | `FeatureSource` port and `MarkdownPlans` (numbered `.kimi-plans/NNN_*.md`) |
+| `sources` | `FeatureSource` port and `MarkdownPlans` (numbered `NNN_*.md` in the folder a project names) |
 | `flows` | Templates for a project (feature, ticket with its repositories' checks, main flow), validation, publication |
 | `journal`, `diagnostics` | Append-only flight log and per-task incident records |
 | `legacy` | Import of the legacy sdd-orchestrator queue: pure translation and the read-only importer (`python -m sdd_factory.legacy`) |
