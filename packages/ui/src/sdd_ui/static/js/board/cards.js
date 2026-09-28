@@ -5,7 +5,6 @@ import * as api from "../core/api.js";
 import { h } from "../core/dom.js";
 import { formatTime, money, t } from "../core/i18n.js";
 import {
-  childrenOf,
   kindOf,
   laneOf,
   meta,
@@ -38,15 +37,18 @@ export function card(run, inPlan) {
   const m = meta(run);
   const step = stepOf(run);
   const facts = [];
-  if (kind === "feature") {
-    const children = childrenOf(run);
-    if (children.length)
-      facts.push(
-        t("card.ticketsDone", {
-          done: children.filter((c) => c.status === "accepted").length,
-          count: children.length,
-        }),
-      );
+  if (run.progress)
+    facts.push(
+      t("card.ticketsDone", {
+        done: run.progress.done,
+        count: run.progress.total,
+      }),
+    );
+  if (m.origin) {
+    const origin = findRun(m.origin);
+    facts.push(
+      t("card.origin", { title: shorten(origin ? titleOf(origin) : m.origin) }),
+    );
   }
   if (m.parent) {
     // The parent's title, or its id without the plan prefix when it is absent.
@@ -152,7 +154,7 @@ export function lane(key, items, scope = "") {
   const id = scope + ":" + key;
   const limit = shown.get(id) || PAGE;
   const empty =
-    filters.query || filters.plan || filters.kind
+    filters.query || filters.plan
       ? t("board.noMatches")
       : t("board.empty." + key);
   const rest = items.length - limit;

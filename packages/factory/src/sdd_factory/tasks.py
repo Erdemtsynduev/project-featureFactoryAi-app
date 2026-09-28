@@ -180,6 +180,38 @@ class TaskService:
         self.log.record("task_renamed", run=identifier)
         return record.document()
 
+    def close(self, doc: dict[str, Json]) -> dict[str, object]:
+        """Close a parent before all its children are done: it counts as delivered
+        with what is done, and each unfinished child becomes top-level work that
+        remembers where it came from. Nothing runs, stops or is removed."""
+        identifier = text(doc.get("id"), "id")
+        if self.engine.store.get(identifier).status != "accepted":
+            raise ValueError("Only work whose own run is accepted can be closed")
+        records = self.catalog.tasks()
+        children = [key for key, item in records.items() if item.parent == identifier]
+        if not children:
+            raise ValueError("Only work with tickets can be closed")
+        with self.engine.store.unit() as db:
+            status = {run.id: run.status for run in db.runs()}
+        below: dict[str, list[str]] = {}
+        for key, item in records.items():
+            below.setdefault(item.parent, []).append(key)
+
+        def finished(key: str, seen: frozenset[str]) -> bool:
+            """Accepted, and so is everything below it unless it was closed."""
+            if status.get(key) != "accepted" or key in seen:
+                return status.get(key) == "accepted"
+            return records[key].closed or all(
+                finished(child, seen | {key}) for child in below.get(key, ())
+            )
+
+        detached = [key for key in children if not finished(key, frozenset())]
+        for key in detached:
+            self.catalog.update_task(key, records[key].changed(parent="", origin=identifier))
+        self.catalog.update_task(identifier, records[identifier].changed(closed=True))
+        self.log.record("work_closed", run=identifier, detached=list[Json](detached))
+        return {"closed": identifier, "detached": list[Json](detached)}
+
     # Control ------------------------------------------------------------------
 
     def command(self, command: str, doc: dict[str, Json]) -> dict[str, object]:

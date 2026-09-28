@@ -11,7 +11,7 @@ import { byId, h, replace } from "../core/dom.js";
 import { formatTime, t } from "../core/i18n.js";
 import { recall, remember } from "../core/storage.js";
 import {
-  laneOf,
+  needsYou,
   projects,
   run as findRun,
   store,
@@ -155,7 +155,7 @@ function systemToggle() {
 }
 
 function renderPanel() {
-  const needs = (store.state?.runs || []).filter((r) => laneOf(r) === "needs");
+  const needs = (store.state?.runs || []).filter((r) => needsYou(r));
   replace(
     panel.body,
     h(

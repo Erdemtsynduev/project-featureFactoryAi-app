@@ -94,6 +94,35 @@ approved specification. Admission is idempotent per ticket. **Вернуть н�
 доработку** requires a comment and routes back to the specification. Without the
 `claude` and `codex` profiles, approval is refused before anything is recorded.
 
+## Work is a tree
+
+Any run whose workflow declares `tickets` and gets them approved becomes a parent,
+so a ticket whose workflow has its own breakdown step holds sub-tickets, to any
+depth. A parent's own run finishing (the feature's `accepted` step after approval)
+means its **planning** is done, not the work. From then on the server derives the
+parent's reason from its children (`sdd_ui.attention.rollup`), with `progress`
+(children done / all):
+
+| Reason | When | Lane |
+|---|---|---|
+| `delivery_paused` | no child done, all children idle | Queue, **Запустить тикеты** |
+| `partial` | some done, the rest idle | Queue, **Доделать** / **Закрыть частично** |
+| `delivery_waiting` | a child waits for a limit or time | Queue |
+| `delivering` | a child runs | In progress |
+| `children_need` | a child needs an answer or is blocked | Needs you |
+| `delivered` | every child is done (recursively) | Done |
+| `closed` | closed early by the operator | Done |
+
+A workflow without a breakdown (a question turned into a task, a whole task)
+is a leaf: it is done when its own run is accepted. **Доделать** resumes every
+unfinished run below the parent with its prerequisites (the bulk dialog).
+**Закрыть частично** (`close`) records the parent as closed and detaches each
+child that is not finished (its run or anything below it): the child becomes
+top-level work with `origin` naming the parent. Nothing stops, runs or is removed;
+the records are application metadata, so the engine's history is unchanged.
+Dependencies between runs still mean "run accepted": work that depends on a
+feature waits for its planning, not its delivery.
+
 ## Features, plans and where artifacts live
 
 The factory's input is a **feature**. Every feature takes the same path, as in
@@ -132,6 +161,15 @@ hold their folder between attempts, so many features advance side by side.
 
 ## Board, cards and the attention reason
 
+The board has three views. **Дерево** (the default) shows features with their
+tickets and sub-tickets, like sub-issues: each row has the reason line, the
+children's progress for a parent and the one-click action; needs-you and running
+work comes first. Chips narrow the tree to one lane and **Скрыть готовые** hides
+done work; a match's ancestors stay, dimmed, for context. Rows with work left start
+unfolded; folds are remembered. **Канбан** shows the columns below with only work
+that moves by itself: an approved parent is represented by its tickets there and in
+**По планам**.
+
 Columns follow one server-side derivation (`sdd_ui.attention`) that names the first
 thing blocking each task and the action that resolves it: answer, retry, reconcile,
 connect a profile, resume, start the queue — or why it waits (a limit reset, a
@@ -145,8 +183,8 @@ project) are listed above the board and in Overview with a link there.
 
 Columns show 40 cards and **Показать ещё** pages further. Drag cards between Queue
 and In progress to pause or resume. Nothing can be dragged into Done: acceptance
-belongs to gates and review. Search, kind chips and the plan filter persist per
-browser.
+belongs to gates and review. The view, search, lane chips and the plan filter
+persist per browser.
 
 **По планам** shows one collapsible row per plan (Epic-style swimlanes): counts per
 column, progress, how many tasks outside the plan it waits for, **Запустить план**
@@ -277,8 +315,8 @@ Plain ES modules, no build step and no Node.js at runtime:
 |---|---|
 | `js/core/` | `dom` (element builder), `api` (HTTP client, ETag polling), `store` (snapshot, project scope, selectors), `i18n`, `storage` |
 | `js/ui/` | `dialog` (modal/drawer, confirm), `toast`, `draft` (form drafts) |
-| `js/features/` | One module per screen or concern: `shell`, `board`, `task-drawer`, `answers`, `new-task`, `projects`, `flows`, `agents`, `usage`, `journal`, `team`, `onboarding`, `notifications`, `commands`, `vocabulary`, `bulk`, `dashboard` |
-| `js/board/` | The board's parts: `state` (filters, open plans, paging), `cards` (cards and columns), `plans` (plan rows and actions) |
+| `js/features/` | One module per screen or concern: `shell`, `board`, `task-drawer`, `answers`, `new-task`, `projects`, `flows`, `agents`, `usage`, `journal`, `team`, `onboarding`, `notifications`, `commands`, `vocabulary`, `bulk`, `dashboard`, `work` (parents: finish, close) |
+| `js/board/` | The board's parts: `state` (filters, open plans, folds, paging), `tree` (the work tree), `cards` (cards and columns), `plans` (plan rows and actions) |
 | `js/drawer/` | The task drawer's tabs: `discussion`, `details` (dependencies, documents), `log`, `live`, shared `parts` |
 | `js/flows/` | The workflow editor's `state` (draft, mode, elements) and `inspector` |
 | `js/graph/` | `pipeline` (SVG workflow drawing) and `office` (canvas scene) |
@@ -297,7 +335,9 @@ $env:FFAI_UI_TESTS = '1'
 
 Or install Chromium with `python -m playwright install chromium` and omit the
 channel. Browser tests use temporary databases and make zero model calls; screenshots
-go to ignored `reports/ui/`. On September 28 the eleven scenarios passed in installed
+go to ignored `reports/ui/`. On September 29 the twelfth scenario (the work tree:
+nesting, partial progress, folds, lane focus, closing partly done) was added; on
+September 28 the eleven scenarios passed in installed
 Edge on Windows (welcome, answer drafts, read-only view and pipeline editing,
 new-task drafts, filters and mobile width, budgets, drag and drop with
 theme/language and the question picker, notifications, bulk start, starting a plan

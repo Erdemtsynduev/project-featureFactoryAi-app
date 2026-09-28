@@ -1,19 +1,25 @@
-/* Board state shared by its parts: filters, open plan rows, column paging and the
- * mounted view (its root element and how to redraw it). */
+/* Board state shared by its parts: filters, open plan rows, folded tree rows,
+ * column paging and the mounted view (its root element and how to redraw it). */
 
 import { recall } from "../core/storage.js";
 
 export const LANES = ["queue", "running", "needs", "done"];
+export const MODES = ["tree", "live", "plans"];
 export const PAGE = 40;
 export const NO_PLAN = "";
 
+const mode = recall("board-mode", "tree");
 export const filters = {
-  mode: recall("board-mode", "live"),
-  kind: recall("kind-filter", ""),
+  mode: MODES.includes(mode) ? mode : "tree",
+  // One lane to show in the tree ("" shows every lane).
+  focus: recall("board-focus", ""),
+  hideDone: recall("board-hide-done", false),
   query: recall("task-search", ""),
   plan: recall("plan-filter", ""),
 };
 export const openPlans = new Set(recall("open-plans", []));
+/** Tree rows the operator folded or unfolded, by run id: true is open. */
+export const folds = new Map(Object.entries(recall("tree-folds", {})));
 /** Cards shown per column (key: lane, or plan + lane); reset when filters change. */
 export const shown = new Map();
 

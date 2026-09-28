@@ -10,6 +10,7 @@ import { confirmDialog } from "../ui/dialog.js";
 import { attempt } from "../ui/toast.js";
 import { go } from "./shell.js";
 import { attentionText } from "./vocabulary.js";
+import { resumeChildrenButton } from "./work.js";
 
 function recoverable(run) {
   try {
@@ -127,6 +128,7 @@ export function primaryAction(run, open) {
       },
       t("queue.start"),
     );
+  if (action === "resume_children") return resumeChildrenButton(run);
   if (action === "agents")
     return h(
       "button",

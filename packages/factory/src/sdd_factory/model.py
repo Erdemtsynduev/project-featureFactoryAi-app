@@ -6,6 +6,12 @@
   independent review, merge.
 - A **task** is a single run of a whole workflow without child tickets.
 
+Work is a tree of any depth: any run whose workflow declares tickets and gets them
+approved becomes a parent. A parent's own run finishing means its planning is
+done; the parent is delivered when all its children are, or when the operator
+closes it early, which detaches its unfinished children (`origin` remembers where
+they came from).
+
 Records are application metadata beside the engine's runs. They are versioned by
 replacement: `TaskRecord.load` reads every earlier spelling (a feature was once
 stored as kind "requirement").
@@ -34,12 +40,14 @@ class TaskRecord:
     title: str = ""
     kind: Kind = "task"
     language: str = "ru"
-    parent: str = ""  # the feature a ticket was cut from
+    parent: str = ""  # the run a ticket was cut from (a feature or another ticket)
     plan: str = ""  # the plan a feature (and its tickets) came from
     rows: tuple[str, ...] = ()  # plan rows a feature covers
     source: str = ""  # the source document of a feature, workspace-relative
     intent: str = ""
     legacy_id: str = ""  # identity in the legacy orchestrator, when imported
+    closed: bool = False  # closed by the operator before all its children were done
+    origin: str = ""  # the parent a ticket was detached from when that parent closed
 
     @classmethod
     def load(cls, document: dict[str, Json]) -> "TaskRecord":
@@ -58,6 +66,8 @@ class TaskRecord:
             source=str(document.get("source", "")),
             intent=str(document.get("intent", "")),
             legacy_id=str(document.get("legacy_id", "")),
+            closed=document.get("closed") is True,
+            origin=str(document.get("origin", "")),
         )
 
     def document(self) -> dict[str, Json]:

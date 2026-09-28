@@ -12,9 +12,9 @@ import { recall, remember } from "../core/storage.js";
 import {
   hasScope,
   kindOf,
-  laneOf,
   meta,
   needsElsewhere,
+  needsYou,
   planInfo,
   planTitle,
   runnerOf,
@@ -43,7 +43,7 @@ function numbers(list) {
   const open = list.filter((r) => r.status !== "accepted");
   return {
     running: list.filter((r) => r.active && stepOf(r)?.kind !== "human").length,
-    needs: list.filter((r) => laneOf(r) === "needs").length,
+    needs: list.filter((r) => needsYou(r)).length,
     startable: open.filter(
       (r) =>
         r.paused && r.status !== "blocked" && !r.pending_dependencies?.length,
@@ -111,7 +111,7 @@ function row(run, extra) {
 }
 
 function needsPanel(list) {
-  const needs = list.filter((r) => laneOf(r) === "needs");
+  const needs = list.filter((r) => needsYou(r));
   const elsewhere = needsElsewhere();
   return panel(
     t("overview.needs", { count: needs.length }),
@@ -315,7 +315,7 @@ function plansPanel(list) {
     const plan = meta(run).plan;
     if (!plan) continue;
     const entry = plans.get(plan) || { total: 0, done: 0, needs: 0 };
-    entry.needs += laneOf(run) === "needs" ? 1 : 0;
+    entry.needs += needsYou(run) ? 1 : 0;
     entry.total++;
     entry.done += run.status === "accepted" ? 1 : 0;
     plans.set(plan, entry);

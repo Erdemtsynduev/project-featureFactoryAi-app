@@ -9,16 +9,16 @@ import * as api from "../core/api.js";
 import {
   currentProject,
   hasScope,
-  looseRuns,
   LOOSE,
+  looseRuns,
+  needsYou,
   projects,
+  refresh,
   runs,
   selectProject,
+  stopPolling,
   store,
   subscribe,
-  refresh,
-  stopPolling,
-  laneOf,
 } from "../core/store.js";
 import { attempt, toast } from "../ui/toast.js";
 import { openDialog } from "../ui/dialog.js";
@@ -94,7 +94,7 @@ function renderTitle() {
 
 function renderNav() {
   const nav = byId("nav");
-  const needs = runs().filter((r) => laneOf(r) === "needs").length;
+  const needs = runs().filter((r) => needsYou(r)).length;
   replace(
     nav,
     [...views.values()]

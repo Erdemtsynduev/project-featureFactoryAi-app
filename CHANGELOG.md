@@ -11,6 +11,19 @@ contract (workflow schema, result schema, storage schema, HTTP actions) needs a 
 minor version before 1.0 and a migration; existing tasks stay pinned to the workflow
 digest they were created with.
 
+## Unreleased
+
+- Work is a tree of any depth: a parent (a feature, or a ticket split further) is
+  no longer done when its specification is approved. Its state and progress come
+  from its children: paused, partly done, delivering, needs you, delivered. The
+  state read model adds `progress` per parent and seven attention reasons.
+- **Закрыть частично** (`close` action) counts a partly done parent as delivered
+  and detaches its unfinished children as top-level work that remembers its
+  `origin`; task records gain `closed` and `origin`.
+- The board opens on a **tree** of features, tickets and sub-tickets with
+  progress, **Доделать** and lane focus chips instead of kind chips; **Канбан**
+  and **По планам** show approved parents through their tickets.
+
 ## 0.3.1 — 2026-09-28
 
 - The orchestrator assumes no plan layout: a project names its **plans folder**

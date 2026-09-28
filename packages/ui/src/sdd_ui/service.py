@@ -29,7 +29,7 @@ from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.versions import consistent, engine, installed
 
 from sdd_ui.agents import AgentSettings
-from sdd_ui.attention import attention, calls_needed, lane, outline, projection
+from sdd_ui.attention import attention, calls_needed, lane, outline, projection, rollup
 from sdd_ui.queue import QueueController, QueueSettings
 from sdd_ui.workspace import WorkspaceCatalog
 
@@ -43,6 +43,7 @@ TASK_ACTIONS = frozenset(
     {
         "create",
         "rename",
+        "close",
         "answer",
         "message",
         "recover",
@@ -102,6 +103,7 @@ class WorkspaceService:
             "budget": self.queue.set_budget,
             "create": self.tasks.create,
             "rename": self.tasks.rename,
+            "close": self.tasks.close,
             "plans-sync": self.plans.sync,
             "plans-rebuild": self.plans.rebuild,
             "interactive-demo": self.tasks.demo,
@@ -225,19 +227,29 @@ class WorkspaceService:
         profiles = {manifest.id for manifest in self.agents.handlers.manifests()}
         available = cache(self.agents.available)
         running = bool(self.queue.settings["running"]) and not self.queue.error
-        reasons = {
-            run.id: asdict(
-                attention(
-                    run,
-                    workflows[run.workflow_digest].step(run.step),
-                    queue_running=running,
-                    pending=pending.get(run.id, ()),
-                    has_profile=profiles.__contains__,
-                    available=available,
-                )
+        own = {
+            run.id: attention(
+                run,
+                workflows[run.workflow_digest].step(run.step),
+                queue_running=running,
+                pending=pending.get(run.id, ()),
+                has_profile=profiles.__contains__,
+                available=available,
             )
             for run in runs
         }
+        # Work is a tree: a parent's reason and progress come from its children.
+        records = self.catalog.tasks()
+        children: dict[str, list[str]] = {}
+        for run in runs:
+            parent = records[run.id].parent if run.id in records else ""
+            if parent in own:
+                children.setdefault(parent, []).append(run.id)
+        closed = frozenset(key for key, item in records.items() if item.closed)
+        derived, progress = rollup(
+            own, {key: tuple(value) for key, value in children.items()}, closed
+        )
+        reasons = {key: asdict(value) for key, value in derived.items()}
         return {
             "runs": [
                 {
@@ -247,6 +259,7 @@ class WorkspaceService:
                     "needs": calls_needed(run, workflows[run.workflow_digest]),
                     "pending_dependencies": list(pending.get(run.id, ())),
                     "dependencies": prerequisites.get(run.id, []),
+                    "progress": asdict(progress[run.id]) if run.id in progress else None,
                 }
                 for run in reversed(runs)
             ],

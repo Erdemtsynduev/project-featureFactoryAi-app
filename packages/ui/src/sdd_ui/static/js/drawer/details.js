@@ -16,7 +16,17 @@ import {
 } from "../core/store.js";
 import { openBulkResume } from "../features/bulk.js";
 import { openTask } from "../features/shell.js";
-import { kindLabel, statusPill, stepName } from "../features/vocabulary.js";
+import {
+  attentionText,
+  kindLabel,
+  statusPill,
+  stepName,
+} from "../features/vocabulary.js";
+import {
+  closable,
+  closeButton,
+  resumeChildrenButton,
+} from "../features/work.js";
 import { safeJson, section, taskLinks } from "./parts.js";
 
 /** What this task waits for, right under the banner, with one way to unblock it. */
@@ -175,9 +185,40 @@ export function details(detail, step) {
             : h("p", { class: "mono" }, m.parent),
         )
       : null,
+    m.origin
+      ? section(
+          t("detail.origin"),
+          findRun(m.origin)
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  class: "link",
+                  onclick: () => openTask(m.origin),
+                },
+                titleOf(findRun(m.origin)),
+              )
+            : h("p", { class: "mono" }, m.origin),
+        )
+      : null,
     children.length
       ? section(
           t("detail.children", { count: children.length }),
+          run.progress
+            ? h(
+                "div",
+                { class: "delivery" },
+                h("p", {}, attentionText(run)),
+                h(
+                  "div",
+                  { class: "button-row" },
+                  run.attention?.action === "resume_children"
+                    ? resumeChildrenButton(run)
+                    : null,
+                  closable(run) ? closeButton(run) : null,
+                ),
+              )
+            : null,
           h(
             "ul",
             { class: "child-list" },

@@ -196,7 +196,7 @@ export function needsElsewhere() {
   const counts = new Map();
   for (const r of store.state.runs) {
     const owner = projectOf(r);
-    if (owner === store.project || laneOf(r) !== "needs") continue;
+    if (owner === store.project || !needsYou(r)) continue;
     counts.set(owner, (counts.get(owner) || 0) + 1);
   }
   return [...counts].map(([id, count]) => ({
@@ -204,6 +204,12 @@ export function needsElsewhere() {
     count,
     name: projects().find((p) => p.id === id)?.name,
   }));
+}
+
+/** Whether a run itself waits on the operator; a parent whose children do is not
+ * counted again (its children are). */
+export function needsYou(run) {
+  return laneOf(run) === "needs" && run.attention?.code !== "children_need";
 }
 
 /** Board column of a task. */

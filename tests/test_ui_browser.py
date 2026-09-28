@@ -64,6 +64,11 @@ def ready(page, url):
     page.wait_for_selector("html[data-ready=true]")
 
 
+def kanban(page):
+    """Switch the board from the default tree to status columns."""
+    page.locator("#live-board").click()
+
+
 def test_empty_workspace_shows_welcome_instead_of_board(page, tmp_path):
     from playwright.sync_api import expect
 
@@ -91,6 +96,7 @@ def test_answer_draft_survives_closing_and_submits_once(page, workshop):
     page.on("pageerror", lambda error: errors.append(error))
     ready(page, url)
     expect(page.locator("#project-select")).to_have_value("")
+    kanban(page)
     card = page.locator('.lane-needs .card[data-run="needs-answer"]')
     expect(card).to_contain_text("Ждёт вашего ответа")
     card.get_by_role("button", name="Ответить").click()
@@ -170,7 +176,7 @@ def test_new_task_dialog_keeps_its_draft_and_closes(page, workshop, tmp_path):
     dialog.locator('input[name="workspace"]').fill(str(root))
     page.get_by_role("button", name="Сохранить", exact=True).click()
     expect(page.locator("#project-select")).to_have_value("alpha-app")
-    expect(page.locator(".lane")).to_have_count(4)
+    expect(page.locator(".tree")).to_be_visible()
     page.locator("#new-task").click()
     expect(page.get_by_text("Нужны профили: codex.")).to_be_visible()
     expect(page.locator(".next-steps")).to_contain_text("Планировщик режет спецификацию")
@@ -200,6 +206,7 @@ def test_search_filters_persist_and_mobile_fits(page, workshop):
 
     url, service = workshop
     ready(page, url)
+    kanban(page)
     expect(page.locator("#board .card")).to_have_count(1)
     page.locator("#task-search").fill("missing")
     expect(page.locator("#board .card")).to_have_count(0)
@@ -210,7 +217,7 @@ def test_search_filters_persist_and_mobile_fits(page, workshop):
     page.get_by_role("button", name="По планам", exact=True).click()
     page.reload()
     expect(page.locator("#plans-board")).to_have_class("active")
-    page.get_by_role("button", name="По статусу", exact=True).click()
+    page.get_by_role("button", name="Канбан", exact=True).click()
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     Path("reports/ui").mkdir(parents=True, exist_ok=True)
@@ -263,6 +270,7 @@ def test_drag_drop_theme_language_and_question_demo(page, workshop, tmp_path):
     page.set_viewport_size({"width": 1440, "height": 1200})
     ready(page, url)
     page.locator("#project-select").select_option("beta")
+    kanban(page)
     card = page.locator('.card[data-run="drag-me"]')
     expect(card).to_contain_text("На паузе")
     card.drag_to(page.locator('.lane[data-lane="running"]'))
@@ -371,6 +379,7 @@ def test_back_navigation_opens_and_closes_task(page, workshop):
     expect(page.locator("#graph")).to_be_visible()
     page.get_by_role("button", name="Назад", exact=True).click()
     expect(page.locator("#board")).to_be_visible()
+    kanban(page)
     page.locator(".lane-needs .card").first.click()
     expect(page.locator(".dialog-drawer")).to_be_visible()
     page.go_back()
@@ -413,6 +422,7 @@ def test_plan_starts_with_outside_dependencies_and_lanes_page(page, workshop, tm
         create(f"filler-{n:02}", "p3", f"Filler {n:02}")
     ready(page, url)
     page.locator("#project-select").select_option("delta")
+    kanban(page)
     queue = page.locator('.lane[data-lane="queue"]')
     expect(queue.locator(".card")).to_have_count(40)
     queue.get_by_role("button", name="Показать ещё 5").click()
@@ -439,5 +449,89 @@ def test_plan_starts_with_outside_dependencies_and_lanes_page(page, workshop, tm
     expect(panel).to_contain_text("Ждёт приёмки 1 задачи")
     panel.get_by_role("button", name="Base contract").click()
     expect(page).to_have_url(url + "/#task/base")
+    assert service.state()["totals"]["calls"] == 0
+    assert not errors
+
+
+def test_tree_nests_tickets_and_closes_a_partly_done_feature(page, workshop, tmp_path):
+    from playwright.sync_api import expect
+
+    url, service = workshop
+    errors = []
+    page.on("pageerror", lambda error: errors.append(error))
+    root = tmp_path / "tree"
+    root.mkdir()
+    service.mutate("project", {"id": "tree", "name": "Tree", "workspace": str(root)})
+    definition = service.engine.store.publish(Workflow("empty", "done", (Step("done", "finish"),)))
+
+    def create(identifier, title, kind="ticket", parent="", done=False):
+        run = service.engine.create(identifier, definition, root, "", "rev", time.time())
+        service.catalog.save_task(
+            identifier, TaskRecord(project="tree", kind=kind, title=title, parent=parent)
+        )
+        if done:
+            run = service.engine.command(identifier, "resume", identifier, run.version, 1)
+            service.engine.dispatch(identifier, 2, identifier + "-a")
+
+    create("checkout", "Checkout", kind="feature", done=True)
+    create("checkout-api", "Pay endpoint", parent="checkout", done=True)
+    create("checkout-ui", "Pay screen", parent="checkout")
+    # A ticket split further: its own planning is done, one sub-ticket is not.
+    create("checkout-limits", "Rate limits", parent="checkout", done=True)
+    create("checkout-limits-count", "Counter", parent="checkout-limits", done=True)
+    create("checkout-limits-block", "Blocking", parent="checkout-limits")
+    create("typo", "Fix a typo", kind="task")
+
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    ready(page, url)
+    page.locator("#project-select").select_option("tree")
+    feature = page.locator('.tree-row[data-run="checkout"]')
+    expect(feature).to_have_attribute("aria-level", "1")
+    expect(feature).to_contain_text("Сделано частично: 1/3")
+    expect(feature.locator(".plan-progress")).to_have_text("1/3")
+    limits = page.locator('.tree-row[data-run="checkout-limits"]')
+    expect(limits).to_contain_text("1/2")
+    expect(page.locator('.tree-row[data-run="checkout-limits-block"]')).to_have_attribute(
+        "aria-level", "3"
+    )
+    Path("reports/ui").mkdir(parents=True, exist_ok=True)
+    page.screenshot(path="reports/ui/board-tree.png", full_page=True)
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path="reports/ui/board-tree-mobile.png", full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+
+    # Folding hides the children; the fold survives a reload.
+    limits.get_by_role("button", name="Свернуть").click()
+    expect(page.locator('.tree-row[data-run="checkout-limits-block"]')).to_have_count(0)
+    page.reload()
+    page.wait_for_selector("html[data-ready=true]")
+    expect(page.locator('.tree-row[data-run="checkout-limits-block"]')).to_have_count(0)
+    limits.get_by_role("button", name="Развернуть").click()
+
+    # Focus keeps a match's ancestors as dimmed context.
+    page.locator(".chips .chip", has_text="Готово").click()
+    expect(page.locator('.tree-row[data-run="checkout"]')).to_have_class(
+        "tree-row kind-feature tone-idle context"
+    )
+    expect(page.locator('.tree-row[data-run="typo"]')).to_have_count(0)
+    page.locator(".chips .chip", has_text="Все").click()
+
+    # In the kanban the approved feature is left to its tickets.
+    kanban(page)
+    expect(page.locator('.card[data-run="checkout"]')).to_have_count(0)
+    expect(page.locator('.card[data-run="checkout-ui"]')).to_have_count(1)
+    page.locator("#tree-board").click()
+
+    feature.get_by_role("button", name="Закрыть частично").click()
+    dialog = page.locator("dialog[open]")
+    expect(dialog).to_contain_text("Готово 1 из 3")
+    dialog.get_by_role("button", name="Закрыть частично").click()
+    expect(page.locator(".toast-success")).to_contain_text("отдельными задачами стали: 2")
+    expect(feature).to_contain_text("Закрыто досрочно")
+    expect(page.locator('.tree-row[data-run="checkout-ui"]')).to_have_attribute("aria-level", "1")
+    record = service.catalog.task("checkout-limits")
+    assert record.parent == "" and record.origin == "checkout"
+    assert service.catalog.task("checkout-api").parent == "checkout"
     assert service.state()["totals"]["calls"] == 0
     assert not errors

@@ -63,6 +63,63 @@ def attention(
     return Attention("queued", "working")
 
 
+@dataclass(frozen=True)
+class Progress:
+    done: int
+    total: int
+
+
+def rollup(
+    own: dict[str, Attention],
+    children: dict[str, tuple[str, ...]],
+    closed: frozenset[str] = frozenset(),
+) -> tuple[dict[str, Attention], dict[str, Progress]]:
+    """A parent's reason from its children, at any depth.
+
+    A parent whose own run is still working (writing the specification, waiting
+    for approval) keeps its own reason. Once its run is accepted, its planning is
+    done and its children say where it stands: delivered when all are done,
+    needing you when one does, delivering while one moves, and otherwise paused
+    or partially done until the operator resumes the rest or closes it.
+    """
+    found: dict[str, Attention] = dict(own)
+    progress: dict[str, Progress] = {}
+    visiting: set[str] = set()
+
+    def resolve(run: str) -> Attention:
+        if run in progress or run not in children or run in visiting:
+            return found[run]
+        visiting.add(run)
+        states = [resolve(child) for child in children[run]]
+        visiting.discard(run)
+        tones = [state.tone for state in states]
+        done = tones.count("done")
+        count = f"{done}/{len(states)}"
+        progress[run] = Progress(done, len(states))
+        if own[run].code != "accepted":
+            return found[run]
+        if run in closed:
+            found[run] = Attention("closed", "done", detail=count)
+        elif done == len(states):
+            found[run] = Attention("delivered", "done", detail=count)
+        elif "attention" in tones or "blocked" in tones:
+            waiting = sum(tone in ("attention", "blocked") for tone in tones)
+            found[run] = Attention("children_need", "attention", "", str(waiting))
+        elif "working" in tones:
+            found[run] = Attention("delivering", "working", detail=count)
+        elif "waiting" in tones:
+            found[run] = Attention("delivery_waiting", "waiting", detail=count)
+        else:
+            code = "partial" if done else "delivery_paused"
+            found[run] = Attention(code, "idle", "resume_children", count)
+        return found[run]
+
+    for run in children:
+        if run in own:
+            resolve(run)
+    return found, progress
+
+
 def lane(tone: str) -> str:
     """The board column of an attention tone: queue, running, needs (you) or done."""
     if tone == "done":

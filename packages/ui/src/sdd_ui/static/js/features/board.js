@@ -1,12 +1,15 @@
-/* Board: the project's tasks by what they need, as status columns or plan rows.
+/* Board: the project's work as a tree, as status columns or as plan rows.
  *
- * Columns follow the server's attention reason: Queue (paused, waiting),
- * In progress, Needs you (answers, blockers) and Done. Every card says why it
- * is (not) moving and offers the one action that moves it. "By plan" shows one
- * collapsible row per plan with the same columns inside and the plan's own
- * Start and Pause, so a plan starts as a unit. Columns page by PAGE cards.
- * Dragging between Queue and In progress pauses or resumes; nothing can be
- * dragged into Done. */
+ * "Tree" (the default) shows work as it is broken down: features hold their
+ * tickets, a ticket split further holds its own, and a parent is done only when
+ * its children are. Focus chips narrow it to one lane (what needs you, what
+ * runs). "Kanban" shows what does work itself in columns that follow the
+ * server's attention reason: Queue (paused, waiting), In progress, Needs you
+ * (answers, blockers) and Done; a parent past its planning is left to its
+ * tickets there. "By plan" shows one collapsible row per plan with the same
+ * columns inside and the plan's own Start and Pause. Columns page by PAGE
+ * cards. Dragging between Queue and In progress pauses or resumes; nothing can
+ * be dragged into Done. */
 
 import { h, memo, replace } from "../core/dom.js";
 import { t } from "../core/i18n.js";
@@ -14,8 +17,7 @@ import { remember } from "../core/storage.js";
 import {
   boardFilter,
   hasScope,
-  kindOf,
-  KINDS,
+  laneOf,
   meta,
   needsElsewhere,
   planTitle,
@@ -26,12 +28,13 @@ import {
 import { openBulkResume, pauseAll } from "./bulk.js";
 import { lanes } from "../board/cards.js";
 import { plansView } from "../board/plans.js";
-import { filters, openPlans, shown, view } from "../board/state.js";
+import { filters, LANES, MODES, openPlans, shown, view } from "../board/state.js";
+import { laneCounts, treeView } from "../board/tree.js";
 import { welcome } from "./onboarding.js";
 import { go, registerView } from "./shell.js";
 
 function syncBoardFilter() {
-  boardFilter.kind = filters.kind;
+  boardFilter.kind = "";
   boardFilter.plan = filters.plan;
 }
 syncBoardFilter();
@@ -71,11 +74,11 @@ export function showPlan(id) {
     );
 }
 
+/** The plan and search filters every view applies. */
 function matches(run) {
   const m = meta(run);
   return (
     (!filters.plan || m.plan === filters.plan) &&
-    (!filters.kind || kindOf(run) === filters.kind) &&
     [run.id, m.title, run.reason]
       .join(" ")
       .toLowerCase()
@@ -83,52 +86,75 @@ function matches(run) {
   );
 }
 
+/** The tree's own filters on top: one lane, or everything but what is done. */
+function inFocus(run) {
+  const lane = laneOf(run);
+  return (
+    matches(run) &&
+    (!filters.focus || lane === filters.focus) &&
+    !(filters.hideDone && lane === "done")
+  );
+}
+
+/** A parent past its planning moves through its tickets, not by itself. */
+const delivers = (run) => !!run.progress && run.status === "accepted";
+
 /* Toolbar -------------------------------------------------------------------- */
 
 function renderToolbar(all) {
-  const counts = Object.fromEntries(
-    KINDS.map((k) => [k, all.filter((r) => kindOf(r) === k).length]),
-  );
   const plans = [
     ...new Set(all.map((r) => meta(r).plan).filter(Boolean)),
   ].sort();
   const segmented = h(
     "div",
     { class: "segmented", role: "group", "aria-label": t("board.view") },
-    ["live", "plans"].map((mode) =>
+    MODES.map((mode) =>
       h(
         "button",
         {
           type: "button",
-          id: mode === "live" ? "live-board" : "plans-board",
+          id: mode + "-board",
           class: filters.mode === mode ? "active" : "",
           "aria-pressed": String(filters.mode === mode),
+          title: t("board.modeHint." + mode),
           onclick: () => setFilter("mode", mode, "board-mode"),
         },
         t("board.mode." + mode),
       ),
     ),
   );
+  const counts = laneCounts(all.filter(matches));
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const chips =
-    counts.feature + counts.ticket
+    filters.mode === "tree"
       ? h(
           "div",
-          { class: "chips", role: "group", "aria-label": t("board.kind") },
-          ["", ...KINDS]
-            .filter((k) => !k || counts[k])
-            .map((k) =>
-              h(
-                "button",
-                {
-                  type: "button",
-                  class: "chip" + (k ? " kind-" + k : ""),
-                  "aria-pressed": String(filters.kind === k),
-                  onclick: () => setFilter("kind", k, "kind-filter"),
-                },
-                h("span", {}, k ? t("kind.plural." + k) : t("board.all")),
-                h("span", { class: "chip-count" }, k ? counts[k] : all.length),
-              ),
+          { class: "chips", role: "group", "aria-label": t("board.focus") },
+          ["", ...LANES].map((lane) =>
+            h(
+              "button",
+              {
+                type: "button",
+                class: "chip" + (lane ? " lane-" + lane : ""),
+                "aria-pressed": String(filters.focus === lane),
+                onclick: () => setFilter("focus", lane, "board-focus"),
+              },
+              h("span", {}, lane ? t("board.lane." + lane) : t("board.all")),
+              h("span", { class: "chip-count" }, lane ? counts[lane] : total),
             ),
+          ),
+          h(
+            "label",
+            { class: "check-inline" },
+            h("input", {
+              type: "checkbox",
+              id: "hide-done",
+              checked: filters.hideDone,
+              onchange: (e) =>
+                setFilter("hideDone", e.target.checked, "board-hide-done"),
+            }),
+            t("board.hideDone"),
+          ),
         )
       : null;
   const search = h("input", {
@@ -248,8 +274,19 @@ function draw(force = false) {
     renderToolbar(all);
     renderNotice();
     body.classList.toggle("as-plans", filters.mode === "plans");
-    if (filters.mode === "plans") replace(body, plansView(items));
-    else replace(body, lanes(items, ""));
+    body.classList.toggle("as-tree", filters.mode === "tree");
+    const working = items.filter((r) => !delivers(r));
+    if (filters.mode === "plans") replace(body, plansView(working));
+    else if (filters.mode === "tree")
+      replace(
+        body,
+        treeView(
+          all,
+          inFocus,
+          !!(filters.query || filters.plan || filters.focus || filters.hideDone),
+        ),
+      );
+    else replace(body, lanes(working, ""));
   });
 }
 
