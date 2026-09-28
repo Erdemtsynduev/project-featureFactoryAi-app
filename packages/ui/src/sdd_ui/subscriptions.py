@@ -7,6 +7,7 @@ import threading
 import time
 
 from sdd_runtime.platform import NO_WINDOW
+from sdd_runtime.versions import engine
 
 
 def read_codex_limits(argv: tuple[str, ...], timeout: float = 12) -> dict[str, object]:
@@ -63,7 +64,7 @@ def read_codex_limits(argv: tuple[str, ...], timeout: float = 12) -> dict[str, o
             {
                 "id": 0,
                 "method": "initialize",
-                "params": {"clientInfo": {"name": "feature_factory_ai", "version": "0.1.0"}},
+                "params": {"clientInfo": {"name": "feature_factory_ai", "version": engine()}},
             }
         )
         response(0)

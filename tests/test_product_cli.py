@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 from sdd_runtime.cli import main, parser
@@ -49,4 +50,6 @@ def test_portable_repository_launcher(tmp_path):
         text=True,
         timeout=10,
     )
-    assert process.returncode == 0 and process.stdout.strip() == "Feature Factory AI 0.1.0"
+    assert process.returncode == 0 and process.stdout.strip() == "Feature Factory AI " + version(
+        "sdd-runtime"
+    )

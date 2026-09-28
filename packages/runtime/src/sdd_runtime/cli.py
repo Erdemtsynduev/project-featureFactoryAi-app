@@ -30,6 +30,7 @@ from sdd_runtime.engine import Engine
 from sdd_runtime.files import atomic_write, revision
 from sdd_runtime.lock import Lease
 from sdd_runtime.platform import NO_WINDOW, Job
+from sdd_runtime.versions import engine
 from sdd_runtime.watchdog import watch_parent
 
 
@@ -101,7 +102,7 @@ def parser() -> argparse.ArgumentParser:
         prog="ffai", description="Feature Factory AI - deterministic workflow orchestration"
     )
     root.add_argument("--database", type=Path, default=Path(".state/engine.sqlite3"))
-    root.add_argument("--version", action="version", version="Feature Factory AI 0.1.0")
+    root.add_argument("--version", action="version", version=f"Feature Factory AI {engine()}")
     commands = root.add_subparsers(dest="action")
     demo = commands.add_parser("demo", help="Run an isolated example without model calls")
     demo.add_argument("--directory", type=Path, default=Path(".state/demo"))
