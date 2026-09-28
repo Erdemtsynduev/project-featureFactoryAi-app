@@ -2,7 +2,8 @@
  * meters. Views register themselves; the shell mounts one at a time and passes
  * every store change to it. Routes are hash tokens: #board, #task/<id>, ... */
 
-import { byId, h, replace } from "../core/dom.js";
+import { byId, h, replace, stableLabel } from "../core/dom.js";
+import { toggleQueue } from "./bulk.js";
 import { applyStatic, formatNumber, money, t } from "../core/i18n.js";
 import * as api from "../core/api.js";
 import {
@@ -61,12 +62,12 @@ export function closeTaskRoute() {
 function parse() {
   const hash = decodeURIComponent(location.hash.slice(1));
   if (hash.startsWith("task/")) return { view: null, task: hash.slice(5) };
-  return { view: views.has(hash) ? hash : "board", task: null };
+  return { view: views.has(hash) ? hash : "overview", task: null };
 }
 
 function routeNow() {
   const target = parse();
-  const view = views.get(target.view || current?.id || "board");
+  const view = views.get(target.view || current?.id || "overview");
   if (view !== current) mount(view);
   for (const listener of taskListeners) listener(target.task);
   byId("nav-back").disabled = depth <= 0;
@@ -164,8 +165,9 @@ function renderQueue() {
       : t("queue.paused");
   status.title = state.error || "";
   toggle.disabled = false;
-  toggle.textContent = running ? t("queue.pause") : t("queue.start");
-  toggle.className = running ? "" : "primary-soft";
+  // Both labels share one cell, so switching them never moves the top bar.
+  stableLabel(toggle, [t("queue.start"), t("queue.pause")], running ? 1 : 0);
+  toggle.classList.toggle("primary-soft", !running);
   const banner = byId("banner");
   banner.hidden = !state.error;
   if (state.error)
@@ -236,12 +238,9 @@ export function startShell() {
     onStore(store, "language");
   });
   byId("project-select").onchange = (e) => selectProject(e.target.value);
-  byId("nav-back").onclick = () => (depth > 0 ? history.back() : go("board"));
-  byId("queue-toggle").onclick = () =>
-    attempt(async () => {
-      await api.post("queue", { running: !store.state.settings.running });
-      await refresh();
-    });
+  byId("nav-back").onclick = () =>
+    depth > 0 ? history.back() : go("overview");
+  byId("queue-toggle").onclick = toggleQueue;
   byId("close-app").onclick = closeApplication;
   window.addEventListener("popstate", (event) => {
     depth = event.state?.depth || 0;
@@ -249,7 +248,7 @@ export function startShell() {
   });
   // A hand-edited address is a new place, not a history step.
   window.addEventListener("hashchange", routeNow);
-  history.replaceState({ depth: 0 }, "", location.hash || "#board");
+  history.replaceState({ depth: 0 }, "", location.hash || "#overview");
   subscribe(onStore);
   routeNow();
   onStore(store, "mount");

@@ -22,7 +22,7 @@ export function availableCommands(run) {
   if (run.status === "accepted") return [];
   const list = [];
   if (run.paused && run.status !== "blocked")
-    list.push(["resume", "command.resume", "primary"]);
+    list.push(["resume", "command.resume", "primary-soft"]);
   if (run.status === "blocked" && !run.active)
     list.push(["retry", "command.retry", "primary"]);
   if (

@@ -29,14 +29,14 @@ To install the commands globally from locally built wheels (the script clears st
 
 ```text
 uv run --locked python tools/wheels.py
-uv tool install --find-links ./dist feature-factory-ai==0.1.0
+uv tool install --find-links ./dist feature-factory-ai==0.2.0
 ffai-app
 ```
 
 Run `uv tool update-shell` and open a new terminal if the command directory is not
-on PATH. Update with `uv tool install --reinstall --find-links ./dist feature-factory-ai==0.1.0`;
+on PATH. Update with `uv tool install --reinstall --find-links ./dist feature-factory-ai==0.2.0`;
 uninstall with `uv tool uninstall feature-factory-ai`. Alternatively use
-`pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.1.0`.
+`pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.2.0`.
 The application is not published on PyPI: use local wheels, not an unrelated
 package with a similar name. The legacy `ff` and `sdd` commands are not installed.
 
@@ -74,7 +74,10 @@ Keep the control database outside task workspaces. The local interface includes:
   rotation on limits and an early "return now" for a resting profile.
 - Usage and limits: queue budgets, per-profile tokens and API-equivalent cost,
   daily dispatches, Codex account quotas and automatic revival after limits.
-- A flight log of operator actions, queue stops, blocks, waits and revivals.
+- A flight log of operator actions, queue stops, blocks, waits and revivals, and a
+  notification center with what needs you and what happened.
+- Bulk resume/pause through a dialog, live progress of the running step (elapsed
+  time, timeout, output tail) and the engine version with every library version.
 - The pixel office (Team), light/dark/system themes, Russian/English and optional
   browser notifications.
 
@@ -92,7 +95,7 @@ checks, review, diagnosis, repair and reconciliation. Recovery rechecks unfinish
 work before returning to checks and review. It cannot mark a card accepted by itself.
 The legacy autonomous portfolio scheduler is not silently launched or migrated.
 
-[UI guide](docs/UI.md) · [Legacy feature comparison](docs/LEGACY-PARITY.md) ·
+[Changelog](CHANGELOG.md) · [UI guide](docs/UI.md) · [Legacy feature comparison](docs/LEGACY-PARITY.md) ·
 [Operational lessons](docs/OPERATIONS-LESSONS.md).
 
 ## Agent profiles

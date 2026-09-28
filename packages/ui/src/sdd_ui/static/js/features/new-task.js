@@ -128,10 +128,15 @@ export function openNewTask(preset = {}) {
     name: "start",
     checked: recall("start-after-create", false),
   });
+  const next = h("section", {
+    class: "wide next-steps",
+    "aria-live": "polite",
+  });
   const form = h(
     "form",
     { class: "form-grid", id: "task-form" },
     intents,
+    next,
     customField,
     field(t("task.title"), title, "", true),
     field(t("task.context"), context, t("task.contextHint"), true),
@@ -159,6 +164,7 @@ export function openNewTask(preset = {}) {
   );
   const syncIntent = () => {
     const intent = form.elements.intent.value;
+    explain(next, intent, project);
     customField.hidden = intent !== "custom";
     definition.required = intent === "custom";
   };
@@ -256,6 +262,31 @@ export function openNewTask(preset = {}) {
   };
   title.focus();
   return dialog;
+}
+
+/** "What happens next" for the chosen kind, as numbered steps in this project. */
+function explain(box, intent, project) {
+  const steps = t(`intent.${intent}.steps`).split(" | ");
+  box.replaceChildren(
+    h("h3", {}, t("task.nextTitle")),
+    h(
+      "p",
+      { class: "hint" },
+      t("task.scope", { project: project.name, path: project.workspace }),
+    ),
+    h(
+      "ol",
+      { class: "stepper" },
+      steps.map((text, index) =>
+        h(
+          "li",
+          {},
+          h("span", { class: "step-mark" }, index + 1),
+          h("span", {}, text),
+        ),
+      ),
+    ),
+  );
 }
 
 export function startNewTask() {

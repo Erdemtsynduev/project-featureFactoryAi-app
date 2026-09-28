@@ -66,7 +66,7 @@ def test_dynamic_key_families_are_complete():
             for p in ("title", "text")
         ],
         "welcome.": [f"{s}.{p}" for s in ("agents", "project", "task") for p in ("title", "text")],
-        "nav.": ["board", "team", "flows", "agents", "usage", "journal"],
+        "nav.": ["overview", "board", "team", "flows", "agents", "usage", "journal"],
         "template.": ["main-flow", "requirement", "ticket", "feature", "interview", "demo"],
     }
     missing = {prefix + name for prefix, names in families.items() for name in names} - russian

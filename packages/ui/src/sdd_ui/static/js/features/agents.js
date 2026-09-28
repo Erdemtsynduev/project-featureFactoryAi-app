@@ -187,7 +187,16 @@ function discoveryCard(discovery) {
         )
       : null,
     configured.length ? stats(configured.map(([n]) => n)) : null,
-    discovery.selected ? connectForm(discovery, configured) : null,
+    !discovery.selected
+      ? null
+      : configured.length
+        ? h(
+            "details",
+            { class: "connect-details" },
+            h("summary", {}, t("agents.editConnection")),
+            connectForm(discovery, configured),
+          )
+        : connectForm(discovery, configured),
   );
 }
 

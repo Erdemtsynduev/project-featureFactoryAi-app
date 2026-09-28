@@ -57,7 +57,8 @@ def workshop(tmp_path):
 
 
 def ready(page, url):
-    page.goto(url)
+    """Open a route; the bare address lands on the board for these scenarios."""
+    page.goto(url if "#" in url else url + "/#board")
     page.wait_for_selector("html[data-ready=true]")
 
 
@@ -71,7 +72,7 @@ def test_empty_workspace_shows_welcome_instead_of_board(page, tmp_path):
         expect(page.locator(".welcome")).to_be_visible()
         expect(page.locator("#board")).to_have_count(0)
         expect(page.locator("#new-task")).to_be_disabled()
-        page.get_by_role("button", name="Команда").click()
+        page.get_by_role("button", name="Обзор").click()
         expect(page.locator(".welcome")).to_be_visible()
     finally:
         server.shutdown()
@@ -165,6 +166,7 @@ def test_new_task_dialog_keeps_its_draft_and_closes(page, workshop, tmp_path):
     expect(page.locator(".lane")).to_have_count(4)
     page.locator("#new-task").click()
     expect(page.get_by_text("Нужны профили: codex.")).to_be_visible()
+    expect(page.locator(".next-steps")).to_contain_text("Планировщик режет спецификацию")
     page.get_by_label("Название").fill("Экспорт отчётов")
     page.get_by_role("button", name="Закрыть").click()
     expect(page.locator("dialog[open]")).to_have_count(0)
@@ -207,9 +209,10 @@ def test_search_filters_persist_and_mobile_fits(page, workshop):
     Path("reports/ui").mkdir(parents=True, exist_ok=True)
     page.screenshot(path="reports/ui/board-mobile.png", full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1000})
-    page.goto(url + "/#team")
+    page.goto(url + "/#overview")
     expect(page.locator("#office canvas")).to_be_visible()
-    page.screenshot(path="reports/ui/team-desktop.png", full_page=True)
+    expect(page.locator(".overview-tiles")).to_contain_text("Нужны вы")
+    page.screenshot(path="reports/ui/overview-desktop.png", full_page=True)
     assert len(service.state()["runs"]) == 1
 
 
@@ -290,7 +293,9 @@ def test_drag_drop_theme_language_and_question_demo(page, workshop, tmp_path):
     assert not errors
 
 
-def test_browser_notification_on_new_question(page, workshop):
+def test_notification_center_and_system_notification(page, workshop):
+    from playwright.sync_api import expect
+
     page.add_init_script("""
       window.notificationLog = [];
       window.Notification = class {
@@ -300,13 +305,53 @@ def test_browser_notification_on_new_question(page, workshop):
       };
     """)
     url, service = workshop
+    service.queue.settings["running"] = True
+    service.queue._watch(0)
     ready(page, url)
     page.locator("#notifications").click()
-    service.mutate("interactive-demo", {"language": "ru"})
-    page.wait_for_function("() => window.notificationLog.length === 1", timeout=10000)
+    panel = page.locator(".dialog-drawer")
+    expect(panel).to_contain_text("Нужны вы: 1")
+    panel.locator("#notify-system").check()
+    demo = service.mutate("interactive-demo", {"language": "ru"})
+    service.queue._watch(1)
+    expect(panel).to_contain_text("Вопрос агента", timeout=20000)
+    page.wait_for_function("() => window.notificationLog.length === 1", timeout=20000)
     assert page.evaluate("window.notificationLog[0].body") == "Пример вопроса команды"
-    page.wait_for_timeout(3500)
-    assert page.evaluate("window.notificationLog.length") == 1
+    panel.get_by_role("button", name="Пример вопроса команды").first.click()
+    expect(page).to_have_url(url + "/#task/" + demo["id"])
+
+
+def test_bulk_resume_dialog_and_queue_start_explain_what_happens(page, workshop, tmp_path):
+    from playwright.sync_api import expect
+
+    url, service = workshop
+    root = tmp_path / "gamma"
+    root.mkdir()
+    service.mutate("project", {"id": "gamma", "name": "Gamma", "workspace": str(root)})
+    flow = Workflow("empty", "done", (Step("done", "finish"),))
+    definition = service.engine.store.publish(flow)
+    service.tasks.create({"id": "one", "project": "gamma", "definition": definition})
+    service.tasks.create(
+        {"id": "two", "project": "gamma", "definition": definition, "dependencies": ["one"]}
+    )
+    ready(page, url)
+    page.locator("#project-select").select_option("gamma")
+    page.locator("#queue-toggle").click()
+    dialog = page.locator("dialog[open]")
+    expect(dialog).to_contain_text("все стоят на паузе")
+    expect(dialog.get_by_text("Готовые к старту: 1")).to_be_visible()
+    expect(dialog.get_by_text("Все на паузе: 2")).to_be_visible()
+    dialog.get_by_role("button", name="Продолжить", exact=True).click()
+    expect(page.locator(".toast-success")).to_contain_text("Продолжена 1 задача")
+    assert not service.engine.store.get("one").paused
+    assert service.engine.store.get("two").paused
+    assert service.settings["running"] is True
+    page.get_by_role("button", name="Пауза всем").click()
+    page.locator("dialog[open]").get_by_role("button", name="Пауза всем").click()
+    expect(page.locator(".toast-success").first).to_contain_text("На паузе")
+    assert service.engine.store.get("one").paused
+    page.locator("#about").click()
+    expect(page.locator("dialog[open]")).to_contain_text("sdd-runtime")
 
 
 def test_back_navigation_opens_and_closes_task(page, workshop):

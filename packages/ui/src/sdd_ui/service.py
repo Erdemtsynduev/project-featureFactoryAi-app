@@ -19,10 +19,11 @@ from sdd_core.questions import questions
 from sdd_core.sdk import Registry
 from sdd_runtime.composition import local_engine
 from sdd_runtime.coordinator import Coordinator
+from sdd_runtime.versions import consistent, engine, installed
 
 from sdd_ui.agents import AgentSettings
 from sdd_ui.attention import attention
-from sdd_ui.diagnostics import record
+from sdd_ui.diagnostics import live, record
 from sdd_ui.flightlog import FlightLog
 from sdd_ui.flows import FlowLibrary
 from sdd_ui.queue import QueueController
@@ -90,6 +91,10 @@ class WorkspaceService:
         }
         for command in ("pause", "resume", "retry", "stop", "auto", "manual"):
             self.actions[command] = partial(self.tasks.command, command)
+        for command in ("resume", "pause"):
+            self.actions[command + "-many"] = partial(self.tasks.bulk, command)
+        found = installed()
+        self.versions = {"engine": engine(), "packages": found, "consistent": consistent(found)}
 
     # Compatibility accessors used by the HTTP layer and tests.
 
@@ -186,7 +191,15 @@ class WorkspaceService:
             for run in runs
         }
         return {
-            "runs": [{**asdict(run), "attention": reasons[run.id]} for run in reversed(runs)],
+            "runs": [
+                {
+                    **asdict(run),
+                    "attention": reasons[run.id],
+                    "pending_dependencies": list(pending.get(run.id, ())),
+                }
+                for run in reversed(runs)
+            ],
+            "versions": self.versions,
             "totals": {
                 "calls": sum(r.calls for r in runs),
                 "planning_calls": sum(r.planning_calls for r in runs),
@@ -232,6 +245,11 @@ class WorkspaceService:
 
     def flight(self, run: str = "", level: str = "", limit: int = 300) -> list[dict[str, Json]]:
         return self.log.read(limit=limit, run=run, level=level)
+
+    def live(self, identifier: str) -> dict[str, object]:
+        run = self.engine.store.get(identifier)
+        hosted = run.active is not None and run.active.id in self.queue.coordinator.live
+        return live(self.engine, identifier, hosted)
 
     def incident(self, identifier: str) -> dict[str, object]:
         return record(self.engine, self.log, identifier).document()

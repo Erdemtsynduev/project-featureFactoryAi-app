@@ -14,7 +14,7 @@ from pathlib import Path
 
 from sdd_core.codec import canonical, flag, integer, object_json
 from sdd_core.machine import WAIT_RETRY_LIMIT
-from sdd_core.models import Json, Run
+from sdd_core.models import Json, Run, Workflow
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Registry, handler_key
 from sdd_runtime.coordinator import Coordinator
@@ -60,7 +60,8 @@ class QueueController:
         self.last_tick: float | None = None
         self.quit = threading.Event()
         self.revivals: dict[str, int] = {}
-        self.statuses: dict[str, tuple[str, str]] = {}
+        self.statuses: dict[str, tuple[str, str, bool]] = {}
+        self.workflows: dict[str, Workflow] = {}
         self.watched = 0.0
         self.apply_limits()
 
@@ -175,18 +176,34 @@ class QueueController:
             self._watch(now)
 
     def _watch(self, now: float) -> None:
-        """Log status changes worth a post-mortem and revive runs after limits reset."""
+        """Log changes worth a notification or a post-mortem; revive runs after limits."""
         with self.engine.store.unit() as db:
             runs = db.runs()
+        # The first pass is a baseline: restarting announces nothing twice.
+        baseline = not self.statuses
         for run in runs:
-            seen = (run.status, run.reason)
-            before = self.statuses.get(run.id)
+            awaiting = run.active is not None and self._kind(run) == "human"
+            seen = (run.status, run.reason, awaiting)
+            before = self.statuses.get(run.id, ("", "", False))
             self.statuses[run.id] = seen
-            if before is not None and before != seen and run.status in ("blocked", "waiting"):
-                level = "warning" if run.status == "waiting" else "error"
-                self.log.record(run.status, level, run=run.id, step=run.step, reason=run.reason)
+            if not baseline and before != seen:
+                self._announce(run, awaiting, before[2])
             if self.settings.get("revive") and self.settings["running"]:
                 self._revive(run, now)
+
+    def _kind(self, run: Run) -> str:
+        if run.workflow_digest not in self.workflows:
+            self.workflows[run.workflow_digest] = self.engine.store.workflow(run.workflow_digest)
+        return self.workflows[run.workflow_digest].step(run.step).kind
+
+    def _announce(self, run: Run, awaiting: bool, was_awaiting: bool) -> None:
+        if awaiting and not was_awaiting:
+            self.log.record("question", "warning", run=run.id, step=run.step)
+        elif run.status == "accepted":
+            self.log.record("accepted", run=run.id)
+        elif run.status in ("blocked", "waiting"):
+            level = "warning" if run.status == "waiting" else "error"
+            self.log.record(run.status, level, run=run.id, step=run.step, reason=run.reason)
 
     def _revive(self, run: Run, now: float) -> None:
         if (

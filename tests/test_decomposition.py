@@ -147,3 +147,66 @@ def test_queue_revives_only_limit_blocks_after_a_rest(tmp_path):
         assert engine.store.get("limited").status == "blocked"
     finally:
         service.coordinator.close()
+
+
+def test_bulk_resume_respects_dependencies_and_project(tmp_path):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        roots = {}
+        for name in ("app", "other"):
+            roots[name] = tmp_path / name
+            roots[name].mkdir()
+            service.mutate("project", {"id": name, "name": name, "workspace": str(roots[name])})
+        flow = Workflow("empty", "done", (Step("done", "finish"),))
+        definition = service.engine.store.publish(flow)
+        create = service.tasks.create
+        create({"id": "base", "project": "app", "definition": definition})
+        create(
+            {"id": "child", "project": "app", "definition": definition, "dependencies": ["base"]}
+        )
+        create({"id": "elsewhere", "project": "other", "definition": definition})
+        runs = {r["id"]: r for r in service.state()["runs"]}
+        assert runs["child"]["pending_dependencies"] == ["base"]
+
+        filtered = service.mutate(
+            "resume-many", {"project": "app", "scope": "all", "kind": "ticket"}
+        )
+        assert filtered["changed"] == []
+        result = service.mutate("resume-many", {"project": "app", "scope": "startable"})
+        assert result == {"changed": ["base"], "skipped": 0}
+        result = service.mutate("resume-many", {"project": "app", "scope": "all"})
+        assert result["changed"] == ["child"]
+        assert service.engine.store.get("elsewhere").paused
+        paused = service.mutate("pause-many", {"project": "app"})
+        assert sorted(paused["changed"]) == ["base", "child"]
+        assert any(e["kind"] == "bulk_resume" for e in service.flight())
+    finally:
+        service.coordinator.close()
+
+
+def test_live_progress_and_question_events(tmp_path):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        root = tmp_path / "project"
+        root.mkdir()
+        flow = Workflow(
+            "ask",
+            "ask",
+            (
+                Step("ask", "human", prompt="?", transitions=(("answered", "done"),)),
+                Step("done", "finish"),
+            ),
+        )
+        definition = service.engine.store.publish(flow)
+        service.mutate("create", {"id": "q", "definition": definition, "workspace": str(root)})
+        assert service.live("q")["active"] is False
+        service.queue._watch(time.time())
+        service.mutate("resume", {"id": "q", "version": 0})
+        service.coordinator.tick()
+        service.queue._watch(time.time())
+        assert [e["kind"] for e in service.flight(run="q")].count("question") == 1
+        progress = service.live("q")
+        assert progress["active"] and progress["step"] == "ask" and progress["streams"] == {}
+        assert service.state()["versions"]["engine"] == service.versions["engine"]
+    finally:
+        service.coordinator.close()

@@ -7,9 +7,10 @@
 
 import * as api from "../core/api.js";
 import { h, memo, replace } from "../core/dom.js";
-import { money, t } from "../core/i18n.js";
+import { formatTime, money, t } from "../core/i18n.js";
 import { recall, remember } from "../core/storage.js";
 import {
+  boardFilter,
   childrenOf,
   hasScope,
   kindOf,
@@ -17,6 +18,7 @@ import {
   laneOf,
   meta,
   refresh,
+  run as findRun,
   runnerOf,
   runs,
   stepOf,
@@ -24,11 +26,13 @@ import {
   titleOf,
 } from "../core/store.js";
 import { attempt } from "../ui/toast.js";
+import { openBulkResume, pauseAll } from "./bulk.js";
 import { primaryAction } from "./commands.js";
 import { welcome } from "./onboarding.js";
 import { openTask, registerView } from "./shell.js";
 import {
   attentionText,
+  elapsed,
   KIND_GLYPH,
   kindLabel,
   stepName,
@@ -44,6 +48,11 @@ const filters = {
   plan: recall("plan-filter", ""),
 };
 const openPlans = new Set(recall("open-plans", []));
+function syncBoardFilter() {
+  boardFilter.kind = filters.kind;
+  boardFilter.plan = filters.plan;
+}
+syncBoardFilter();
 let root = null;
 let body = null;
 let toolbar = null;
@@ -51,6 +60,7 @@ const render = memo();
 
 function setFilter(key, value, storageKey) {
   filters[key] = value;
+  syncBoardFilter();
   remember(storageKey, value);
   draw(true);
 }
@@ -138,6 +148,20 @@ function renderToolbar(all) {
       )
     : null;
   const focused = document.activeElement?.id;
+  const bulk = h(
+    "div",
+    { class: "toolbar" },
+    h(
+      "button",
+      { type: "button", id: "resume-many", onclick: () => openBulkResume() },
+      t("bulk.open"),
+    ),
+    h(
+      "button",
+      { type: "button", class: "ghost", onclick: pauseAll },
+      t("bulk.pause"),
+    ),
+  );
   replace(
     toolbar,
     segmented,
@@ -145,6 +169,7 @@ function renderToolbar(all) {
     h("span", { class: "spacer" }),
     search,
     plan,
+    bulk,
   );
   if (focused === "task-search") {
     const input = toolbar.querySelector("#task-search");
@@ -219,6 +244,7 @@ function card(run) {
       h("span", { class: "runner" }, runnerOf(step, t)),
     ),
     h("p", { class: "card-why" }, attentionText(run)),
+    run.active && step?.kind !== "human" ? progressLine(run) : null,
     facts.length || action
       ? h(
           "div",
@@ -235,6 +261,29 @@ function card(run) {
   });
   node.addEventListener("dragend", () => root.classList.remove("dragging"));
   return node;
+}
+
+/** The queue lists what can start first; other lanes keep their order. */
+function grouped(key, items) {
+  const shown = items.slice(0, LIMIT);
+  if (key !== "queue") return shown;
+  const startable = (r) =>
+    r.paused && r.status !== "blocked" && !r.pending_dependencies?.length;
+  const ready = items.filter(startable);
+  const later = items.filter((r) => !startable(r));
+  const out = [];
+  if (ready.length)
+    out.push(
+      t("board.group.startable", { count: ready.length }),
+      ...ready.slice(0, LIMIT),
+    );
+  const room = Math.max(0, LIMIT - Math.min(ready.length, LIMIT));
+  if (later.length && room)
+    out.push(
+      t("board.group.later", { count: later.length }),
+      ...later.slice(0, room),
+    );
+  return out;
 }
 
 function lane(key, items) {
@@ -255,7 +304,11 @@ function lane(key, items) {
       h("span", {}, t("board.lane." + key)),
       h("span", { class: "lane-count" }, items.length),
     ),
-    items.slice(0, LIMIT).map(card),
+    grouped(key, items).map((entry) =>
+      typeof entry === "string"
+        ? h("h3", { class: "lane-group" }, entry)
+        : card(entry),
+    ),
     items.length > LIMIT
       ? h(
           "p",
@@ -282,6 +335,33 @@ function lane(key, items) {
   return section;
 }
 
+/** A live line for a running attempt: spinner, elapsed time, share of its timeout. */
+function progressLine(run) {
+  const { started, deadline } = run.active;
+  const share = Math.min(
+    100,
+    Math.round((100 * (Date.now() / 1000 - started)) / (deadline - started)),
+  );
+  return h(
+    "div",
+    {
+      class: "card-progress",
+      title: t("live.timeoutAt", { time: formatTime(deadline) }),
+    },
+    h("span", { class: "spinner", "aria-hidden": "true" }),
+    h(
+      "span",
+      { class: "elapsed", dataset: { since: String(started) } },
+      elapsed(started),
+    ),
+    h(
+      "span",
+      { class: "progress-track" },
+      h("span", { style: { width: share + "%" } }),
+    ),
+  );
+}
+
 function drop(id, key) {
   const run = store.state.runs.find((r) => r.id === id);
   if (!run) return;
@@ -293,8 +373,11 @@ function drop(id, key) {
       if (run.status === "blocked") throw Error(t("board.dropBlocked"));
       await api.command(wanted, run);
       await refresh();
+      // Say what happens next: resumed is not the same as running.
+      const moved = findRun(id);
+      return moved ? attentionText(moved) : "";
     },
-    t("command.done." + wanted),
+    (next) => t("command.done." + wanted) + (next ? " — " + next : ""),
   );
 }
 

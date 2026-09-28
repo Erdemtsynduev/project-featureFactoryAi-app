@@ -134,6 +134,17 @@ export function childrenOf(run) {
   return (store.state?.runs || []).filter((r) => meta(r).parent === run.id);
 }
 
+/** The board's kind and plan filter; bulk actions apply to the same tasks. */
+export const boardFilter = { kind: "", plan: "" };
+
+export function filteredRuns() {
+  return runs().filter(
+    (run) =>
+      (!boardFilter.kind || kindOf(run) === boardFilter.kind) &&
+      (!boardFilter.plan || meta(run).plan === boardFilter.plan),
+  );
+}
+
 /** Board column from the server's single attention reason. */
 export function laneOf(run) {
   const tone = run.attention?.tone;

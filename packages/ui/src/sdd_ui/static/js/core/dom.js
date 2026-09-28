@@ -84,3 +84,17 @@ export function memo() {
     return true;
   };
 }
+
+/** Show one of several labels while reserving the width of the longest. */
+export function stableLabel(node, labels, active) {
+  const key = labels.join("|");
+  if (node.dataset.labels !== key) {
+    node.dataset.labels = key;
+    node.replaceChildren(...labels.map((text) => h("span", {}, text)));
+    node.classList.add("stable");
+  }
+  [...node.children].forEach((span, index) => {
+    span.classList.toggle("on", index === active);
+    span.setAttribute("aria-hidden", String(index !== active));
+  });
+}

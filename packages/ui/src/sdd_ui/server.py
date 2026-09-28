@@ -93,6 +93,7 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                     result = {
                         "application": "feature-factory-ai",
                         "database": str(service.engine.store.path),
+                        "versions": service.versions,
                     }
                 elif url.path == "/api/state":
                     body = canonical({**service.state(), "token": token}).encode()
@@ -109,6 +110,8 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                     result = service.flight(
                         query.get("run", ""), query.get("level", ""), int(query.get("limit", 300))
                     )
+                elif url.path == "/api/live":
+                    result = service.live(query["id"])
                 elif url.path == "/api/incident":
                     result = service.incident(query["id"])
                 else:

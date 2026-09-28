@@ -14,12 +14,14 @@ outside task workspaces and do not run a second coordinator against it.
 
 ## Information architecture
 
-The rail holds the project switcher and six sections: **Board**, **Team**,
-**Workflows**, **Agents**, **Usage and limits** and **Log**. The top bar shows the
+The rail holds the project switcher and six sections: **Overview** (the default:
+key numbers, Needs you, Running now, the team office, recent events, agent health
+and plan progress), **Board**, **Workflows**, **Agents**, **Usage and limits** and
+**Log**. Design rules and the latest review are in [DESIGN.md](DESIGN.md). The top bar shows the
 section, the queue state with its start/pause button, three meters (calls against
 the queue budget, measured tokens, API-equivalent cost) and **New task**.
 
-Board and Team belong to the selected project. Without projects (and without
+Overview and Board belong to the selected project. Without projects (and without
 tasks created outside a project) they show a welcome screen: connect agents → add
 a project → create a task, with progress read from real state. Tasks created
 without a project (CLI runs, the question example) appear under **Без проекта**.
@@ -28,6 +30,31 @@ Agents, Workflows, Usage and Log are global.
 Routes are hash tokens (`#board`, `#flows`, `#task/<id>`, …). Tabs and task
 drawers are browser history entries: Back, the mouse back button and **←** return
 to the previous place; the drawer closes with ×, Escape or a click on the backdrop.
+
+## Starting work, progress and notifications
+
+A queue only takes resumed tasks. **Продолжить задачи…** on the board opens a
+dialog with two choices — tasks ready to start (all dependencies accepted) or every
+paused task (the rest wait for their dependencies) — together with the process
+slots, the remaining call budget and blocked tasks it will not touch; **Пауза всем**
+asks before pausing. Starting the queue while no task of the project is resumed
+opens the same dialog instead of silently running an idle queue. Dragging a card
+to In progress says what happens next (queued, waiting for a dependency, queue
+paused).
+
+A running step shows a spinner, its elapsed time and the share of its timeout on
+the card. In the drawer, **Сейчас** adds the timeout moment, how long ago the agent
+last wrote output (with a warning after five quiet minutes) and the tail of its
+output, refreshed every two seconds (`/api/live`); streamed Codex events are
+summarised one per line.
+
+The bell in the top bar opens the notification center: tasks that need you in any
+project, then events from the flight log since you last read it (agent questions,
+blocks, limit waits, acceptances, created tickets, revivals, queue stops, bulk
+resumes), and a switch for system notifications while the page is open.
+
+The rail shows the engine version; **About the engine** lists every library version
+and flags a mixed installation.
 
 ## Creating tasks and decomposition
 
@@ -43,7 +70,9 @@ to the previous place; the drawer closes with ×, Escape or a click on the backd
 The server builds the project's version of the chosen template (its checks, lane
 settings and language), validates it against the installed handlers and publishes
 it on first use; publication is content-addressed, so there is no manual publish
-step. A kind whose agent profiles are missing says which profiles to connect.
+step. A kind whose agent profiles are missing says which profiles to connect. Under the
+kinds, **Что будет дальше** explains the project scope (folder, language, checks)
+and the numbered steps of the chosen kind, including decomposition into tickets.
 Title, description, dependencies and options are saved as a draft per project on
 every keystroke and restored when the dialog reopens; the draft is cleared only by
 creating the task or **Очистить черновик**. **Сразу поставить в очередь** resumes

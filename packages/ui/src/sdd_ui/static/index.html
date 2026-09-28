@@ -68,13 +68,10 @@
             </select>
           </div>
           <button
-            id="notifications"
+            id="about"
             type="button"
-            class="ghost"
-            data-i18n="prefs.notifications"
-          >
-            Уведомления
-          </button>
+            class="ghost version-button"
+          ></button>
           <button
             id="close-app"
             type="button"
@@ -102,6 +99,24 @@
             <button id="queue-toggle" type="button"></button>
           </div>
           <dl id="meters" class="meters"></dl>
+          <button
+            id="notifications"
+            type="button"
+            class="icon-button bell"
+            data-i18n-aria-label="notify.title"
+            data-i18n-title="notify.title"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path
+                d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Zm4 4h4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              /></svg
+            ><span id="notify-badge" class="bell-badge" hidden></span>
+          </button>
           <button
             id="new-task"
             type="button"

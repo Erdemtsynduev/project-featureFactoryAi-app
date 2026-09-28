@@ -77,3 +77,26 @@ export function statusPill(run) {
     t("tone." + attentionTone(run)),
   );
 }
+
+/** "4 мин 12 с" since a moment in seconds; updated in place by the ticker. */
+export function elapsed(since, now = Date.now() / 1000) {
+  const total = Math.max(0, Math.round(now - since));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours) return t("time.hm", { h: hours, m: minutes });
+  if (minutes) return t("time.ms", { m: minutes, s: seconds });
+  return t("time.s", { s: seconds });
+}
+
+/** Every element with data-since shows a live elapsed time. */
+export function startTicker() {
+  setInterval(() => {
+    for (const node of document.querySelectorAll("[data-since]"))
+      node.textContent = elapsed(Number(node.dataset.since));
+    for (const node of document.querySelectorAll("[data-ago]"))
+      node.textContent = t("live.ago", {
+        time: elapsed(Number(node.dataset.ago)),
+      });
+  }, 1000);
+}

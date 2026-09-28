@@ -16,6 +16,7 @@ from pathlib import Path
 from sdd_core.codec import integer, mapping, object_json, result_load, sequence, text
 from sdd_core.memory import TicketDraft, tickets_of
 from sdd_core.models import Json, Run
+from sdd_core.ports import Conflict
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_workflows.templates import question_example
@@ -144,6 +145,84 @@ class TaskService:
         )
         self.log.record("command", run=run.id, command=command, status=run.status)
         return asdict(run)
+
+    def bulk(self, command: str, doc: dict[str, Json]) -> dict[str, object]:
+        """Resume or pause many tasks of one project in one operator action.
+
+        `scope` "startable" resumes paused tasks whose dependencies are accepted;
+        "all" resumes every paused task (the rest wait for their dependencies).
+        Optional `kind` and `plan` narrow it to the board's current filter.
+        Each task is commanded at its own current version; moved tasks are skipped.
+        """
+        if command not in ("resume", "pause"):
+            raise ValueError("Bulk command must be resume or pause")
+        project_id = text(doc.get("project", ""), "project")
+        scope = text(doc.get("scope", "startable"), "scope")
+        if scope not in ("startable", "all"):
+            raise ValueError("Unknown scope")
+        kind = text(doc.get("kind", ""), "kind")
+        plan = text(doc.get("plan", ""), "plan")
+        metadata = self.catalog.task_metadata()
+
+        def wanted(run: Run) -> bool:
+            meta = metadata.get(run.id, {})
+            return (not kind or meta.get("kind", "task") == kind) and (
+                not plan or meta.get("plan") == plan
+            )
+
+        chosen = [
+            run
+            for run in self._project_runs(project_id)
+            if wanted(run) and self._eligible(command, run, scope)
+        ]
+        done: list[str] = []
+        skipped = 0
+        for run in chosen:
+            try:
+                self.engine.command(run.id, command, uuid.uuid4().hex, run.version, time.time())
+                done.append(run.id)
+            except (ValueError, Conflict):
+                skipped += 1
+        self.log.record(
+            f"bulk_{command}",
+            project=project_id,
+            scope=scope,
+            task_kind=kind,
+            plan=plan,
+            count=len(done),
+        )
+        return {"changed": list[Json](done), "skipped": skipped}
+
+    def _eligible(self, command: str, run: Run, scope: str) -> bool:
+        if run.status == "accepted" or run.active is not None:
+            return False
+        if command == "pause":
+            return not run.paused
+        if not run.paused or run.status == "blocked":
+            return False
+        if scope == "all":
+            return True
+        with self.engine.store.unit() as db:
+            return all(dependency.status == "accepted" for dependency in db.dependencies(run.id))
+
+    def _project_runs(self, project_id: str) -> list[Run]:
+        """Runs of a project: by recorded metadata, else by workspace (older imports)."""
+        project = self.catalog.project(project_id)
+        metadata = self.catalog.task_metadata()
+        workspaces = {str(p["id"]): str(p["workspace"]) for p in self.catalog.projects()}
+        with self.engine.store.unit() as db:
+            runs = db.runs()
+            locations = {run.id: db.location(run.id)[0] for run in runs}
+
+        def owner(run: Run) -> str:
+            declared = str(metadata.get(run.id, {}).get("project", ""))
+            if declared in workspaces:
+                return declared
+            return next((k for k, v in workspaces.items() if v == locations[run.id]), "")
+
+        if project_id and not project:
+            raise ValueError("Unknown project")
+        return [run for run in runs if owner(run) == project_id]
 
     def message(self, doc: dict[str, Json]) -> dict[str, object]:
         return asdict(

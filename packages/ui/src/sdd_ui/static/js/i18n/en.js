@@ -370,7 +370,7 @@ export default {
   "log.journal": "Engine transitions",
   "log.action": "action: {action}",
   "log.step": "step: {step}",
-  "log.count": "{count}",
+  "log.count": "tasks: {count}",
   "log.tickets": "tickets: {count}",
   "log.kind.action": "Action",
   "log.kind.command": "Command",
@@ -639,4 +639,112 @@ export default {
   "notify.on": "Notifications enabled",
   "notify.denied": "Notifications are blocked by the browser",
   "notify.unsupported": "This browser does not support notifications",
+  "notify.title": "Notifications",
+  "notify.subtitle": "What needs you now and what happened in the queue.",
+  "notify.needs": {
+    one: "Needs you: {count} task",
+    other: "Needs you: {count} tasks",
+  },
+  "notify.nothingNeeded": "Nothing waits for your decision right now.",
+  "notify.events": "Events",
+  "notify.markRead": "Mark as read",
+  "notify.system": "Show system notifications while this page is open",
+  "log.kind.question": "Agent question",
+  "log.kind.accepted": "Task accepted",
+  "log.kind.bulk_resume": "Tasks resumed",
+  "log.kind.bulk_pause": "Tasks paused",
+  "about.engine": "Engine v{version}",
+  "about.open": "Library versions",
+  "about.mixed":
+    "Libraries of different versions are installed — reinstall the application from one set of wheels.",
+  "about.title": "About the engine",
+  "about.subtitle": "Feature Factory AI · engine {version}",
+  "about.library": "Library",
+  "about.version": "Version",
+  "about.notInstalled": "not installed",
+  "about.hint":
+    "All libraries are released with one version and pin each other exactly. Tasks pin their workflow version, not the engine.",
+  "bulk.open": "Resume tasks…",
+  "bulk.pause": "Pause all",
+  "bulk.title": "Resume tasks · {project}",
+  "bulk.explain":
+    "Resume lets a task work. The queue takes it when a slot is free and all its dependencies are accepted. Nothing runs around the queue.",
+  "bulk.which": "Which tasks to resume",
+  "bulk.scope.startable.title": "Ready to start: {count}",
+  "bulk.scope.startable.text":
+    "Dependencies already accepted — the queue starts with these.",
+  "bulk.scope.all.title": "All paused: {count}",
+  "bulk.scope.all.text":
+    "The rest wait for their dependencies and start as those are accepted.",
+  "bulk.fact.slots":
+    "Two agents and one operation run at a time; the rest wait in the queue.",
+  "bulk.fact.budget":
+    "Model calls left in the queue budget: {left} of {max}. Change it under Usage and limits.",
+  "bulk.fact.blocked":
+    "Blocked tasks ({count}) are not touched — each has its own reason; open them.",
+  "bulk.startQueue": "Start the queue right away",
+  "bulk.resume": "Resume",
+  "bulk.resumed": {
+    one: "{count} task resumed",
+    other: "{count} tasks resumed",
+  },
+  "bulk.nothingToPause": "No tasks can be paused",
+  "bulk.pauseTitle": "Pause everything?",
+  "bulk.pauseText":
+    "Tasks of “{project}” ({count}) stop taking new steps. Current steps finish.",
+  "bulk.paused": { one: "{count} task paused", other: "{count} tasks paused" },
+  "bulk.nothingResumed":
+    "The queue only takes resumed tasks, and every task is paused. Choose which to resume.",
+  "bulk.queueIdle":
+    "The queue is running, but no task is resumed — nothing will run.",
+  "time.hm": "{h} h {m} min",
+  "time.ms": "{m} min {s} s",
+  "time.s": "{s} s",
+  "live.now": "Now: {step}",
+  "live.timeout": "Step timeout at {time}",
+  "live.timeoutAt": "The step is stopped by timeout at {time}",
+  "live.ago": "Last agent output {time} ago",
+  "live.waitingOutput": "Agent started, no output yet",
+  "live.quiet":
+    "no output for a while — the agent may be thinking or stuck; the timeout retries the step",
+  "live.notHosted": "another coordinator owns the process",
+  "live.noOutput": "No output yet.",
+  "task.nextTitle": "What happens next",
+  "task.scope":
+    "The task lives in project “{project}”: agents work in {path}, answer in the project language and run its check command.",
+  "intent.requirement.steps":
+    "An analyst studies the code and writes a specification | Decisions only you can make arrive as questions with options under Needs you | A planner splits the specification into tickets | You approve the breakdown or send it back | Each ticket appears on the board as its own task and goes through implementation, checks, review and merge",
+  "intent.main-flow.steps":
+    "Specification and plan within one task | Implementation | Project checks | Independent review | Acceptance — no child tasks",
+  "intent.ticket.steps":
+    "Implementation on its own branch | Project checks | Independent review | Fast-forward merge and acceptance",
+  "intent.custom.steps":
+    "The task follows the steps of the chosen published version | Its path shows in the task drawer",
+  "bulk.filtered":
+    "The board filter applies: {filter}. Only these tasks are resumed.",
+  "bulk.filterHint":
+    "To resume part of the tasks (only tickets or one plan), choose a board filter first.",
+  "nav.overview": "Overview",
+  "overview.needs": "Needs you · {count}",
+  "overview.all": "All on the board",
+  "overview.running": "Running now · {count}",
+  "overview.queuedOnly": {
+    one: "Nobody is working; {count} queued task waits for a slot or a dependency.",
+    other:
+      "Nobody is working; {count} queued tasks wait for a slot or dependencies.",
+  },
+  "overview.idle": "Nobody is working. Resume tasks and start the queue.",
+  "overview.agents": "Agents",
+  "overview.manage": "Manage",
+  "overview.plans": "Plans",
+  "overview.tile.needs": "Needs you",
+  "overview.tile.running": "Running",
+  "overview.tile.queued": "queued: {count}",
+  "overview.tile.startable": "Ready to start",
+  "overview.tile.startableHint": "resume…",
+  "overview.tile.accepted": "Accepted",
+  "overview.tile.callsHint": "queue budget",
+  "board.group.startable": "Ready to start · {count}",
+  "board.group.later": "Waiting for dependencies or paused · {count}",
+  "agents.editConnection": "Change this CLI's profile",
 };
