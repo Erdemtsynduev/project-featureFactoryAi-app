@@ -26,6 +26,16 @@ child runs automatically. If that cannot fit the declared budget, return blocked
 with the required split instead of dropping scope. Return done with the tickets in reason.
 """
 
+BREAKDOWN = """Decompose the approved specification into dependency-ordered vertical slices
+that will run as separate tickets, each in a fresh session with only its own ticket and
+the specification. Each slice delivers one observable behavior across all necessary
+layers, including its tests. Do not create separate 'write tests' tickets or split by
+technical layer. Keep every ticket small enough for one implementation run. Give each a
+short stable id, title, goal, testable acceptance criteria (quote criterion IDs), the ids
+of tickets it depends on and the paths it owns. Preserve every original criterion.
+Return done with a readable summary of the breakdown in reason. No edits.
+"""
+
 IMPLEMENT = """Read the specification, tickets, operator guidance, recent results and
 existing changes. State the next bounded action before editing. Implement one vertical
 slice at a time: a failing behavioral test at the declared seam, minimal implementation,

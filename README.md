@@ -56,29 +56,30 @@ ffai --database /absolute/path/to/control/ui.db ui --port 8791
 
 Keep the control database outside task workspaces. The local interface includes:
 
-- Projects with names, workspace folders, response language and check commands.
-- Kanban cards with versioned drag-and-drop for pause/resume, a task drawer,
-  discussion, evidence and event history.
-- An editable pipeline view of each workflow: numbered main stages, a recovery lane,
-  bundled failure wires, insert-on-wire and link-from-port editing.
-- One-click connection of discovered agent CLIs with native sign-in status checks.
-- Migration of a paused legacy sdd-orchestrator queue into a new project: plans,
-  requirement runs and scoped ticket runs, all paused (`python -m sdd_ui.legacy`).
-- Board kinds (requirement/ticket/task), a plans tree, browser-history navigation
-  and a first-steps checklist with a short tour.
-- Worktree lanes per ticket with fast-forward merge, rebase and agent or human
-  conflict resolution; agent rotation on limits; API-equivalent cost per task.
-- Explicit human questions, saved answer drafts and optional browser notifications.
-- Pixel workers with different desks, subtle idle animation and task handoff effects.
-- Persistent light/dark/system themes and Russian/English interface settings.
-  New UI tasks default to the selected response language.
-- Queue budget meters, dispatch history, per-agent local token/call statistics and
-  an on-demand Codex account quota probe. Missing telemetry stays unknown.
+- A welcome screen until agents and a project exist; the board, team and new-task
+  button belong to the selected project.
+- A **New task** dialog that asks what kind of work it is — a large feature
+  (specification → questions → tickets → your approval), a whole task in one run,
+  a ready ticket or a custom published workflow. The project's version of the flow
+  is published on first use; drafts save as you type.
+- A board by what each task needs (Queue, In progress, Needs you, Done). Every card
+  says why the task is or is not moving and offers the one action that moves it.
+- Approving a requirement's breakdown creates its tickets as paused child tasks
+  with their dependencies and the approved specification; the tree view shows them.
+- A task drawer with discussion, questions with recommended answers, messages to
+  the next step, task memory, lanes, the engine journal and a downloadable incident.
+- A workflow editor whose inspector applies changes immediately and autosaves the
+  draft; publication stays explicit and existing tasks keep their version.
+- Agents: discovery and sign-in checks without model calls, named profiles,
+  rotation on limits and an early "return now" for a resting profile.
+- Usage and limits: queue budgets, per-profile tokens and API-equivalent cost,
+  daily dispatches, Codex account quotas and automatic revival after limits.
+- A flight log of operator actions, queue stops, blocks, waits and revivals.
+- The pixel office (Team), light/dark/system themes, Russian/English and optional
+  browser notifications.
 
-Try the question example to see an interactive question without a model call,
-or publish **Check without a model** and create a task in a separate folder.
-Tasks and the queue start paused. Resume a card and start the queue explicitly.
-Closing the tab leaves the server running; **Close application** stops it when no
+New tasks start paused unless queued from the dialog, and the queue starts paused.
+Closing the tab leaves the server running; **Quit application** stops it when no
 executions are active. Restarting the UI leaves the queue paused.
 
 Messages submitted to a running task are recorded immediately and included in its

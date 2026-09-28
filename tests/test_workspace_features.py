@@ -146,7 +146,7 @@ def test_subscription_failure_does_not_claim_zero_usage(tmp_path, monkeypatch):
         )
     )
     monkeypatch.setattr(
-        "sdd_ui.service.read_codex_limits",
+        "sdd_ui.agents.read_codex_limits",
         lambda argv: (_ for _ in ()).throw(ValueError("offline")),
     )
     try:

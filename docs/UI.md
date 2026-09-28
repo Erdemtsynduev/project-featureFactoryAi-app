@@ -8,262 +8,196 @@ on macOS or `$XDG_DATA_HOME/FeatureFactoryAI` (default `~/.local/share`) on Linu
 Use **Завершить приложение** to stop the server; active executions must finish
 first. Closing a browser tab alone leaves the application running.
 
-The `ffai ui` command below is the advanced option for a separate database/port.
+`ffai --database /absolute/path/to/control/ui.db ui` is the advanced option for a
+separate database and port (`--port 8790`, `--no-browser`). Keep the database
+outside task workspaces and do not run a second coordinator against it.
 
-Run `ffai --database /absolute/path/to/control/ui.db ui`. The command opens
-`http://127.0.0.1:8787` and owns the coordinator lease until stopped with Ctrl+C.
-Use `--port 8790` or `--no-browser` when needed. Keep the database outside task
-workspaces. No Node.js, external service or model is needed to serve the UI.
-Do not run a second coordinator against the same database.
+## Information architecture
 
-## First run without model calls
+The rail holds the project switcher and six sections: **Board**, **Team**,
+**Workflows**, **Agents**, **Usage and limits** and **Log**. The top bar shows the
+section, the queue state with its start/pause button, three meters (calls against
+the queue budget, measured tokens, API-equivalent cost) and **New task**.
 
-1. In **Редактор флоу**, open **Проверка без модели**, validate and publish it.
-2. In **Доска заданий**, create a task using that version and a separate existing folder.
-3. Open its card, press **Продолжить**, then **Запустить очередь**.
-4. The check runs a Python child process; the task reaches **Готово** with zero
-   model calls. Open the card to inspect history and evidence.
+Board and Team belong to the selected project. Without projects (and without
+tasks created outside a project) they show a welcome screen: connect agents → add
+a project → create a task, with progress read from real state. Tasks created
+without a project (CLI runs, the question example) appear under **Без проекта**.
+Agents, Workflows, Usage and Log are global.
 
-New tasks and a new queue start paused. Queue pause stops new dispatches while
-collecting in-flight results. Task pause lets its current step finish; task stop
-terminates its owned processes. Human decisions always require an explicit answer.
-Commands carry the observed task version; refresh the card after a conflict.
+Routes are hash tokens (`#board`, `#flows`, `#task/<id>`, …). Tabs and task
+drawers are browser history entries: Back, the mouse back button and **←** return
+to the previous place; the drawer closes with ×, Escape or a click on the backdrop.
 
-## Workflows and profiles
+## Creating tasks and decomposition
 
-The editor exposes nodes, labelled transitions, types, prompts, handlers/profiles,
-timeouts, visit limits, required/gate/mutation flags and JSON config. Apply step
-edits to the draft before validation/publication. Deleting a node removes its
-incoming links; check the resulting graph before publication. Publication validates
-the graph and installed handlers, then creates an immutable digest. Existing
-tasks stay pinned. Advanced JSON supports all schema fields, including condition
-keys and token budgets.
+**New task** opens a dialog that asks what kind of work it is:
 
-**Сценарии** draws the workflow as a pipeline. The main lane follows each step's
-success outcome from the entry (`passed`, `done`, `approved`, `answered`…); its
-numbered stages are the real order. Every other step sits in the recovery lane
-below the stage that routes to it, and a success chain there (diagnose → repair)
-stays side by side. Wires that share an outcome and target (every `failed →
-diagnose`) run as one bus with one label; dashed amber wires are failures and
-returns. Layout is computed from the graph and never enters the published digest.
+| Kind | Workflow | What happens |
+|---|---|---|
+| Large feature | `requirement` | Specification (the agent may ask structured questions) → ticket breakdown → your approval. Approving creates each ticket as a paused child task with its dependencies. |
+| Whole task | `main-flow` | Specification, plan, implementation, checks and review in one run; no child tasks. |
+| Ready ticket | `ticket` | Implementation, project checks, independent review and fast-forward merge of its lane. |
+| Custom | any published version | As drawn in the workflow. |
 
-Editing: **+** on a straight wire inserts a step between two stages. The circle on
-a step's right edge starts a link; the next step you pick becomes its target, with
-a proposed outcome that the step does not route yet, so existing routes are never
-rewired silently. Select a wire (click, or Enter from the keyboard) and press Delete
-to remove it; **Связь вручную** edits source/outcome/target directly. An outcome
-has one target; linking an existing outcome replaces that target. Condition steps
-have key/value fields in the inspector (see Architecture: conditions).
-**Сохранить черновик** stores the draft in this browser; publication remains a
-separate validated operation. The task drawer shows the same pipeline with the
-current step, completed steps and repeated visits.
+The server builds the project's version of the chosen template (its checks, lane
+settings and language), validates it against the installed handlers and publishes
+it on first use; publication is content-addressed, so there is no manual publish
+step. A kind whose agent profiles are missing says which profiles to connect.
+Title, description, dependencies and options are saved as a draft per project on
+every keystroke and restored when the dialog reopens; the draft is cleared only by
+creating the task or **Очистить черновик**. **Сразу поставить в очередь** resumes
+the task right after creation; otherwise it starts paused.
 
-**Агенты и лимиты → Найти CLI и проверить вход** runs each CLI's `--version` and its
-native status command (`claude auth status`, `codex login status`, `cursor-agent
-status`, `opencode auth list`). None of them calls a model; account identifiers are
-not shown. Side-by-side versions of one installation (Cursor keeps one folder per
-version) resolve to the newest. **Подключить** writes a runner and a named profile
-for the discovered executable. The profile name is the handler that steps refer
-to, so profiles named `claude` and `codex` make the bundled templates runnable.
-Models come from the CLI's catalog where one exists, Codex's configured default,
-or documented aliases (`opus`, `sonnet`). Native CLI login stays outside the
-application. OpenCode uses `provider/model`; read-only OpenCode remains unqualified.
-See [AGENT-PROFILES.md](AGENT-PROFILES.md). Changing a profile used by an existing
-task can trigger the configuration-drift guard; restore that configuration or
-publish/create a new task. No silent rebinding.
+The requirement's tickets step declares structured `tickets` (id, title, goal,
+acceptance, dependencies, owned paths). The approval step shows them; **Одобрить и
+создать N тикетов** admits them in dependency order as `<requirement>-<ticket>`
+tasks with kind `ticket`, the parent id and a context made of the ticket plus the
+approved specification. Admission is idempotent per ticket. **Вернуть на
+доработку** requires a comment and routes back to the specification. Without the
+`claude` and `codex` profiles, approval is refused before anything is recorded.
 
-## Budget semantics
+## Board, cards and the attention reason
 
-**Согласованная задача** offers human scope approval,
-implementation, checks, independent review and bounded repair. No model rewrites
-plans. The editor initially opens **Main flow · полная команда**, with at most four planning
-calls per task. Tag custom planning steps with `{"purpose":"planning"}` in the
-step's JSON config string. The engine does not classify arbitrary prompts.
+Columns follow one server-side derivation (`sdd_ui.attention`) that names the first
+thing blocking each task and the action that resolves it: answer, retry, reconcile,
+connect a profile, resume, start the queue — or why it waits (a limit reset, a
+resting profile, dependencies). **Queue** holds paused and waiting tasks,
+**In progress** running and queued ones, **Needs you** answers and blockers,
+**Done** accepted ones. Every card shows kind, title, step and runner, the reason
+line and its one-click action; requirements show ticket progress. The nav badge
+counts tasks that need you.
 
-The UI persists default queue ceilings of 40 total calls and 8 planning calls.
-These are cumulative ceilings over this database, including failed/reserved calls;
-they do not reset daily or predict subscription percentages. After raising a
-limit, explicitly retry blocked tasks. Per-workflow limits still apply. Custom
-application compositions must supply their own queue policy; the CLI coordinator
-does not consume the UI settings file.
+Drag cards between Queue and In progress to pause or resume. Nothing can be dragged
+into Done: acceptance belongs to gates and review. Search, kind chips and the plan
+filter persist per browser. **Дерево** shows plans with requirements and their
+tickets nested.
 
-## Boundaries
+## Task drawer
 
-`sdd-ui` is an independent optional application package, loaded through
-`ffai.commands`. Core and headless runtime do not import it. The browser sends
-versioned commands; it never decides acceptance. Polling does not invoke models.
-Loopback HTTP uses exact Host/Origin checks, a mutation token and a restrictive
-content policy. This is a local operator interface, not a multi-user remote service.
+Top: the attention line with its action, every available command (Продолжить,
+Пауза, Остановить, Повторить, Сверить и восстановить), the switch **Агент выбирает
+рекомендованные ответы** and the task's path through its workflow.
 
-The HTTP lifecycle is tested with a real server and child process. Playwright
-tests exercise the real local HTTP UI in Edge, including questions, graph edits,
-draft persistence, remembered filters and mobile layout. Closing the browser does not stop the
-server. Automatic restart of the UI server itself is not implemented; the CLI
-supervisor is a separate host composition.
+- **Обсуждение**: the question picker (digits or arrows choose, Enter moves on, the
+  recommended option is preselected, **Принять все рекомендации**), the ticket
+  approval, results with their notes and token counts, and messages to the next
+  step. Answer and message drafts survive closing and reloads.
+- **Детали**: facts (flow version, step and runner, calls, tokens, cost, folder),
+  parent and child tasks, task memory, the original brief, the lane, the current
+  instruction and raw results.
+- **Журнал**: the flight log entries of the task, the engine journal, **Скачать
+  разбор (JSON)** (state, journal, log entries and log tails of the latest attempt)
+  and, when the workflow has a read-only recovery step, **Сверить и восстановить**,
+  which hands a short incident summary to that step as guidance and leaves the task
+  paused.
 
-## Office, questions and answers
+## Workflows
 
-The office on **Задания** is a canvas scene of the project's workflows. People are
-roles: one desk per step (planning desks, then delivery, recovery below; every human
-step is your desk, every check the tester desk), captioned with the model that runs it.
-Tasks are documents: they lie on the desk of their current step. The person there types
-at mutating steps, reads at review, watches a spinner at checks, shows "?" at your desk
-and "!" when blocked. When a task moves on, the finishing person carries the folder to
-the next desk and walks back. Paused and queued tasks wait in the inbox tray, accepted
-ones on the shelf; idle people fetch coffee. Hover names the documents; clicking a stack
-opens the task, clicking a desk opens that step. Reduced motion stops walking.
+The editor draws the workflow as a pipeline: numbered main stages, a recovery lane,
+bundled failure wires. **+** on a wire inserts a step, the circle on a step's right
+edge starts a link to the next step you pick (with an outcome the step does not
+route yet), Delete removes a selected link and **Связь вручную** edits
+source/outcome/target directly. Inspector fields apply as soon as they change —
+there is no separate "apply" — and renaming a step rewires its incoming links and
+recovery references. The draft autosaves in this browser with a visible time;
+opening a template or a version over unpublished edits asks first. **Проверить**
+validates without model calls; **Опубликовать версию** creates an immutable digest
+and existing tasks stay pinned.
 
-Questions open as a picker: digits or arrows choose an option, Enter moves to the next
-question, the recommended option is marked and preselected. **Принять все рекомендации**
-answers at once; a comment is optional. The drawer switch **Агент выбирает
-рекомендованные ответы** makes the coordinator accept recommendations while the queue
-runs; the answer is recorded like a human one with an `auto` flag.
+## Agents, rotation and limits
 
-## Workshop and questions
+**Найти CLI и проверить вход** runs each CLI's `--version` and native status command
+(`claude auth status`, `codex login status`, `cursor-agent status`, `opencode auth
+list`); none calls a model. **Подключить** writes a runner and a named profile; the
+profile name is what steps refer to, so `claude` and `codex` make the bundled
+workflows runnable. Changing a profile never rebinds existing tasks silently.
 
-The board groups tasks by their recorded state. Human steps appear in **Нужны вы**
-and in the question inbox even when the engine's status is `running`. Pixel workers
-reflect this database's active steps. Select a role
-to open its workflow step or active task. Questions show the human-step prompt and
-recent agent results. Draft answers survive polling and card reloads in the current
-page; submitting carries the observed version and is never automatic.
+Each profile card has a rotation form: **Если упрётся в лимит — передать работу**
+names the fallback, then the rest time, the retry pause and which failures count
+(usage limit, rate limit, sign-in, offline). A limited profile rests until its
+reset or the rest time; the next attempt uses the fallback and the primary returns
+automatically. **Вернуть сейчас** ends a rest early (for example after signing in
+again). Without rotation a recognised limit becomes a bounded wait until the reset.
+
+A task never hangs silently: every attempt has a timeout, lost or failed attempts
+get up to three automatic retries with backoff, recognised limits wait for their
+reset, and after several consecutive infrastructure waits the task blocks with
+`Wait retry limit`. With **automatic revival** (Usage and limits, on by default)
+the running queue retries such a task once it has rested 30 minutes and its step's
+profile or a rotation member is available, at most five times per session; every
+revival is logged. Queue budgets still apply.
+
+## Usage and limits
+
+Tokens come from each CLI's own report and are stored with the step result; runs
+without a report are marked unreported, never zero. Cost prices those tokens at
+public API rates (`sdd-usage`), not a subscription bill. Model calls are reserved
+when a step starts, so the queue budget (default 40 calls, 8 of them planning,
+cumulative over the database) cannot be exceeded through failures; raise it and
+retry blocked tasks explicitly. **Квоты аккаунта Codex** reads account windows
+through a temporary Codex app-server without a model turn; it refreshes when this
+page opens and the last check is older than ten minutes. Other providers expose no
+quota API; their limits appear only in error messages, which the engine classifies.
+
+## Log
+
+The flight log (`<database>.flight.jsonl`, rotated at 4 MiB with three backups)
+records operator actions with their outcome and duration, task creation, answers
+and admitted tickets, queue starts, pauses, stops and restarts, blocks and waits
+with their reasons, and automatic revivals. It never contains tokens or drafts.
+Filter by level; entries with a task open it. Together with each task's engine
+journal it reconstructs an incident after the fact.
+
+## Projects, themes and languages
+
+**＋** adds a project (name, generated id, existing folder, response language,
+check command and lane options) in a dialog with a draft; **⚙** edits the selected
+one (its id and folder are fixed). The check command accepts a command line or a
+JSON array; its program must be an absolute path. Without a check command generic
+check steps are bypassed and review still gates the work.
+
+Theme and language persist per browser; System follows the OS. Interface copy is
+keyed (`static/js/i18n/ru.js`, `en.js`, checked by `tests/test_ui_i18n.py`); user
+content, agent output and prompts are never translated. Enable browser notifications
+explicitly for new questions, blockers and accepted tasks while the page is open.
 
 ## Legacy orchestrator queue
-
-### Move the queue onto this engine
 
 `python -m sdd_ui.legacy <portfolios/<id>.sqlite3> --database <ui.db> --apply` creates
 a new project named after the legacy workspace and moves every unfinished item into it
 as paused runs (the legacy database is read-only and never modified). Plan rows that
-were never decomposed become **requirement** runs (`requirement` workflow: specification,
-structured questions, ticket breakdown, your approval). Unfinished tickets become
-**ticket** runs (implement, one gate per legacy check, review, bounded repair) scoped to
-their repositories, with dependencies on tickets and on requirement runs. Plans are
-stored as board groupings with their historical progress. Requirement runs claim only
-the plans folder, so planning never blocks delivery. Re-running keeps identical runs.
+were never decomposed become **requirement** runs; unfinished tickets become
+**ticket** runs (implement, one gate per legacy check, review, bounded repair) scoped
+to their repositories, with dependencies on tickets and on requirement runs. Stop the
+old orchestrator yourself; do not run both against the same workspace.
 
-Checks are resolved once: `python` is the project interpreter on PATH (never this
-engine's venv; `--python` overrides), `git` its absolute path, `{base:<repo>}` the
-repository HEAD at import (Git's empty tree for a repository the ticket creates).
-Tickets are isolated in worktree lanes and merge conflicts go to an agent by default
-(`--shared-workspace` and `--manual-conflicts` turn that off). Stop the old
-orchestrator yourself; do not run both against the same workspace.
+## Front-end structure
 
-## Board, plans and kinds
+Plain ES modules, no build step and no Node.js at runtime:
 
-Cards show their kind: **Требование** (a plan row to specify; tinted document card),
-**Тикет** (a unit to build, with its checks and parent requirement) and plain
-**Задание**. Chips filter by kind; the plan filter works on the live board. **Планы**
-lists plans with progress (historical acceptance plus this engine's) and expands into
-requirements with their tickets. Every card names the step and who runs it, e.g.
-`claude · opus`, taken from the connected profile.
+| Path | Role |
+|---|---|
+| `js/core/` | `dom` (element builder), `api` (HTTP client, ETag polling), `store` (snapshot, project scope, selectors), `i18n`, `storage` |
+| `js/ui/` | `dialog` (modal/drawer, confirm), `toast`, `draft` (form drafts) |
+| `js/features/` | One module per screen or concern: `shell`, `board`, `task-drawer`, `answers`, `new-task`, `projects`, `flows`, `agents`, `usage`, `journal`, `team`, `onboarding`, `notifications`, `commands`, `vocabulary` |
+| `js/graph/` | `pipeline` (SVG workflow drawing) and `office` (canvas scene) |
+| `css/` | `app.css` (tokens and components), `pipeline.css`, `office.css` |
 
-Tabs and task cards are browser history entries: Back (browser, mouse or the "←" in the
-top bar) returns to the previous tab or card. **Первые шаги** is a checklist whose
-progress is read from real state (agents, project, workflow, task, queue, answer);
-**Короткий тур** highlights the main areas. **Как пользоваться** reopens both.
-
-## Projects, themes and languages
-
-Use **Add project** to register another existing folder. **Edit project** updates
-the selected label, response language and check command. Its workspace is immutable;
-register another project to use another folder. The selector filters live cards
-and workers. Project checks are copied into newly loaded templates. Publishing a
-command-check workflow requires an explicit absolute executable.
-
-Theme and language persist in browser local storage. Theme is applied before styles;
-only System follows OS changes. Russian/English is the default response language
-for new tasks and is recorded in their context. Existing content is not translated.
-README and code comments are English.
-
-Drag live cards between Ready and In progress to pause/resume. Starting the queue
-is separate. Human questions require an answer; cards cannot be dragged into success.
-The drawer has Discussion, Details and Events tabs, and closes with Escape.
-Keyboard buttons offer the same task commands without dragging.
-
-The question-example button creates a human-only task in a separate sample folder,
-opens its question and makes zero model calls. Answers resolve the waiting step.
-Operator messages are saved idempotently, recorded in history and included in the
-next invocation. Running processes keep their original packets. Drafts survive
-polling within the page.
-
-Enable browser notifications explicitly for new questions, blockers and completion
-while the page is open. Browser/OS permission is required; this is not background
-push. The in-page inbox always remains available. Idle workers have coffee/phone
-and screen animation; mail moves on an observed step change. Reduced-motion
-preferences disable animation.
-
-## Recovery and usage
-
-Main flow includes a declared read-only reconcile step. Confirmed crash recovery
-goes there before checks and review. The drawer recovery action is available for
-inactive blocked/waiting tasks with a recovery path. It records the observed
-workspace revision, clears obsolete gates and leaves the task paused. Required
-gates, budgets and visit limits still apply after explicit resume.
-
-Detailed prompts live in sdd_workflows/prompts.py. Old drafts and pinned definitions
-are not overwritten; reload the Main flow template to adopt the new prompts.
-
-Settings show queue call/planning meters, daily step dispatches and measured tokens.
-Unknown usage remains labelled. CLI discovery runs bounded version and login-status
-probes; a successful status is not a successful model call. Refresh Codex quotas starts a temporary native Codex app-server,
-initializes it, reads account/rateLimits/read and terminates that helper. It creates
-no thread or model turn. One unambiguous installation is required; otherwise set
-its exact path in profiles. The snapshot shows account-wide used percentages,
-window lengths, resets and sample time. Other providers and unsupported endpoints
-have no invented quota/auth values. See [Legacy comparison](LEGACY-PARITY.md).
+Views register with the shell and re-render from store changes; they never poll.
+The server serves any packaged file under `static/` with a known type.
 
 ## Browser checks
 
 ```powershell
 uv sync --locked --all-packages --extra dev
-.venv/Scripts/python.exe -m playwright install chromium
 $env:FFAI_UI_TESTS = '1'
-.venv/Scripts/python.exe -m pytest tests/test_ui_browser.py -q
+.venv/Scripts/python.exe -m pytest tests/test_ui_browser.py -q --browser-channel msedge
 ```
 
-On Windows an installed Edge can be used without downloading Chromium:
-append `--browser-channel msedge` to pytest. The browser tests use temporary
-databases and make zero model calls. Without `FFAI_UI_TESTS=1` they are skipped;
-the rest of `pytest` needs no installed browser. Screenshots go to ignored
-`reports/ui/`. The local September 28 run used Edge because the Playwright Chromium
-download timed out; Firefox and WebKit have not been qualified.
-
-Design references: [React Flow custom nodes](https://reactflow.dev/learn/customization/custom-nodes),
-[taste-skill redesign guidance](https://github.com/Leonxlnx/taste-skill/blob/main/skills/redesign-skill/SKILL.md),
-and [pixel-agents](https://github.com/pixel-agents-hq/pixel-agents).
-The current editor uses local SVG and CSS, preserving the Python-only runtime.
-
-September 28 verification: 179 tests passed on Windows, including six Playwright
-scenarios in Edge. Ruff, strict mypy and package-boundary checks passed. Wheels
-were installed in a clean environment and served all UI assets successfully.
-The native Codex quota endpoint was read successfully without a model call.
-Recovery and repair tests use controlled results; they do not qualify live models
-or claim production parity with the old autonomous portfolio scheduler.
-
-## Lanes, rotation, cost and remembered choices
-
-**Lanes.** Projects default to "each ticket in its own worktree" and "an agent resolves
-merge conflicts" (project form). A ticket's first attempt creates
-`<workspace>/.sdd-lanes/<task>/`: its repositories as worktrees on `ffai/<task>`, the
-rest of the workspace linked. After review the ticket merges itself: fast-forward only;
-a moved base is rebased and every check and the review run again; a conflict goes to
-the resolve agent or to you (**Конфликт слияния**). After acceptance the worktrees,
-merged branches and links are removed and evidence moves back to `.sdd-engine`. The
-task drawer shows the lane, branch and bases. Linked folders are other checkouts:
-agents are told not to edit them, but the operating system does not prevent it.
-
-**Rotation.** Each profile card has "При сбое переключаться на": pick a fallback
-profile, the failures that trigger it (usage limit, rate limit, sign-in, offline), the
-rest time and the retry pause. A limited profile rests until its reset (or the rest
-time); the next attempt uses the fallback, and the primary returns automatically.
-Without rotation a recognised limit becomes a bounded wait until the reset instead of a
-blocker. Resting profiles are shown with their end time.
-
-**Cost.** `sdd-usage` prices measured tokens at public API rates (dated cards, cache
-read/write, long context). The top bar, agent cards and task cards show the equivalent;
-subscription plans are billed separately and unknown models stay unpriced.
-
-**Remembered choices.** Search, plan and kind filters, board or plans view, open plans,
-the drawer tab, answer and message drafts and the workflow draft survive reloads (per
-browser). The last CLI discovery is stored in the database and survives restarts.
+Or install Chromium with `python -m playwright install chromium` and omit the
+channel. Browser tests use temporary databases and make zero model calls; screenshots
+go to ignored `reports/ui/`. On September 28 the nine scenarios passed in installed
+Edge on Windows (welcome, answer drafts, pipeline editing, new-task drafts, filters
+and mobile width, budgets, drag and drop with theme/language and the question
+picker, notifications, back navigation). Firefox and WebKit are not qualified.

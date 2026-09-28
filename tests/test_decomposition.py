@@ -1,0 +1,149 @@
+"""Approving a requirement admits its tickets as paused dependent child tasks."""
+
+import json
+import sys
+import time
+
+from sdd_core.codec import canonical
+from sdd_core.machine import WAIT_RETRY_LIMIT
+from sdd_core.models import Result, Step, Workflow
+from sdd_ui.queue import REVIVE_AFTER
+from sdd_ui.service import WorkspaceService
+
+
+def planning_flow() -> Workflow:
+    # A check stands in for the planning agent: the test supplies its result.
+    argv = canonical({"argv": [sys.executable, "-c", "pass"]})
+    return Workflow(
+        "requirement",
+        "spec",
+        (
+            Step("spec", "check", "command", transitions=(("done", "tickets"),), config=argv),
+            Step("tickets", "check", "command", transitions=(("done", "approve"),), config=argv),
+            Step(
+                "approve",
+                "human",
+                prompt="Approve",
+                transitions=(("approved", "accepted"), ("rework", "spec")),
+            ),
+            Step("accepted", "finish"),
+        ),
+    )
+
+
+def complete(service: WorkspaceService, run_id: str, reason: str, attempt: str, **data):
+    engine = service.engine
+    run = engine.dispatch(run_id, 10, attempt)
+    return engine.complete(
+        run_id,
+        Result(attempt, run.generation, "done", reason, run.revision, data=canonical(data)),
+        11,
+    )
+
+
+def test_approval_creates_ticket_tasks_once_with_dependencies(tmp_path, monkeypatch):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        root = tmp_path / "project"
+        root.mkdir()
+        service.mutate("project", {"id": "app", "name": "App", "workspace": str(root)})
+        ticket = service.engine.store.publish(Workflow("ticket", "done", (Step("done", "finish"),)))
+        monkeypatch.setattr(service.flows, "ensure", lambda name, project, language: ticket)
+        definition = service.engine.store.publish(planning_flow())
+        run = service.mutate(
+            "create",
+            {"title": "Checkout", "project": "app", "definition": definition, "context": "Pay"},
+        )
+        identifier = run["id"]
+        assert identifier.startswith("checkout-")
+        service.mutate("resume", {"id": identifier, "version": run["version"]})
+        complete(service, identifier, "SPEC: pay by card", "s1")
+        tickets = [
+            {"id": "ui", "title": "Pay screen", "depends_on": ["api"], "acceptance": ["AC-1"]},
+            {"id": "api", "title": "Pay endpoint", "paths": ["api/"]},
+        ]
+        complete(service, identifier, "Two slices", "t1", tickets=tickets)
+        waiting = service.engine.dispatch(identifier, 12, "h1")
+        detail = service.detail(identifier)
+        assert [t["id"] for t in detail["tickets"]] == ["api", "ui"]
+
+        answered = service.mutate(
+            "answer",
+            {"id": identifier, "outcome": "approved", "answer": "", "version": waiting.version},
+        )
+        children = answered["admitted"]
+        assert children == [identifier + "-api", identifier + "-ui"]
+        state = service.state()
+        metadata = state["task_metadata"]
+        assert metadata[children[1]] == {
+            "kind": "ticket",
+            "language": "ru",
+            "parent": identifier,
+            "plan": "",
+            "project": "app",
+            "title": "Pay screen",
+        }
+        runs = {r["id"]: r for r in state["runs"]}
+        assert all(runs[c]["paused"] for c in children)
+        with service.engine.store.unit() as unit:
+            assert [d.id for d in unit.dependencies(children[1])] == [children[0]]
+            context = unit.context(children[1])
+        assert "Ticket ui: Pay screen" in context and "SPEC: pay by card" in context
+        assert runs[children[1]]["attention"]["code"] == "paused"
+        log = service.flight(run=identifier)
+        assert any(entry["kind"] == "tickets_admitted" for entry in log)
+        assert service.state()["totals"]["calls"] == 0
+    finally:
+        service.coordinator.close()
+
+
+def test_failed_actions_are_recorded_in_the_flight_log(tmp_path):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        try:
+            service.mutate("resume", {"id": "missing", "version": 0})
+        except KeyError:
+            pass
+        entries = service.flight(level="error")
+        assert entries[-1]["action"] == "resume" and entries[-1]["run"] == "missing"
+        raw = (tmp_path / "ui.flight.jsonl").read_text(encoding="utf-8")
+        assert all(json.loads(line)["kind"] for line in raw.splitlines())
+    finally:
+        service.coordinator.close()
+
+
+def test_queue_revives_only_limit_blocks_after_a_rest(tmp_path):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        root = tmp_path / "project"
+        root.mkdir()
+        argv = canonical({"argv": [sys.executable, "-c", "pass"]})
+        flow = Workflow(
+            "limits",
+            "work",
+            (
+                Step("work", "check", "command", transitions=(("passed", "end"),), config=argv),
+                Step("end", "finish"),
+            ),
+        )
+        definition = service.engine.store.publish(flow)
+        for name in ("limited", "broken"):
+            service.mutate("create", {"id": name, "definition": definition, "workspace": str(root)})
+        engine = service.engine
+        engine.block("limited", time.time(), WAIT_RETRY_LIMIT)
+        engine.block("broken", time.time(), "Provider protocol: bad JSON")
+        queue = service.queue
+        queue.settings["running"] = True
+        queue._watch(time.time())
+        assert engine.store.get("limited").status == "blocked", "too early: limits rest first"
+        later = time.time() + REVIVE_AFTER + 60
+        queue._watch(later)
+        assert engine.store.get("limited").status == "ready"
+        assert engine.store.get("broken").status == "blocked"
+        assert any(e["kind"] == "revived" for e in service.flight(run="limited"))
+        queue.settings["revive"] = False
+        engine.block("limited", time.time(), WAIT_RETRY_LIMIT)
+        queue._watch(later + REVIVE_AFTER * 2)
+        assert engine.store.get("limited").status == "blocked"
+    finally:
+        service.coordinator.close()

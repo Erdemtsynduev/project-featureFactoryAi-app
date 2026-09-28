@@ -17,4 +17,4 @@ ui = "sdd_ui.server:launch"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sdd_ui = ["py.typed", "static/*"]
+sdd_ui = ["py.typed", "static/*", "static/**/*"]

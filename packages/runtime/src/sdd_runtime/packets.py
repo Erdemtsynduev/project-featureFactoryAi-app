@@ -3,14 +3,15 @@
 from pathlib import Path
 
 from sdd_core.codec import object_json, result_load
+from sdd_core.memory import brief, fit
 from sdd_core.models import Step
 from sdd_core.ports import StateStore
 from sdd_core.sdk import Packet, Registry, handler_key
 
 from sdd_runtime.files import attempt_folder
 
-# Receipts carried into a fresh packet, and scanned when looking for a session.
-RECENT_RESULTS = 5
+# Receipts scanned for task memory (notes and handoff), and when looking for a session.
+MEMORY_WINDOW = 12
 SESSION_WINDOW = 12
 
 
@@ -22,19 +23,18 @@ def build_packet(store: StateStore, registry: Registry, run_id: str) -> Packet:
     with store.unit() as db:
         root = Path(db.location(run_id)[0])
         context = db.context(run_id)
-        results = db.recent_results(run_id, RECENT_RESULTS)
+        results = db.recent_results(run_id, MEMORY_WINDOW)
     folder = attempt_folder(root, run.id, run.active.id)
     folder.mkdir(parents=True, exist_ok=True)
+    if len(context) > workflow.max_input_chars:
+        raise ValueError("Required context exceeds budget")
     if results:
-        remaining = workflow.max_input_chars - len(context)
-        carry = "\nRecent results (newest first):\n" + "\n".join(results)
-        if remaining < len(carry):
-            carry = "\nPrevious result artifact: " + str(
-                folder.parent / str(run.previous_attempt) / "receipt.json"
-            )
-        if len(context) + len(carry) > workflow.max_input_chars:
-            raise ValueError("Required context exceeds budget")
-        context += carry
+        # A compact brief instead of raw receipts; the full previous receipt stays linked.
+        link = "Previous receipt: " + str(
+            folder.parent / str(run.previous_attempt) / "receipt.json"
+        )
+        memory = brief(results).render() + "\n" + link
+        context = fit(context, memory, workflow.max_input_chars)
     step = workflow.step(run.step)
     resume = continuation(store, registry, run.id, run.revision, step, context)
     if resume is not None:

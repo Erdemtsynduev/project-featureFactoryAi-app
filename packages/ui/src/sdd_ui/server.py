@@ -16,6 +16,27 @@ from sdd_runtime.lock import Lease
 
 from sdd_ui.service import WorkspaceService
 
+STATIC = files("sdd_ui").joinpath("static")
+MIME = {
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+}
+
+
+def static_asset(path: str) -> tuple[bytes, str] | None:
+    """A packaged UI file by URL path; only known types, no traversal outside `static`."""
+    name = "index.html" if path == "/" else path.lstrip("/")
+    parts = name.split("/")
+    suffix = Path(name).suffix
+    if suffix not in MIME or any(part in ("", ".", "..") for part in parts):
+        return None
+    resource = STATIC.joinpath(*parts)
+    if not resource.is_file():
+        return None
+    return resource.read_bytes(), MIME[suffix] + "; charset=utf-8"
+
 
 def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
     token = secrets.token_urlsafe(32)
@@ -60,33 +81,14 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                 self.reply(403, b"{}")
                 return
             url = urlsplit(self.path)
+            query = {key: values[0] for key, values in parse_qs(url.query).items()}
             try:
-                if url.path in (
-                    "/",
-                    "/app.js",
-                    "/style.css",
-                    "/preferences.js",
-                    "/locale.js",
-                    "/workspace.js",
-                    "/workspace.css",
-                    "/pipeline.js",
-                    "/office.js",
-                    "/nav.js",
-                    "/persist.js",
-                    "/onboarding.js",
-                ):
-                    name = "index.html" if url.path == "/" else url.path[1:]
-                    mime = (
-                        "text/html"
-                        if name.endswith(".html")
-                        else "text/javascript"
-                        if name.endswith(".js")
-                        else "text/css"
-                    ) + "; charset=utf-8"
-                    self.reply(200, files("sdd_ui").joinpath("static", name).read_bytes(), mime)
+                asset = static_asset(url.path)
+                if asset is not None:
+                    self.reply(200, *asset)
                     return
                 # Reads use their own short transactions and never wait for a queue tick.
-                result: dict[str, object]
+                result: object
                 if url.path == "/api/info":
                     result = {
                         "application": "feature-factory-ai",
@@ -102,7 +104,13 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                         self.reply(200, body, etag=etag)
                     return
                 elif url.path == "/api/run":
-                    result = service.detail(parse_qs(url.query)["id"][0])
+                    result = service.detail(query["id"])
+                elif url.path == "/api/log":
+                    result = service.flight(
+                        query.get("run", ""), query.get("level", ""), int(query.get("limit", 300))
+                    )
+                elif url.path == "/api/incident":
+                    result = service.incident(query["id"])
                 else:
                     self.reply(404, b"{}")
                     return
@@ -121,12 +129,7 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                 action = self.path.removeprefix("/api/")
                 document = object_json(self.rfile.read(length).decode("utf-8"))
                 if action == "shutdown":
-                    with service.lock:
-                        if service.coordinator.live:
-                            raise Conflict(
-                                "Pause the queue and wait for active executions before closing"
-                            )
-                        service.mutate("queue", {"running": False})
+                    service.shutdown()
                     self.reply(200, b'{"stopping":true}')
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                     return

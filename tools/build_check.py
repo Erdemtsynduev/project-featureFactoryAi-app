@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix="sdd-wheel-check-") as temp:
         [
             str(python),
             "-c",
-            "from importlib.resources import files; from sdd_ui.server import create_server; assert files('sdd_ui').joinpath('static', 'app.js').is_file(); assert files('sdd_ui').joinpath('static', 'index.html').is_file()",
+            "from importlib.resources import files; from sdd_ui.server import create_server; assert files('sdd_ui').joinpath('static', 'js', 'main.js').is_file(); assert files('sdd_ui').joinpath('static', 'css', 'app.css').is_file(); assert files('sdd_ui').joinpath('static', 'index.html').is_file()",
         ],
         folder,
     )

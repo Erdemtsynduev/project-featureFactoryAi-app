@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from sdd_core.codec import canonical, flag, integer, object_json, sequence, text
+from sdd_core.memory import notes, tickets_of
 from sdd_core.models import Artifact, Json, Result, Usage
 from sdd_core.questions import questions
 from sdd_core.sdk import Launch, Manifest, Packet
@@ -71,7 +72,17 @@ PREAMBLE = (
     "If a decision only a human can make blocks you and the step declares a `questions` "
     "outcome, return it and list each decision in `questions`: a short id, the question, "
     "2-4 concrete options and the one option you recommend. Otherwise return [].\n"
+    "`notes` is the task memory shared with later steps and other agents: 0-5 short "
+    "durable facts they must know (decisions, owned paths, constraints, gotchas). "
+    "Do not repeat notes already listed under Task memory; return [] when nothing is new.\n"
 )
+
+TICKETS_INSTRUCTION = (
+    "Return the breakdown in `tickets`: each ticket has a short unique id, a title, the "
+    "goal, testable acceptance criteria, ids of tickets it depends on and owned paths.\n"
+)
+
+STRINGS: dict[str, Json] = {"type": "array", "items": {"type": "string"}}
 
 QUESTIONS_SCHEMA: dict[str, Json] = {
     "type": "array",
@@ -81,12 +92,74 @@ QUESTIONS_SCHEMA: dict[str, Json] = {
         "properties": {
             "id": {"type": "string"},
             "question": {"type": "string"},
-            "options": {"type": "array", "items": {"type": "string"}},
+            "options": STRINGS,
             "recommended": {"type": "string"},
         },
         "required": ["id", "question", "options", "recommended"],
     },
 }
+
+TICKETS_SCHEMA: dict[str, Json] = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "id": {"type": "string"},
+            "title": {"type": "string"},
+            "goal": {"type": "string"},
+            "acceptance": STRINGS,
+            "depends_on": STRINGS,
+            "paths": STRINGS,
+        },
+        "required": ["id", "title", "goal", "acceptance", "depends_on", "paths"],
+    },
+}
+
+
+def emits_tickets(packet: Packet) -> bool:
+    """A planning step opts into ticket output through `{"emits": "tickets"}`."""
+    return object_json(packet.step.config).get("emits") == "tickets"
+
+
+def result_schema(packet: Packet) -> dict[str, Json]:
+    """The structured result contract; ticket output only where a step declares it."""
+    properties: dict[str, Json] = {
+        "outcome": {"type": "string", "enum": [*dict(packet.step.transitions), "blocked"]},
+        "reason": {"type": "string"},
+        "standards": {"type": "boolean"},
+        "specification": {"type": "boolean"},
+        "questions": QUESTIONS_SCHEMA,
+        "notes": STRINGS,
+    }
+    if emits_tickets(packet):
+        properties["tickets"] = TICKETS_SCHEMA
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": list(properties),
+    }
+
+
+def instructions(packet: Packet) -> str:
+    return PREAMBLE + (TICKETS_INSTRUCTION if emits_tickets(packet) else "")
+
+
+def shared_data(doc: dict[str, Json], packet: Packet) -> dict[str, Json]:
+    """Questions, notes and tickets an agent declared, validated before routing."""
+    data: dict[str, Json] = {}
+    for key in ("questions", "notes", "tickets"):
+        value = doc.get(key)
+        if value:
+            data[key] = value
+    if "tickets" in data and not emits_tickets(packet):
+        del data["tickets"]
+    facts = canonical(data)
+    questions(facts)
+    notes(facts)
+    tickets_of(facts)
+    return data
 
 
 class CliHandler:
@@ -116,19 +189,7 @@ class CliHandler:
 
     def prepare(self, packet: Packet) -> Launch:
         folder = Path(packet.directory)
-        outcomes = list(dict(packet.step.transitions)) + ["blocked"]
-        schema = {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "outcome": {"type": "string", "enum": outcomes},
-                "reason": {"type": "string"},
-                "standards": {"type": "boolean"},
-                "specification": {"type": "boolean"},
-                "questions": QUESTIONS_SCHEMA,
-            },
-            "required": ["outcome", "reason", "standards", "specification", "questions"],
-        }
+        schema = result_schema(packet)
         schema_path = folder / "schema.json"
         schema_path.write_text(json.dumps(schema), encoding="utf-8")
         if packet.resume:
@@ -137,7 +198,7 @@ class CliHandler:
                 "then return the same structured result.\n" + packet.context
             )
         else:
-            prompt = PREAMBLE + packet.step.prompt + "\nContext:\n" + packet.context
+            prompt = instructions(packet) + packet.step.prompt + "\nContext:\n" + packet.context
         output = folder / "agent-result.json"
         sandbox = "workspace-write" if packet.step.mutates else "read-only"
         if self.provider == "codex" and packet.resume:
@@ -306,10 +367,7 @@ class CliHandler:
             data["model"] = model
         if isinstance(reported, (int, float)):
             data["reported_cost_usd"] = float(reported)
-        asked = doc.get("questions", [])
-        if asked:
-            data["questions"] = asked
-            questions(canonical(data))  # reject malformed questions before routing
+        data.update(shared_data(doc, packet))  # malformed output fails before routing
         if isinstance(session, str) and session:
             data["session"] = {"id": session, "step": packet.step.id, "handler": self.provider}
         return Result(

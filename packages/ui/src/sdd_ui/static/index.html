@@ -6,582 +6,113 @@
     <title>Feature Factory AI</title>
     <meta name="darkreader-lock" />
     <script src="/preferences.js"></script>
-    <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/workspace.css" />
-    <script src="/persist.js" defer></script>
-    <script src="/locale.js" defer></script>
-    <script src="/pipeline.js" defer></script>
-    <script src="/office.js" defer></script>
-    <script src="/app.js" defer></script>
-    <script src="/workspace.js" defer></script>
-    <script src="/nav.js" defer></script>
-    <script src="/onboarding.js" defer></script>
+    <link rel="stylesheet" href="/css/app.css" />
+    <link rel="stylesheet" href="/css/pipeline.css" />
+    <link rel="stylesheet" href="/css/office.css" />
+    <script type="module" src="/js/main.js"></script>
   </head>
   <body>
-    <div class="shell">
-      <aside class="rail">
+    <div class="app">
+      <aside class="rail" aria-label="Feature Factory">
         <div class="brand">
           <span class="logo" aria-hidden="true">ff</span>
           <div>
             <strong>Feature Factory</strong>
-            <small>детерминированный движок</small>
+            <small data-i18n="brand.tagline">детерминированный движок</small>
           </div>
         </div>
-        <nav aria-label="Разделы">
-          <button data-tab="tasks" class="active">
-            <span class="nav-glyph" aria-hidden="true">▤</span>Задания
-          </button>
-          <button data-tab="flows">
-            <span class="nav-glyph" aria-hidden="true">⇢</span>Сценарии
-          </button>
-          <button data-tab="settings">
-            <span class="nav-glyph" aria-hidden="true">◎</span>Агенты и лимиты
-          </button>
-        </nav>
-        <section class="rail-project" aria-label="Проект">
-          <label
-            >Проект<select id="project-select">
-              <option value="">Все проекты</option>
-            </select></label
+        <section class="project-switch" aria-labelledby="project-label">
+          <span id="project-label" class="eyebrow" data-i18n="project.label"
+            >Проект</span
           >
-          <p id="project-path" class="path"></p>
-          <div class="rail-actions">
-            <button id="manage-projects" type="button">Добавить проект</button
-            ><button id="edit-project" type="button">Настроить</button>
+          <div class="project-row">
+            <select
+              id="project-select"
+              data-i18n-aria-label="project.label"
+            ></select>
+            <button
+              id="project-edit"
+              type="button"
+              class="icon-button"
+              data-i18n-title="project.edit"
+              data-i18n-aria-label="project.edit"
+            >
+              ⚙
+            </button>
+            <button
+              id="project-add"
+              type="button"
+              class="icon-button"
+              data-i18n-title="project.add"
+              data-i18n-aria-label="project.add"
+            >
+              ＋
+            </button>
           </div>
+          <p id="project-path" class="path"></p>
         </section>
+        <nav id="nav" data-i18n-aria-label="nav.label"></nav>
         <div class="rail-foot">
+          <button id="help" type="button" class="ghost" data-i18n="help.open">
+            Как пользоваться
+          </button>
           <div class="rail-prefs">
-            <select id="language-select" aria-label="Язык интерфейса">
+            <select id="language-select" data-i18n-aria-label="prefs.language">
               <option value="ru">Русский</option>
               <option value="en">English</option>
             </select>
-            <select id="theme-select" aria-label="Тема">
-              <option value="light">Светлая</option>
-              <option value="dark">Тёмная</option>
-              <option value="system">Системная</option>
+            <select id="theme-select" data-i18n-aria-label="prefs.theme">
+              <option value="light" data-i18n="prefs.light">Светлая</option>
+              <option value="dark" data-i18n="prefs.dark">Тёмная</option>
+              <option value="system" data-i18n="prefs.system">Системная</option>
             </select>
           </div>
-          <button id="notifications" type="button">Уведомления</button>
-          <button id="close-app" type="button">Завершить приложение</button>
+          <button
+            id="notifications"
+            type="button"
+            class="ghost"
+            data-i18n="prefs.notifications"
+          >
+            Уведомления
+          </button>
+          <button
+            id="close-app"
+            type="button"
+            class="ghost"
+            data-i18n="app.close"
+          >
+            Завершить приложение
+          </button>
         </div>
       </aside>
-      <div class="workspace">
+      <div class="main">
         <header class="topbar">
           <button
             id="nav-back"
-            class="nav-back"
             type="button"
-            aria-label="Назад"
-            title="Назад"
+            class="icon-button"
+            data-i18n-aria-label="nav.back"
+            data-i18n-title="nav.back"
           >
             ←
           </button>
-          <div class="queue-control">
-            <span id="connection" class="badge">Подключение…</span>
-            <button id="queue" class="primary">Запустить очередь</button>
+          <h1 id="page-title"></h1>
+          <div class="queue" id="queue-control">
+            <span id="queue-status" class="status-dot"></span>
+            <button id="queue-toggle" type="button"></button>
           </div>
-          <dl class="summary">
-            <div>
-              <dt>Принято</dt>
-              <dd id="accepted">0</dd>
-            </div>
-            <div>
-              <dt>Вызовы моделей</dt>
-              <dd id="calls">0</dd>
-            </div>
-            <div>
-              <dt>Из них планирование</dt>
-              <dd id="planning">0</dd>
-            </div>
-            <div>
-              <dt>Измеренные токены</dt>
-              <dd id="tokens">0</dd>
-            </div>
-            <div
-              title="Эквивалент по публичным тарифам API; подписка оплачивается отдельно"
-            >
-              <dt>≈ Стоимость API</dt>
-              <dd id="cost">—</dd>
-            </div>
-            <div>
-              <dt>Последний переход</dt>
-              <dd id="last">—</dd>
-            </div>
-          </dl>
+          <dl id="meters" class="meters"></dl>
+          <button
+            id="new-task"
+            type="button"
+            class="primary"
+            data-i18n="task.new"
+          >
+            Новая задача
+          </button>
         </header>
-        <main id="main">
-          <p id="notice" role="status"></p>
-          <form id="project-form" class="panel hidden">
-            <h2>Настройка проекта</h2>
-            <div class="grid">
-              <label
-                >ID проекта<input
-                  name="id"
-                  required
-                  pattern="[A-Za-z0-9_-]{1,64}" /></label
-              ><label>Название проекта<input name="name" required /></label>
-              <label class="wide"
-                >Папка проекта<input
-                  name="workspace"
-                  required
-                  placeholder="Абсолютный путь к существующему проекту"
-              /></label>
-              <label
-                >Язык ответов<select name="language">
-                  <option value="ru">Русский</option>
-                  <option value="en">English</option>
-                </select></label
-              >
-              <label class="wide"
-                >Команда проверок (JSON-массив)<input
-                  name="checks"
-                  value="[]"
-                  placeholder='["C:/project/.venv/Scripts/python.exe","-m","pytest"]'
-              /></label>
-            </div>
-            <div class="checks">
-              <label
-                ><input type="checkbox" name="isolation" checked />Каждый тикет
-                в своём worktree</label
-              ><label
-                ><input type="checkbox" name="auto_resolve" checked />Конфликты
-                слияния решает агент</label
-              >
-            </div>
-            <div class="form-actions">
-              <button class="primary">Сохранить проект</button
-              ><button type="button" id="project-cancel">Закрыть</button>
-            </div>
-            <p class="hint">
-              Подключение папки не запускает задания. Команда проверок
-              применяется к новым шаблонам.
-            </p>
-          </form>
-
-          <section id="tasks" class="tab">
-            <div class="section-title">
-              <div>
-                <h1>Задания</h1>
-                <p>
-                  Новые задания создаются на паузе. Приёмку решают проверки и
-                  ревью, а не перетаскивание карточек.
-                </p>
-              </div>
-              <div class="title-actions">
-                <button id="interactive-demo" type="button">
-                  Пример вопроса без модели
-                </button>
-                <button id="new-task" class="primary">Новое задание</button>
-              </div>
-            </div>
-            <div id="inbox" class="inbox hidden" aria-live="polite"></div>
-            <section class="office-panel" aria-label="Команда">
-              <div class="office-heading">
-                <h2>Команда</h2>
-                <span class="hint"
-                  >За столами — шаги сценария и их модели, документы — задания.
-                  Клик по стопке открывает задание, по столу — шаг.</span
-                >
-                <button id="edit-main-flow" type="button">
-                  Открыть main flow
-                </button>
-              </div>
-              <div id="office" class="office"></div>
-            </section>
-            <div class="board-toolbar">
-              <div
-                class="segmented"
-                role="group"
-                aria-label="Источник карточек"
-              >
-                <button id="live-board" class="active">Доска</button
-                ><button id="plans-board">Планы</button>
-              </div>
-              <div
-                id="kind-filter"
-                class="chips"
-                role="group"
-                aria-label="Тип задания"
-                hidden
-              ></div>
-              <label class="search-label"
-                >Поиск<input
-                  id="task-search"
-                  type="search"
-                  placeholder="Название, ID или описание"
-              /></label>
-              <label
-                >План<select id="plan-filter">
-                  <option value="">Все планы</option>
-                </select></label
-              >
-            </div>
-            <form id="task-form" class="panel hidden">
-              <h2>Создать на паузе</h2>
-              <div class="grid">
-                <label
-                  >Название задания<input
-                    name="title"
-                    required
-                    placeholder="Что нужно сделать?"
-                /></label>
-                <label
-                  >Язык ответа<select name="language">
-                    <option value="ru">Русский</option>
-                    <option value="en">English</option>
-                  </select></label
-                >
-                <label
-                  >Имя задания<input
-                    name="id"
-                    required
-                    placeholder="feature-one"
-                    pattern="[A-Za-z0-9_-]+" /></label
-                ><label
-                  >Опубликованный сценарий<select
-                    name="definition"
-                    id="definitions"
-                    required
-                  ></select></label
-                ><label class="wide"
-                  >Рабочая папка<input
-                    name="workspace"
-                    required
-                    placeholder="Абсолютный путь к отдельному проекту" /></label
-                ><label class="wide"
-                  >Согласованная задача и критерии приёмки<textarea
-                    name="context"
-                    rows="4"
-                    required
-                  ></textarea></label
-                ><label class="wide"
-                  >Зависимости (ID через запятую)<input name="dependencies"
-                /></label>
-              </div>
-              <div class="form-actions">
-                <button class="primary">Создать</button
-                ><span class="hint"
-                  >Задание начнёт работу только после продолжения и запуска
-                  очереди.</span
-                >
-              </div>
-            </form>
-            <div id="board" class="board"></div>
-            <dialog id="task-dialog" aria-label="Карточка задания">
-              <section id="detail" class="panel hidden"></section>
-            </dialog>
-          </section>
-
-          <section id="flows" class="tab hidden">
-            <div class="section-title">
-              <div>
-                <h1>Сценарии</h1>
-                <p>
-                  Публикация создаёт неизменяемую версию. Уже созданные задания
-                  остаются на своей версии.
-                </p>
-              </div>
-              <div class="title-actions">
-                <select id="template" aria-label="Шаблон">
-                  <option value="main-flow">Main flow · полная команда</option>
-                  <option value="feature">Согласованная задача</option>
-                  <option value="ticket">
-                    Тикет: разработка → проверки → ревью
-                  </option>
-                  <option value="interview">Интервью</option>
-                  <option value="demo">Проверка без модели</option></select
-                ><button id="load-template">Открыть шаблон</button>
-              </div>
-            </div>
-            <div class="editor-layout">
-              <section class="panel editor">
-                <div class="flow-meta">
-                  <label class="saved"
-                    >Сохранённая версия<select id="saved-flows">
-                      <option value="">Выберите…</option>
-                    </select></label
-                  >
-                  <label>Имя<input id="flow-id" /></label
-                  ><label>Начальный шаг<input id="flow-entry" /></label
-                  ><label
-                    >Лимит вызовов<input
-                      id="flow-calls"
-                      type="number"
-                      min="1"
-                      value="8" /></label
-                  ><label
-                    >Из них планирование<input
-                      id="flow-planning"
-                      type="number"
-                      min="0"
-                      value="0" /></label
-                  ><label
-                    >Лимит токенов<input
-                      id="flow-tokens"
-                      type="number"
-                      min="1"
-                      placeholder="Без лимита"
-                  /></label>
-                </div>
-                <div class="graph-toolbar">
-                  <span class="legend" aria-hidden="true"
-                    ><i class="lg-ok"></i>успех <i class="lg-alt"></i>сбой и
-                    возврат <i class="lg-gate"></i>гейт</span
-                  >
-                  <span class="toolbar-spacer"></span>
-                  <button id="zoom-out" type="button" aria-label="Уменьшить">
-                    −</button
-                  ><button id="zoom-in" type="button" aria-label="Увеличить">
-                    +</button
-                  ><button id="graph-fit" type="button">Уместить</button
-                  ><button id="draft-save" type="button">
-                    Сохранить черновик
-                  </button>
-                </div>
-                <div id="graph" tabindex="0"></div>
-                <p class="hint">
-                  «+» на стрелке вставляет шаг. Кружок справа от шага начинает
-                  связь: затем выберите целевой шаг. Выбранную связь удаляет
-                  Delete.
-                </p>
-                <details class="edge-details">
-                  <summary>Связь вручную</summary>
-                  <form id="edge-form" class="edge-editor">
-                    <label
-                      >Из шага<select id="edge-source" required></select
-                    ></label>
-                    <label
-                      >Результат<input
-                        id="edge-outcome"
-                        required
-                        placeholder="done / failed"
-                        value="done"
-                    /></label>
-                    <label
-                      >В шаг<select id="edge-target" required></select
-                    ></label>
-                    <button>Соединить</button
-                    ><button id="edge-delete" type="button">
-                      Удалить связь
-                    </button>
-                  </form>
-                </details>
-                <div class="form-actions">
-                  <button id="add-step" type="button">Добавить шаг</button>
-                  <span class="toolbar-spacer"></span>
-                  <button id="validate" type="button">Проверить</button>
-                  <button id="publish" class="primary" type="button">
-                    Опубликовать версию
-                  </button>
-                </div>
-                <p class="hint">
-                  Проверка структуры и профилей не вызывает модель.
-                </p>
-              </section>
-              <section class="panel inspector">
-                <span class="eyebrow">Инспектор шага</span>
-                <h2 id="inspector-title">Свойства шага</h2>
-                <form id="step-form">
-                  <div class="grid">
-                    <label>ID<input name="id" required /></label
-                    ><label
-                      >Тип<select name="kind">
-                        <option>agent</option>
-                        <option>check</option>
-                        <option>human</option>
-                        <option>condition</option>
-                        <option>operation</option>
-                        <option>finish</option>
-                      </select></label
-                    ><label
-                      >Обработчик<input name="handler" list="handlers" /></label
-                    ><label
-                      >Именованный профиль<input
-                        name="profile"
-                        list="profile-names"
-                        placeholder="default" /></label
-                    ><label
-                      >Таймаут, сек<input
-                        name="timeout"
-                        type="number"
-                        min="1" /></label
-                    ><label
-                      >Лимит посещений<input
-                        name="max_visits"
-                        type="number"
-                        min="1" /></label
-                    ><label class="wide"
-                      >Переходы: outcome=step, outcome=step<input
-                        name="transitions" /></label
-                    ><label
-                      >Условие: ключ<input
-                        name="condition_key"
-                        placeholder="answer.mode" /></label
-                    ><label
-                      >Условие: значение<input name="condition_value" /></label
-                    ><label class="wide"
-                      >Инструкция<textarea
-                        name="prompt"
-                        rows="6"
-                      ></textarea></label
-                    ><label class="wide"
-                      >Конфигурация JSON<textarea
-                        name="config"
-                        rows="4"
-                        spellcheck="false"
-                      ></textarea>
-                    </label>
-                  </div>
-                  <div class="checks">
-                    <label
-                      ><input
-                        type="checkbox"
-                        name="required"
-                      />Обязательный</label
-                    ><label
-                      ><input type="checkbox" name="gate" />Гейт приёмки</label
-                    ><label
-                      ><input type="checkbox" name="mutates" />Изменяет
-                      файлы</label
-                    >
-                  </div>
-                  <div class="form-actions">
-                    <button class="primary">Применить к черновику</button>
-                    <button type="button" id="delete-step">Удалить шаг</button>
-                  </div>
-                </form>
-                <details>
-                  <summary>JSON определения</summary>
-                  <textarea
-                    id="flow-json"
-                    rows="15"
-                    spellcheck="false"
-                  ></textarea
-                  ><button id="import-json" type="button">
-                    Загрузить JSON в редактор
-                  </button>
-                </details>
-              </section>
-            </div>
-          </section>
-
-          <section id="settings" class="tab hidden">
-            <div class="section-title">
-              <div>
-                <h1>Агенты и лимиты</h1>
-                <p>
-                  Вход выполняется в родном CLI; ключи сюда не вводятся. Имя
-                  профиля — это обработчик, на который ссылаются шаги: профили
-                  claude и codex делают шаблоны исполнимыми.
-                </p>
-              </div>
-              <div class="title-actions">
-                <button id="subscription-status" type="button">
-                  Обновить квоты Codex
-                </button>
-                <button id="discover-agents" class="primary" type="button">
-                  Найти CLI и проверить вход
-                </button>
-              </div>
-            </div>
-            <div id="agent-status" class="agents"></div>
-            <div class="settings-grid">
-              <section class="panel">
-                <h2>Бюджет очереди</h2>
-                <div id="budget-charts"></div>
-                <form id="budget-form" class="budget-form">
-                  <label
-                    >Всего вызовов<input
-                      name="max_calls"
-                      type="number"
-                      min="0"
-                      required /></label
-                  ><label
-                    >Из них планирование<input
-                      name="max_planning_calls"
-                      type="number"
-                      min="0"
-                      required
-                  /></label>
-                  <button class="primary">Сохранить лимиты</button>
-                </form>
-                <p class="hint">
-                  Это предел числа запусков за всю историю базы, не прогноз
-                  стоимости подписки. Зарезервированные вызовы учитываются, даже
-                  если CLI завершился ошибкой. Проверки и ответы человека вызовы
-                  не расходуют.
-                </p>
-              </section>
-              <section class="panel">
-                <h2>Профили</h2>
-                <div id="profiles-list"></div>
-                <details>
-                  <summary>Профиль вручную</summary>
-                  <form id="profile-form">
-                    <div class="grid">
-                      <label
-                        >Имя профиля<input
-                          name="name"
-                          placeholder="implement"
-                          required /></label
-                      ><label
-                        >CLI<select name="adapter">
-                          <option>codex</option>
-                          <option>claude</option>
-                          <option>cursor</option>
-                          <option>opencode</option>
-                        </select></label
-                      ><label class="wide"
-                        >Исполняемый файл<input
-                          name="executable"
-                          required
-                          placeholder="Абсолютный путь" /></label
-                      ><label class="wide"
-                        >Аргументы интерпретатора (JSON-массив)<input
-                          name="arguments"
-                          value="[]" /></label
-                      ><label
-                        >Точный ID модели<input name="model" required /></label
-                      ><label
-                        >Права<select name="permissions">
-                          <option value="read-only">Только чтение</option>
-                          <option value="workspace-write">
-                            Изменение файлов
-                          </option>
-                        </select></label
-                      ><label
-                        >Таймаут, сек<input
-                          name="timeout"
-                          type="number"
-                          value="900"
-                          min="1"
-                      /></label>
-                    </div>
-                    <button>Добавить в черновик</button>
-                  </form>
-                  <label
-                    >Конфигурация JSON<textarea
-                      id="profiles-json"
-                      rows="14"
-                      spellcheck="false"
-                    >
-{
-  "schema": 1,
-  "runners": {},
-  "profiles": {}
-}</textarea>
-                  </label>
-                  <button id="save-profiles" class="primary" type="button">
-                    Проверить и сохранить
-                  </button>
-                </details>
-              </section>
-            </div>
-          </section>
-          <datalist id="handlers"></datalist>
-          <datalist id="profile-names"></datalist>
-        </main>
+        <div id="banner" class="banner" hidden></div>
+        <main id="view"></main>
       </div>
     </div>
   </body>

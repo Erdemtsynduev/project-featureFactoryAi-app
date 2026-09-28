@@ -93,9 +93,12 @@ individual runs with dependency IDs; application-specific portfolio import is a 
 
 ## Context and budgets
 
-Original run context is immutable and bounded. Recent receipts are included within the character
-budget; otherwise a local receipt link is supplied. `assemble` supports revision-scoped records,
-priorities and non-truncatable required content. There is no automatic LLM summarizer.
+Original run context is immutable and bounded. Instead of raw receipts, the next packet carries
+a task brief (`sdd_core.memory`): the de-duplicated `notes` every earlier step declared, oldest
+first, and a compact handoff of the latest three outcomes, fitted into the character budget, plus
+a link to the full previous receipt. `assemble` supports revision-scoped records, priorities and
+non-truncatable required content. There is no automatic LLM summarizer: the brief is a pure
+function of recorded results.
 
 Model calls are conservatively reserved on dispatch. An infrastructure launch failure can consume
 a call reservation even if no provider request was sent; it cannot cause extra unbudgeted calls.
@@ -200,3 +203,42 @@ The UI service locks only the coordinator and queue settings. Board reads and en
 commands run concurrently with the queue through short transactions and CAS, so a long
 tick never freezes the board. `/api/state` carries an ETag; polling revalidates it and
 an unchanged board is answered with 304.
+
+## Operator application layer (2026-09-28)
+
+`sdd_ui.service.WorkspaceService` is only the composition root of the local UI: it
+wires use-case services and maps HTTP action names to them.
+
+| Module | Responsibility |
+|---|---|
+| `queue` | Queue settings, the coordinator's lifecycle, the work loop, status watching and revival after limits |
+| `agents` | Profiles file, handler registry replacement, discovery-backed connection, rotation, rest release, Codex quotas |
+| `flows` | Templates for a project, validation against installed handlers, publication, readiness per task kind |
+| `tasks` | Task creation by kind, commands, messages, answers, ticket admission, recovery with an incident briefing |
+| `attention` | The single "why is this task (not) moving" derivation and its resolving action |
+| `flightlog`, `diagnostics` | Append-only flight log and per-task incident records |
+
+Every action is recorded in the flight log with its outcome; failures are recorded
+before the error reaches the client. The queue watcher logs transitions into
+`blocked` and `waiting` once per change.
+
+Decomposition is deterministic. A planning step opts into structured ticket output
+with `{"emits": "tickets"}` in its config; the agent result schema then requires
+`tickets`, validated by `sdd_core.memory.tickets_of` (unique ids, known acyclic
+dependencies) before routing. Only a human approval of the requirement admits them:
+the ticket workflow is published first, then the answer is applied, then each ticket
+becomes a paused dependent run whose context is the ticket plus the approved
+specification. Admission is idempotent per derived run id.
+
+Every agent result may carry `notes` (0-5 durable facts). They form the task memory
+shared by later steps and by other agents, so a fallback profile or a fresh session
+continues from recorded decisions instead of re-reading transcripts.
+
+Revival: a run blocked by the core's `WAIT_RETRY_LIMIT` (consecutive infrastructure
+waits, usually provider limits) is retried by the running queue after 30 minutes of
+rest when its agent profile or a rotation member is available, at most five times
+per session and only while the `revive` queue setting is on. Queue budgets apply.
+
+The browser client is a set of ES modules (`static/js`) with keyed dictionaries for
+Russian and English; it holds no workflow or acceptance logic and renders the
+server's attention reason instead of deriving task state itself.

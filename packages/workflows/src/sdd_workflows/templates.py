@@ -315,10 +315,11 @@ def _merge_steps(first: str, implementer: str, auto_resolve: bool) -> tuple[Step
 
 
 def requirement(analyst: str = "codex") -> Workflow:
-    """Turn one plan requirement into an approved specification and ticket breakdown.
+    """Turn one requirement into an approved specification and ticket breakdown.
 
-    The agent may ask structured questions; the human approves the result. It does
-    not create ticket runs by itself: approved tickets are admitted explicitly.
+    The agent may ask structured questions; the human approves the result. The
+    tickets step declares structured tickets; the application admits them as child
+    ticket runs only after the approval, never from the agent's own decision.
     """
     return Workflow(
         "requirement",
@@ -343,15 +344,16 @@ def requirement(analyst: str = "codex") -> Workflow:
                 "tickets",
                 "agent",
                 analyst,
-                prompts.TICKETS,
+                prompts.BREAKDOWN,
                 (("done", "approve"),),
                 required=True,
-                config='{"purpose":"planning"}',
+                config='{"emits":"tickets","purpose":"planning"}',
             ),
             Step(
                 "approve",
                 "human",
-                prompt="Approve the specification and its ticket breakdown.",
+                prompt="Approve the specification and its ticket breakdown. "
+                "Approved tickets appear on the board as paused ticket tasks.",
                 transitions=(("approved", "accepted"), ("rework", "spec")),
                 required=True,
             ),
@@ -464,13 +466,41 @@ def localized(flow: Workflow, language: str) -> Workflow:
 
 
 def with_checks(flow: Workflow, argv: list[str]) -> Workflow:
-    """Point every generic command check at the project's own check command."""
+    """Point every generic command check at the project's own check command.
+
+    Without a project command the generic checks are bypassed: each route into a
+    check goes to that check's `passed` target instead, so review still gates work.
+    """
+    generic = {s.id for s in flow.steps if s.kind == "check" and s.handler == "command"}
+    if argv:
+        return replace(
+            flow,
+            steps=tuple(
+                replace(step, config=canonical({**object_json(step.config), "argv": list(argv)}))
+                if step.id in generic
+                else step
+                for step in flow.steps
+            ),
+        )
+    unconfigured = {
+        s.id for s in flow.steps if s.id in generic and not object_json(s.config).get("argv")
+    }
+    if not unconfigured:
+        return flow
+
+    def target(step_id: str) -> str:
+        seen = set()
+        while step_id in unconfigured and step_id not in seen:
+            seen.add(step_id)
+            step_id = dict(flow.step(step_id).transitions)["passed"]
+        return step_id
+
     return replace(
         flow,
+        entry=target(flow.entry),
         steps=tuple(
-            replace(step, config=canonical({**object_json(step.config), "argv": list(argv)}))
-            if step.kind == "check" and step.handler == "command"
-            else step
+            replace(step, transitions=tuple((o, target(t)) for o, t in step.transitions))
             for step in flow.steps
+            if step.id not in unconfigured
         ),
     )

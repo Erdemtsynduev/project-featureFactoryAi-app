@@ -1,0 +1,218 @@
+/* Pipeline drawing (js/graph/pipeline.js). Reads theme tokens from app.css. */
+#graph {
+  overflow: auto;
+  min-height: 360px;
+  max-height: 68vh;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+}
+#graph:focus-visible {
+  outline-offset: -2px;
+}
+.run-pipeline {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+  padding: 6px;
+}
+/* Pipeline drawing */
+.pipeline {
+  display: block;
+  font-family: var(--ui);
+}
+.stage-index {
+  font: 600 11px var(--mono);
+  fill: var(--muted);
+}
+.stage-line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.lane-band {
+  fill: var(--sunken);
+}
+.lane-caption {
+  font: 600 10px var(--ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  fill: var(--muted);
+}
+.wire {
+  fill: none;
+  stroke: var(--wire);
+  stroke-width: 1.6;
+}
+.wire.alt {
+  stroke: var(--wire-alt);
+  stroke-dasharray: 5 4;
+}
+.wire.on {
+  stroke: var(--accent);
+  stroke-width: 2.4;
+  stroke-dasharray: none;
+}
+.wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  cursor: pointer;
+}
+.wire-hit:focus-visible {
+  outline: none;
+  stroke: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.wire-tip {
+  fill: var(--wire);
+}
+.wire-tip.alt {
+  fill: var(--wire-alt);
+}
+.wire-tip.on {
+  fill: var(--accent);
+}
+.chip {
+  cursor: pointer;
+}
+.chip rect {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+}
+.chip text {
+  font: 10px var(--mono);
+  fill: var(--ink-2);
+}
+.chip.alt rect {
+  stroke: var(--wire-alt);
+}
+.chip.alt text {
+  fill: var(--wire-alt);
+}
+.chip.on rect {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+.chip.on text {
+  fill: var(--accent-ink);
+}
+.insert,
+.port-out {
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.pipeline:hover .insert,
+.stage:hover .port-out,
+.stage.selected .port-out,
+.insert:focus-visible,
+.port-out:focus-visible,
+.is-connecting .port-out {
+  opacity: 1;
+}
+.insert circle,
+.port-out circle {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.insert path,
+.port-out path {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.insert:hover circle,
+.port-out:hover circle,
+.stage.source .port-out circle {
+  fill: var(--accent);
+}
+.insert:hover path,
+.port-out:hover path,
+.stage.source .port-out path {
+  stroke: var(--accent-ink);
+}
+.stage {
+  cursor: pointer;
+  outline: none;
+}
+.stage-body {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.stage:hover .stage-body,
+.stage:focus-visible .stage-body {
+  stroke: var(--ink-2);
+}
+.stage.selected .stage-body {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.stage.kind-human .stage-body {
+  fill: var(--warn-soft);
+}
+.stage.kind-finish .stage-body {
+  fill: var(--ok-soft);
+}
+.stage.kind-condition .stage-body {
+  stroke-dasharray: 4 3;
+}
+.is-connecting .stage:not(.source) .stage-body {
+  stroke: var(--accent);
+  stroke-dasharray: 3 3;
+}
+.stage.done .stage-body {
+  fill: var(--ok-soft);
+}
+.stage.current .stage-body {
+  stroke: var(--run);
+  stroke-width: 2.5;
+}
+.stage.current.status-blocked .stage-body,
+.stage.current.status-waiting .stage-body {
+  stroke: var(--warn);
+}
+.stage.current.status-accepted .stage-body {
+  stroke: var(--ok);
+}
+.stage-kind {
+  font: 10.5px var(--mono);
+  fill: var(--muted);
+}
+.stage-title {
+  font: 600 14px var(--ui);
+  fill: var(--ink);
+}
+.stage-id {
+  font: 11px var(--mono);
+  fill: var(--muted);
+}
+.stage-entry,
+.stage-visits {
+  font: 600 10px var(--mono);
+  fill: var(--accent);
+}
+.stage-visits {
+  fill: var(--warn);
+}
+.flag rect {
+  fill: none;
+  stroke: var(--line-strong);
+}
+.flag text {
+  font: 600 9px var(--mono);
+  fill: var(--ink-2);
+}
+.flag-gate rect {
+  fill: var(--ink);
+  stroke: var(--ink);
+}
+.flag-gate text {
+  fill: var(--surface);
+}
+.flag-writes rect {
+  stroke: var(--wire-alt);
+}
+.flag-writes text {
+  fill: var(--wire-alt);
+}

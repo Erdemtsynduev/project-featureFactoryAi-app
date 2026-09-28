@@ -7,6 +7,10 @@ from dataclasses import replace
 from sdd_core.codec import canonical, object_json
 from sdd_core.models import Attempt, Effect, Event, Json, Result, Run, Step, Transition, Workflow
 
+# Consecutive infrastructure waits ended in a block; the operator (or a revival
+# policy once limits have reset) retries explicitly.
+WAIT_RETRY_LIMIT = "Wait retry limit"
+
 
 def valid_time(now: float) -> None:
     if isinstance(now, bool) or not math.isfinite(now):
@@ -293,7 +297,7 @@ def complete(run: Run, workflow: Workflow, result: Result, now: float) -> Transi
                 replace(
                     state,
                     status="blocked",
-                    reason="Wait retry limit",
+                    reason=WAIT_RETRY_LIMIT,
                     infrastructure_failures=failures,
                     visits=tuple(sorted(visits.items())),
                 ),

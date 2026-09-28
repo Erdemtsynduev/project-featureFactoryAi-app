@@ -1,6 +1,8 @@
 """Probe the installed UI entry point in an isolated temporary database; no model calls."""
 
 import json
+import posixpath
+import re
 import subprocess
 import sys
 import tempfile
@@ -42,22 +44,29 @@ def main() -> None:
                             state = json.load(response)
                         assert state["totals"]["calls"] == 0
                         assert state["settings"]["running"] is False
-                        for asset in (
-                            "/",
-                            "/app.js",
-                            "/style.css",
-                            "/preferences.js",
-                            "/locale.js",
-                            "/workspace.js",
-                            "/workspace.css",
-                            "/pipeline.js",
-                            "/office.js",
-                            "/nav.js",
-                            "/persist.js",
-                            "/onboarding.js",
-                        ):
+                        with urlopen(url + "/", timeout=5) as response:
+                            page = response.read().decode("utf-8")
+                        # The page's assets, then every module reachable through imports.
+                        pending = re.findall(r'(?:src|href)="(/[^"]+)"', page)
+                        served: set[str] = set()
+                        while pending:
+                            asset = pending.pop()
+                            if asset in served:
+                                continue
                             with urlopen(url + asset, timeout=5) as response:
-                                assert response.status == 200 and response.read()
+                                body = response.read()
+                                assert response.status == 200 and body
+                            served.add(asset)
+                            if asset.endswith(".js"):
+                                for target in re.findall(
+                                    r'(?:from|import) "(\.{1,2}/[^"]+)"', body.decode("utf-8")
+                                ):
+                                    pending.append(
+                                        posixpath.normpath(
+                                            posixpath.join(posixpath.dirname(asset), target)
+                                        )
+                                    )
+                        assert len(served) > 20, served
                         with urlopen(
                             Request(
                                 url + "/api/shutdown",
