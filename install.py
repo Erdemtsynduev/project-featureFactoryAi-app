@@ -23,7 +23,7 @@ def main() -> int:
         venv.create(environment, with_pip=True)
     packages = [
         root / "packages" / name
-        for name in ("core", "storage", "runtime", "providers", "workflows")
+        for name in ("core", "storage", "runtime", "providers", "workflows", "ui")
     ]
     command = [str(python), "-m", "pip", "install"]
     # One resolver transaction uses local packages rather than similarly named index packages.

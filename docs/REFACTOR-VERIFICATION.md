@@ -28,7 +28,7 @@ No production database, queue, UI or orchestrator code was changed.
 
 - Real loopback HTTP contract: duplicate request, lost ownership, cancellation,
 
-  late receipt, stale generation, restart and separation from legacy coordinator.
+  late receipt, stale generation, restart and separation from application-specific coordinator.
 
 - Real local command through the neutral driver: success/failure, spaces/Unicode,
 
@@ -110,7 +110,7 @@ It is invalidated, not passed. Inspect `reports/refactor-soak-24h/progress.json`
 
 - Authenticated durable remote executor service and remote workspace/evidence transport.
 
-- Full legacy Main Flow preparation/reconciliation parity and historical checkpoint
+- Full application-specific Main Flow preparation/reconciliation parity and historical checkpoint
 
   recovery fixture port. The running application's fixes remain intact there.
 
@@ -282,3 +282,26 @@ architecture checks and isolated wheel installation. The build check verifies
 `ffai --version`, an isolated no-model demo, and absence of old `sdd`/`ff` launchers.
 Windows execution was verified; Linux/macOS installation/runtime remains pending
 real CI execution. No long-duration test was restarted and no model was called.
+
+
+## Local UI and bounded planning (2026-09-28)
+
+The optional `sdd-ui` package adds a loopback operator panel, visual step/transition
+editor, versioned human decisions, profile forms and persistent queue call caps.
+Core/runtime imports remain independent of UI. The default feature flow consumes
+no model planning calls; deep preparation and interview have separate planning
+ceilings. No production queue was imported or started.
+
+Regression coverage includes shared call admission across Memory/SQLite engines,
+UTF-8 subprocess output, bounded atomic replacement, Windows job membership/dead
+process races, stale human answers and stop while queue dispatch is paused.
+A real HTTP test runs a check-only task to acceptance. The isolated wheel check
+also launches the installed UI command, fetches its assets and closes it cleanly.
+No model is invoked by these checks.
+
+Local evidence: `reports/ui-planning-qualification/report.json` and its test/build
+logs. Browser rendering was not inspected because no automation browser was
+available. Linux/macOS checks are static type checks, not execution qualification.
+The earlier 9h47 soak applies to its recorded source fingerprint, not this change.
+See [OPERATIONS-LESSONS.md](OPERATIONS-LESSONS.md) for confidence and remaining
+production-fault scenarios.

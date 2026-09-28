@@ -4,6 +4,7 @@ import math
 import re
 from dataclasses import replace
 
+from sdd_core.codec import object_json
 from sdd_core.models import Attempt, Effect, Event, Result, Run, Transition, Workflow
 
 
@@ -57,6 +58,21 @@ def dispatch(run: Run, workflow: Workflow, now: float, attempt_id: str) -> Trans
     visits = dict(run.visits)
     if visits.get(step.id, 0) >= step.max_visits:
         return changed(replace(run, status="blocked", reason="Step visit limit"), now, "limit")
+    planning = step.kind == "agent" and object_json(step.config).get("purpose") == "planning"
+    if (
+        planning
+        and workflow.max_planning_calls is not None
+        and run.planning_calls >= workflow.max_planning_calls
+    ):
+        return changed(
+            replace(
+                run,
+                status="blocked",
+                reason="Planning call limit: approve scope or create a revised workflow",
+            ),
+            now,
+            "limit",
+        )
     if step.kind == "agent":
         if run.calls >= workflow.max_calls:
             return changed(replace(run, status="blocked", reason="Model call limit"), now, "limit")
@@ -87,6 +103,7 @@ def dispatch(run: Run, workflow: Workflow, now: float, attempt_id: str) -> Trans
         wake_at=None,
         reason="",
         calls=run.calls + int(step.kind == "agent"),
+        planning_calls=run.planning_calls + int(planning),
         gates=() if step.mutates else run.gates,
         version=run.version + 1,
     )

@@ -1,220 +1,229 @@
 # Feature Factory AI
 
-**Детерминированная фабрика фичей. Короткая команда: `ffai`.**
+**Deterministic feature workflows. Short command: `ffai`.**
 
-Feature Factory AI выполняет заданные графы работы: подготовка, реализация, проверки,
-ревью и решение о приёмке. Порядок шагов, зависимости, повторы и принятие результата
-определяет код. Модели вызываются только для явно назначенных им шагов.
+Feature Factory AI runs explicit graphs for specification, implementation, checks,
+review and acceptance. Code controls ordering, dependencies, retries and acceptance.
+Models run only at steps assigned to them. The independent Python engine can be
+embedded in other applications; storage, executors and handlers have replaceable
+interfaces.
 
-Это самостоятельное Python-ядро и CLI. Его библиотеки можно встроить в своё
-приложение, а обработчики, исполнители и хранилище — заменить через интерфейсы.
+## Install on Windows, Linux or macOS
 
-## Установка и запуск: Windows, Linux, macOS
-
-Основной путь — стандартный Python-проект: `pyproject.toml`, отдельные wheel-пакеты,
-console entry point `ffai` и общий `uv.lock`. Установите
-[uv](https://docs.astral.sh/uv/getting-started/installation/), затем из каталога проекта:
-
-```text
-uv sync --locked
-uv run --locked ffai --help
-uv run --locked ffai demo
-```
-
-Команды одинаковы на всех трёх ОС. `uv` создаёт изолированную `.venv`, устанавливает
-совместимый Python при необходимости и берёт версии зависимостей из lock-файла.
-Нужен Python 3.12+; для работы с Git-проектами — Git. Установка не запускает очередь.
-[Модель workspace uv](https://docs.astral.sh/uv/concepts/projects/workspaces/)
-сохраняет библиотеки отдельными пакетами и собирает их согласованно.
-
-### Команда `ffai` из любого каталога
-
-Пока публичного релиза нет, сначала соберите wheel-пакеты из исходников:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
 ```text
 uv sync --locked --all-packages --extra dev
-uv build --all-packages --wheel --out-dir dist
-uv tool install --find-links ./dist feature-factory-ai==0.1.0
-ffai --help
-ffai demo
+uv run --locked ffai --help
+uv run --locked ffai demo
+uv run --locked ffai-app
 ```
 
-Если каталог команд uv ещё не находится в PATH, выполните `uv tool update-shell`
-и откройте новый терминал. Обновление из новых wheel-файлов:
-`uv tool install --reinstall --find-links ./dist feature-factory-ai==0.1.0`.
-Удаление: `uv tool uninstall feature-factory-ai`.
+Python 3.12+ is required, along with Git for Git workspaces. `uv` creates an isolated
+virtual environment and installs locked dependencies. Installation does not start
+queues. Node.js and tmux are not required by the engine or UI; individual agent CLIs
+may have their own runtime dependencies.
 
-Альтернатива — `pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.1.0`.
-Для обычной виртуальной среды подходит `python -m pip install --find-links /path/to/dist feature-factory-ai==0.1.0`.
-Приложение не опубликовано в PyPI: нужны локальные wheel-файлы, а не случайный
-одноимённый пакет из индекса. Команды `ff` и `sdd` не устанавливаются.
+To install the commands globally from locally built wheels:
 
-### Без uv
+```text
+uv build --all-packages --wheel --out-dir dist
+uv tool install --find-links ./dist feature-factory-ai==0.1.0
+ffai-app
+```
 
-`python install.py` — вспомогательная установка через стандартные `venv` и `pip`
-на любой из трёх ОС. После неё доступны `python ffai.py demo`, `.\ffai demo` в
-PowerShell или `./ffai demo` в POSIX-shell. Скрипт не меняет системный Python и PATH.
-После перемещения каталога повторите установку. Основной воспроизводимый путь — uv.
+Run `uv tool update-shell` and open a new terminal if the command directory is not
+on PATH. Update with `uv tool install --reinstall --find-links ./dist feature-factory-ai==0.1.0`;
+uninstall with `uv tool uninstall feature-factory-ai`. Alternatively use
+`pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.1.0`.
+The application is not published on PyPI: use local wheels, not an unrelated
+package with a similar name. The legacy `ff` and `sdd` commands are not installed.
 
-`ffai demo` запускает короткую проверку настоящим дочерним процессом, сохраняет
-результат, проверяет журнал и завершает сценарий статусом `accepted`.
-**Модели не вызываются.** Каждый запуск получает отдельную папку внутри
-`.state/demo`; демонстрация не запускает существующую очередь.
+Without uv, `python install.py` installs through standard `venv` and `pip`.
+Then use `python ffai.py --help` or the virtual environment's `ffai` command.
+Run `python install.py --help` for installation options.
 
-## Что уже умеет
+## Visual workspace
 
-| Область | Возможности |
-|---|---|
-| Сценарии | Неизменяемые графы шагов, условия, ожидание человека, обязательные проверки, ограниченные циклы исправления |
-| Задания | Зависимости, владение рабочей папкой, ограниченная параллельность, пауза, продолжение и остановка |
-| Агентские CLI | Адаптеры Claude Code, Codex, Cursor CLI и OpenCode; явные модель, права и таймаут |
-| Профили | Разные модели для разных шагов; настройки фиксируются при создании задания; автоматической подмены модели нет |
-| Восстановление | Идентификатор каждой попытки, сохранение результата, сверка после перезапуска, ограниченные повторы и задержки |
-| Приёмка | Проверка ревизии и файлов доказательств; ответ модели сам по себе не означает успешную приёмку |
-| Эксплуатация | Журнал событий, воспроизведение состояния, резервные копии SQLite, heartbeat и supervisor |
-| Расширение | Отдельные библиотеки, реестр обработчиков, подключаемые адаптеры CLI и исполнители, заменяемое хранилище |
+Launch **Feature Factory AI** from its desktop shortcut or run **`ffai-app`**.
+The browser opens automatically; subsequent launches reuse the running application.
+State lives in the user's application data directory. For a separate control database:
 
-Обычный запуск использует процессы и структурированный вывод. Ядру не нужны
-Node.js, tmux или открытые терминалы. Сам выбранный CLI может требовать своё
-окружение: например, некоторые установки Cursor используют Node.js.
+```text
+ffai --database /absolute/path/to/control/ui.db ui --port 8791
+```
 
-## Подключить CLI и выбрать модель
+Keep the control database outside task workspaces. The local interface includes:
 
-```powershell
+- Projects with names, workspace folders, response language and check commands.
+- Kanban cards with versioned drag-and-drop for pause/resume, a task drawer,
+  discussion, evidence and event history.
+- A node graph with editable prompts, profiles, transitions and budgets.
+- Explicit human questions, saved answer drafts and optional browser notifications.
+- Pixel workers with different desks, subtle idle animation and task handoff effects.
+- Persistent light/dark/system themes and Russian/English interface settings.
+  New UI tasks default to the selected response language.
+- Queue budget meters, dispatch history, per-agent local token/call statistics and
+  an on-demand Codex account quota probe. Missing telemetry stays unknown.
+
+Try the question example to see an interactive question without a model call,
+or publish **Check without a model** and create a task in a separate folder.
+Tasks and the queue start paused. Resume a card and start the queue explicitly.
+Closing the tab leaves the server running; **Close application** stops it when no
+executions are active. Restarting the UI leaves the queue paused.
+
+Messages submitted to a running task are recorded immediately and included in its
+next invocation. They do not inject text into an already running CLI process.
+Human-step answers resolve the waiting attempt through the coordinator.
+
+The default main flow contains detailed prompts adapted from the previous
+orchestrator's AI Hero workflow: specification, bounded tickets, implementation,
+checks, review, diagnosis, repair and reconciliation. Recovery rechecks unfinished
+work before returning to checks and review. It cannot mark a card accepted by itself.
+The legacy autonomous portfolio scheduler is not silently launched or migrated.
+
+[UI guide](docs/UI.md) · [Legacy feature comparison](docs/LEGACY-PARITY.md) ·
+[Operational lessons](docs/OPERATIONS-LESSONS.md).
+
+## Agent profiles
+
+```text
 ffai agents discover
 ffai agents discover --adapter cursor
 ffai models list --runner local-opencode --config profiles.json
 ffai profiles validate --config profiles.json --workflow flow.json
 ```
 
-Обнаружение CLI, вход в аккаунт и успешный запуск — разные проверки.
-Несколько установок отображаются как неоднозначность: выберите конкретный путь.
-Авторизация остаётся в родном CLI, ключи не копируются в граф.
+Installation discovery, authentication and successful execution are separate checks.
+Select an explicit executable when multiple installations are found. Native CLI
+login remains with the CLI; credentials are not copied into workflow documents.
+OpenCode uses an exact `provider/model` identifier. Discovery and model catalog
+commands do not call a model. See [Agent profiles](docs/AGENT-PROFILES.md).
 
-[Настройка профилей, OpenCode, Cursor и Kimi](docs/AGENT-PROFILES.md) содержит
-пример `profiles.json`, выбор точного ID модели и известные ограничения.
-Для OpenCode используется `provider/model`; имя «Kimi» само по себе недостаточно.
-Команды обнаружения и просмотра каталога не вызывают модель.
+## Run an approved feature
 
-## Подготовить и запустить фичу
+Generate the workflow and schema:
 
-Пример для PowerShell после установки команды `ffai`. При работе из исходников
-замените `ffai` на `uv run --locked ffai`. На POSIX-shell захват результата публикации:
-`definition=$(ffai --database .state/features.db publish flow.json --config profiles.json --mandatory checks review)`.
-
-```powershell
-ffai template main-flow --output flow.json
+```text
+ffai template feature --output flow.json
 ffai schema > workflow.schema.json
 ```
 
-Отредактируйте шаблон перед запуском: задайте обработчики либо именованные профили
-агентских шагов, промпты и реальную команду проверок проекта. У шага с именованным
-профилем поле `handler` пустое. `config` шага — JSON-строка; например, для проверки:
+Configure agent handlers or named profiles, prompts and a real project check command.
+A named-profile step has an empty `handler`. A step's `config` is a JSON string;
+for checks, for example:
 `{"argv":["C:/my-project/.venv/Scripts/python.exe","-m","pytest","-q"]}`.
-Шаблон задаёт структуру, но не угадывает инструменты и требования вашего проекта.
+Templates do not guess a project's tools or requirements.
+
+PowerShell example (replace `ffai` with `uv run --locked ffai` when using source):
 
 ```powershell
 ffai validate flow.json --config profiles.json --mandatory checks review
 ffai --database .state/features.db policy C:/my-project --mandatory checks review
 $definition = ffai --database .state/features.db publish flow.json --config profiles.json --mandatory checks review
-ffai --database .state/features.db create $definition C:/my-project --id feature-one --context "Согласованная задача" --config profiles.json
+ffai --database .state/features.db create $definition C:/my-project --id feature-one --context "Approved requirement" --config profiles.json
 ffai --database .state/features.db resume feature-one --version 0
 ffai --database .state/features.db start --config profiles.json
 ```
 
-`create` создаёт задание на паузе. `start` — короткое имя команды `supervise`:
-она работает в текущем терминале и следит за процессом очереди. Автозапуск при
-загрузке ОС не устанавливается. Для одного прохода есть `run --once`.
-Сначала отрабатывайте собственный сценарий на отдельном тестовом проекте.
+On POSIX shells, capture the digest with `definition=$(ffai ... publish flow.json ...)`.
+`create` leaves tasks paused. `start` is an alias for `supervise` and stays in the
+foreground; it does not install an OS startup service. Use `run --once` for one
+coordinator pass. Validate workflows on isolated test projects first.
 
-## Ежедневные команды
+The approved-feature template has a human scope gate and no autonomous planning.
+The full main flow allows four planning calls per task. UI queue defaults are 40
+model calls and 8 planning calls across the database's history. These limits are
+editable cumulative ceilings, not estimates of subscription usage.
 
-Все команды ниже используют одну базу; перед подкомандой добавьте
-`--database .state/features.db`.
+## Daily commands
 
-| Команда | Назначение |
+Use the same `--database .state/features.db` before each subcommand.
+
+| Command | Purpose |
 |---|---|
-| `status feature-one` | Состояние, причина остановки, версия задания |
-| `events feature-one` | История переходов |
-| `pause feature-one --version N` | Завершить текущий шаг и поставить на паузу |
-| `stop feature-one --version N` | Остановить принадлежащий заданию процесс |
-| `resume feature-one --version N` | Продолжить задание |
-| `retry feature-one --version N` | Явно повторить заблокированную работу |
-| `answer ID OUTCOME TEXT` | Ответить на шаг ожидания человека при остановленном coordinator |
-| `replay feature-one` | Сверить состояние с журналом |
-| `backup backup.db` | Сохранить резервную копию базы |
-| `export DIGEST flow.json` | Экспортировать определение сценария |
+| `status feature-one` | State, stop reason and task version |
+| `events feature-one` | Transition history |
+| `pause feature-one --version N` | Pause after the active step finishes |
+| `stop feature-one --version N` | Terminate the task's owned execution |
+| `resume feature-one --version N` | Resume a task |
+| `retry feature-one --version N` | Explicitly retry blocked work |
+| `answer ID OUTCOME TEXT` | Resolve a human step while the coordinator is stopped |
+| `replay feature-one` | Check state against event history |
+| `backup backup.db` | Back up the SQLite database |
+| `export DIGEST flow.json` | Export a pinned workflow definition |
 
-`N` берётся из свежего `status`: устаревшие команды отклоняются.
-Heartbeat записывается рядом с базой в `.health.json`; он показывает работу
-coordinator, а не факт успешной приёмки задания.
+Read `N` from a fresh status: stale commands are rejected. The `.health.json`
+sidecar reports coordinator liveness, not successful task acceptance.
 
-## Библиотеки и заменяемость
+## Architecture and packages
 
-| Пакет | Ответственность |
+Core has no IO, wall clock, randomness, process or adapter dependencies.
+External effects are recorded before execution; only the coordinator applies results.
+Plugins are trusted installed code registered explicitly, never imported from
+workflow text. Acceptance requires the workflow's gates, matching revisions and
+verified evidence; a model's success claim alone is insufficient.
+
+| Package | Responsibility |
 |---|---|
-| `feature-factory-ai` | Общая установка продукта |
-| `sdd-core` | Чистые контракты, графы, переходы и SDK |
-| `sdd-storage` | SQLite и транзакционное хранилище в памяти для тестов |
-| `sdd-runtime` | Логика приложения, coordinator, исполнители, supervisor и CLI |
-| `sdd-providers` | Протоколы CLI, обнаружение и каталоги моделей |
-| `sdd-workflows` | Шаблоны Main Flow и интервью |
+| `feature-factory-ai` | Product installation |
+| `sdd-core` | Pure contracts, graphs, transitions and SDK |
+| `sdd-storage` | SQLite and in-memory transactional storage |
+| `sdd-runtime` | Application service, coordinator, executors, supervisor and CLI |
+| `sdd-providers` | CLI protocols, discovery and model catalogs |
+| `sdd-workflows` | Approved feature, full main flow and interview templates |
+| `sdd-ui` | Optional local visual workspace |
 
-Названия Python-модулей `sdd_*`, групп расширений `sdd.handlers`, `sdd.agents`,
-`sdd.executors` и служебной папки `.sdd-engine` сохранены как технические контракты.
-Название продукта и команда изменены без ломки этих интерфейсов.
+Python module names `sdd_*`, extension groups `sdd.handlers`, `sdd.agents`,
+`sdd.executors`, and `.sdd-engine` remain stable technical contracts.
+Runtime services do not require `sdd-storage` in custom compositions. In-memory
+storage is for tests, not durable queues. See [Replacing modules](docs/REPLACING-MODULES.md)
+and [Architecture](docs/ARCHITECTURE.md).
 
-[Как заменить модуль](docs/REPLACING-MODULES.md): пример сборки приложения,
-контракты транзакций и общий набор проверок для нового хранилища.
-Runtime-сервисы устанавливаются без обязательной зависимости от `sdd-storage`.
-Готовая внешняя библиотека подключается адаптером, сохраняющим семантику контракта.
-Хранилище в памяти не подходит для постоянной очереди.
+## Verification and limits
 
-## Проверенная устойчивость и текущие границы
+A previous Windows engine revision completed approximately **9 hours 47 minutes**
+with **3,702 accepted tasks**, two concurrent tasks, 264 forced stops and 120
+recoveries. All 7,404 evidence files were checked; no replay mismatches or repeated
+attempt generations were found. Model calls: zero. The user stopped the run.
+This is not a 24-hour soak or a real-model qualification.
 
-На Windows выполнен прогон около **9 часов 47 минут**: **3 702 принятых задания**,
-две параллельные задачи, 264 принудительные остановки и 120 восстановлений с новой
-попыткой. Проверены 7 404 файла доказательств; расхождений журнала и повторных
-поколений попыток не найдено. Вызовов моделей — 0. Прогон остановлен пользователем.
+The UI is tested with Playwright in installed Microsoft Edge on Windows. Legacy
+plan snapshots are read-only and create no runnable queue entries. OpenCode
+read-only execution is not qualified. The remote executor has a contract and a
+reference HTTP adapter, not a production server. Linux/macOS CI definitions do not
+substitute for real platform runs. See [Verification](docs/REFACTOR-VERIFICATION.md)
+and [Roadmap](docs/ROADMAP.md).
 
-Это результат версии ядра до переименования. Он не является сертификатом работы
-24/7 и не проверяет реальные модели. Linux/macOS требуют живых испытаний;
-их наличие в CI и статических проверках не означает выполненный прогон.
-
-Пока нет готовой графической панели, редактора графов, терминального интерфейса
-как у ORCA, переноса рабочей очереди и полного паритета со старой фабрикой.
-У OpenCode ещё не квалифицирован режим только чтения. Удалённый исполнитель
-имеет контракт и эталонный HTTP-адаптер, но не готовый промышленный сервер.
-
-[Подробные проверки и ограничения](docs/REFACTOR-VERIFICATION.md) ·
-[Следующие этапы](docs/ROADMAP.md) · [Архитектура](docs/ARCHITECTURE.md).
-
-## Разработка и проверка сборки
+## Development
 
 ```text
 uv sync --locked --all-packages --extra dev
+uv run --locked python tools/check_boundaries.py
+uv run --locked python -m ruff check .
+uv run --locked python -m mypy
+uv run --locked python -m pytest
 uv run --locked python tools/qualify.py --build --directory reports/local-checks
 ```
 
-Проверяются Ruff, строгий mypy, архитектурные границы, тесты и установка wheel-пакетов
-в чистое окружение. Проверка сборки запускает установленную `ffai demo` без моделей.
-CI содержит матрицу Windows/Linux/macOS и Python 3.12/3.14. Локально проверен Windows;
-прохождение CI на остальных ОС нужно подтвердить отдельным запуском.
-Длительный прогон автоматически не запускается.
+The qualification tool also builds wheels, installs them into a clean environment
+and runs the installed demo without models. CI targets Windows/Linux/macOS and
+Python 3.12/3.14; local results must name the platform actually tested.
+Long-running soak tests are not launched automatically.
 
-Для изменения зависимостей используйте `uv lock`, после чего проверьте diff `uv.lock`.
-Пакет не публиковался в PyPI; адрес публичного релиза пока отсутствует.
+Browser tests (PowerShell):
 
-## Источники сравнения
+```powershell
+$env:FFAI_UI_TESTS = '1'
+.venv/Scripts/python.exe -m pytest tests/test_ui_browser.py --browser-channel msedge -q
+```
 
-[mobile-sdd-factory](https://github.com/dmitrii-bystrov-private/mobile-sdd-factory)
-и [ORCA](https://github.com/stablyai/orca) использовались при исследовании подходов
-к эксплуатации. Feature Factory AI — отдельная реализация с собственными контрактами;
-их интерфейсы и возможности не считаются автоматически реализованными здесь.
+Alternatively install Chromium with `python -m playwright install chromium` and
+omit the browser channel. Browser tests use temporary databases and no models.
+Update dependencies with `uv lock` and review `uv.lock`.
 
-## Лицензия и вклад
+## License and contributions
 
 [MIT License](LICENSE), Copyright (c) 2026 Erdem Tsynduev.
-Проектный [skill commit](.agents/skills/commit/SKILL.md) описывает подготовку
-коммитов, проверки и публикацию. Сообщения проверяются
-`uv run --locked python tools/check_commit_message.py --file message.txt`.
+The repository's [commit skill](.agents/skills/commit/SKILL.md) defines commit checks.
+Validate messages with `python tools/check_commit_message.py --file message.txt`.

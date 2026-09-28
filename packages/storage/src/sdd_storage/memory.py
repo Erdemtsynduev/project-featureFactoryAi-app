@@ -33,6 +33,11 @@ class MemoryUnit:
     def __init__(self, state: MemoryState) -> None:
         self.state = state
 
+    def runs(self) -> tuple[Run, ...]:
+        return tuple(
+            sorted(self.state.runs.values(), key=lambda r: (self.state.created[r.id], r.id))
+        )
+
     def run(self, identifier: str) -> Run:
         return self.state.runs[identifier]
 
@@ -116,6 +121,10 @@ class MemoryUnit:
 
     def context(self, run_id: str) -> str:
         return self.state.inputs[run_id][1]
+
+    def set_context(self, identifier: str, context: str) -> None:
+        workspace, _, claim, dependencies = self.state.inputs[identifier]
+        self.state.inputs[identifier] = workspace, context, claim, dependencies
 
     def recent_results(self, run_id: str, limit: int) -> tuple[str, ...]:
         if limit < 1:

@@ -4,11 +4,13 @@ import sys
 import time
 
 import psutil
+import pytest
 from sdd_runtime.platform import NO_WINDOW
 from test_runtime import runtime
 
 
-def test_supervisor_death_terminates_coordinator_and_worker(tmp_path):
+@pytest.mark.parametrize("iteration", range(5))
+def test_supervisor_death_terminates_coordinator_and_worker(tmp_path, iteration):
     coordinator = runtime(tmp_path, "import time; time.sleep(60)")
     database = coordinator.engine.store.path
     process = subprocess.Popen(
@@ -36,7 +38,11 @@ def test_supervisor_death_terminates_coordinator_and_worker(tmp_path):
         worker.wait(timeout=5)
         child.wait(timeout=5)
         coordinator.restore(time.time())
-        assert coordinator.engine.store.get("one").status == "waiting"
+        state = coordinator.engine.store.get("one")
+        assert state.status == "waiting"
+        assert coordinator.engine.store.replay("one") == state
+        with coordinator.engine.store.transaction() as db:
+            assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         if process.poll() is None:
             process.kill()

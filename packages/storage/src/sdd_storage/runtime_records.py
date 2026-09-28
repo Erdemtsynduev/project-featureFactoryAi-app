@@ -2,7 +2,8 @@
 
 import sqlite3
 
-from sdd_core.codec import canonical, digest
+from sdd_core.codec import canonical, digest, run_load
+from sdd_core.models import Run
 from sdd_core.ports import Conflict
 from sdd_core.runtime_ports import EffectRecord
 
@@ -10,6 +11,12 @@ from sdd_core.runtime_ports import EffectRecord
 class SQLiteRuntimeRecords:
     def __init__(self, db: sqlite3.Connection) -> None:
         self.db = db
+
+    def runs(self) -> tuple[Run, ...]:
+        return tuple(
+            run_load(str(row[0]))
+            for row in self.db.execute("SELECT state FROM runs ORDER BY created,id")
+        )
 
     def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
         old = self.db.execute(

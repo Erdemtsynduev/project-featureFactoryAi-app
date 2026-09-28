@@ -63,7 +63,7 @@ def test_insert_required_prompt_and_simulate():
         "implement",
         "done",
         Step("documentation", "agent", "claude", "Write docs", required=True, mutates=True),
-        additional_edges=(("repair", "done"),),
+        additional_edges=(("repair", "done"), ("reconcile", "done")),
     )
     assert "documentation" in simulate(
         changed, ("done", "done", "done", "done", "passed", "passed")

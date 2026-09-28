@@ -13,6 +13,8 @@ def validate(workflow: Workflow, mandatory: tuple[str, ...] = ()) -> None:
         raise ValueError("Invalid budgets")
     if workflow.max_tokens is not None and workflow.max_tokens < 1:
         raise ValueError("Invalid token budget")
+    if workflow.max_planning_calls is not None and workflow.max_planning_calls < 0:
+        raise ValueError("Invalid planning call budget")
     steps = {s.id: s for s in workflow.steps}
     if len(steps) != len(workflow.steps) or workflow.entry not in steps:
         raise ValueError("Duplicate step or missing entry")
@@ -26,7 +28,15 @@ def validate(workflow: Workflow, mandatory: tuple[str, ...] = ()) -> None:
             raise ValueError("Unknown kind")
         if not 1 <= step.max_visits <= 100 or not 1 <= step.timeout <= 86400:
             raise ValueError("Unbounded step")
-        object_json(step.config)
+        config = object_json(step.config)
+        recovery = config.get("recovery_step")
+        if recovery is not None and (
+            not isinstance(recovery, str)
+            or recovery not in steps
+            or steps[recovery].kind != "agent"
+            or steps[recovery].mutates
+        ):
+            raise ValueError("Recovery target must be an existing read-only agent step")
         edges = dict(step.transitions)
         if len(edges) != len(step.transitions) or any(t not in steps for t in edges.values()):
             raise ValueError("Duplicate outcome or unknown target")

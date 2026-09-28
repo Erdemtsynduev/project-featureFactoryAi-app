@@ -60,7 +60,7 @@ can interrupt it; a missing heartbeat is not success. Run a fresh full soak afte
 
 ## Remaining limits
 
-See ROADMAP.md for legacy parity and application integration work. Automatic subscription-reset
+See ROADMAP.md for application-specific parity and application integration work. Automatic subscription-reset
 parsing is not live-qualified, cross-platform support is not claimed, and the graph template is
-not a drop-in migration of every legacy portfolio preparation/repair contract. No production
+not a drop-in migration of every application-specific portfolio preparation/repair contract. No production
 deployment readiness or measured token savings is claimed while these gates remain open.

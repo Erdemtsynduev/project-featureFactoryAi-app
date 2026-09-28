@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdd-ui"
+version = "0.1.0"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["sdd-runtime[local]==0.1.0", "sdd-providers==0.1.0", "sdd-workflows==0.1.0"]
+
+[project.entry-points."ffai.commands"]
+ui = "sdd_ui.server:launch"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sdd_ui = ["py.typed", "static/*"]

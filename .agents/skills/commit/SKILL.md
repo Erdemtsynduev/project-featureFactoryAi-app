@@ -7,7 +7,7 @@ description: Create reviewed Git commits in Feature Factory AI when asked to com
 
 This repository is one Git repository containing independently packaged Python
 libraries. Read root AGENTS.md and preserve the user's current scope. Do not copy
-Godot workspace/submodule rules into this project.
+unrelated workspace/submodule rules into this project.
 
 1. Inspect `git status --short`, staged/unstaged diffs, branch, remote and recent
    history. Preserve unrelated changes and existing staging. A request to commit

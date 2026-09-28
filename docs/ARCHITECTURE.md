@@ -61,7 +61,7 @@ integration is not a distributed transaction. Callers must rerun acceptance on t
 Portfolio primitives validate complete requirement coverage and an acyclic ticket dependency graph.
 A source requirement closes only when all associated runs are accepted. `PortfolioService.admit`
 materializes approved ticket manifests idempotently as paused dependent runs. The CLI also creates
-individual runs with dependency IDs; automatic legacy portfolio import is a later application stage.
+individual runs with dependency IDs; application-specific portfolio import is a later application stage.
 
 ## Context and budgets
 
@@ -85,8 +85,9 @@ before migration. Unsupported future versions are rejected. Backup uses SQLite's
 Diagnostics archival only handles settled logs older than retention that are not evidence references;
 unfinished work and acceptance evidence are retained.
 
-The runtime is Windows-qualified. No remote dispatcher, automatic desktop start, web API service,
-visual editor, UI coupling or self-modifying runtime is part of this release.
+The local runtime has Windows process-test evidence. Automatic desktop start and
+self-modification are not part of this release. The optional sdd-ui application
+provides loopback HTTP and a visual editor without reversing library dependencies.
 
 ## Application ports and named profiles (2026-09-27)
 

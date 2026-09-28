@@ -71,7 +71,7 @@ tests or a promise of account entitlement. A Cursor profile can use
 `"model": "kimi-k3-max"` after pinning the discovered Cursor invocation.
 
 A step uses `"kind": "agent", "profile": "implement-kimi", "mutates": true`.
-Leave `handler` empty for a named profile. Existing legacy handler/profile
+Leave `handler` empty for a named profile. Existing application-specific handler/profile
 configuration remains supported separately. OpenCode read-only execution is not
 qualified; configuration rejects that policy. Claude/Codex/Cursor read-only
 policies map to their existing adapter controls, not a universal security sandbox.
@@ -104,13 +104,9 @@ permission capability and optional catalog command/parser. The coordinator does
 not branch on vendor names. Existing `sdd.handlers` and `sdd.executors` plugins
 remain separate extension points. Workflow text never imports Python modules.
 
-## Evidence and comparison
+## UI configuration
 
-Reviewed 2026-09-27: [OpenCode CLI](https://opencode.ai/docs/cli/) documents
-`provider/model`, native authentication and catalog commands. ORCA's
-[detection registry](https://github.com/stablyai/orca/blob/main/src/shared/tui-agent-detection-commands.ts)
-and [repository](https://github.com/stablyai/orca) demonstrate separating known
-agent definitions from installation detection. The architectural inference used
-here is to keep detection and adapter composition outside deterministic scheduling.
-No ORCA implementation was copied. Multi-terminal UI/PTY hosting is a separate,
-optional future component; it is not needed for structured headless execution.
+Run `ffai --database /absolute/path/to/control/ui.db ui` and use the profiles tab.
+The form creates the same configuration as the CLI; native authentication remains
+in the selected tool. Profile changes do not silently rebind existing runs.
+See [UI.md](UI.md) for editing and budget semantics.

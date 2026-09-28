@@ -59,6 +59,15 @@ if sys.platform == "win32":
             ("terminated", wintypes.DWORD),
         ]
 
+    class ProcessIds(ctypes.Structure):
+        # The configured job limit never exceeds 256 members. Pointer-sized PIDs
+        # follow the two DWORD counts, as specified by JOBOBJECT_BASIC_PROCESS_ID_LIST.
+        _fields_ = [
+            ("assigned", wintypes.DWORD),
+            ("count", wintypes.DWORD),
+            ("ids", ctypes.c_size_t * 256),
+        ]
+
     class Job:
         def __init__(self, cpu: int = 50, memory_mb: int = 16384, processes: int = 128) -> None:
             if os.name != "nt":
@@ -70,6 +79,13 @@ if sys.platform == "win32":
             self.kernel.CreateJobObjectW.restype = wintypes.HANDLE
             self.kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
             self.kernel.OpenProcess.restype = wintypes.HANDLE
+            self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            self.kernel.WaitForSingleObject.restype = wintypes.DWORD
+            self.kernel.IsProcessInJob.argtypes = [
+                wintypes.HANDLE,
+                wintypes.HANDLE,
+                ctypes.POINTER(wintypes.BOOL),
+            ]
             self.kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
             self.kernel.SetInformationJobObject.argtypes = [
                 wintypes.HANDLE,
@@ -108,14 +124,45 @@ if sys.platform == "win32":
                 raise
 
         def assign(self, pid: int) -> None:
-            process = self.kernel.OpenProcess(0x100 | 0x1, False, pid)
+            # Limited-query membership may succeed when a contained child's ACL
+            # denies the stronger rights needed to assign it again.
+            limited = self.kernel.OpenProcess(0x1000, False, pid)
+            if limited:
+                try:
+                    member = wintypes.BOOL()
+                    if (
+                        self.kernel.IsProcessInJob(limited, self.handle, ctypes.byref(member))
+                        and member.value
+                    ):
+                        return
+                finally:
+                    self.kernel.CloseHandle(limited)
+            process = self.kernel.OpenProcess(0x100 | 0x1 | 0x100000, False, pid)
             if not process:
-                raise ctypes.WinError(ctypes.get_last_error())
+                error = ctypes.get_last_error()
+                if self.contains(pid):
+                    return
+                raise ctypes.WinError(error)
             try:
+                if self.kernel.WaitForSingleObject(process, 0) == 0:
+                    return
                 if not self.kernel.AssignProcessToJobObject(self.handle, process):
-                    raise ctypes.WinError(ctypes.get_last_error())
+                    error = ctypes.get_last_error()
+                    if self.kernel.WaitForSingleObject(process, 0) != 0:
+                        raise ctypes.WinError(error)
             finally:
                 self.kernel.CloseHandle(process)
+
+        def contains(self, pid: int) -> bool:
+            """Kernel membership, without opening a potentially ACL-restricted child."""
+            info = ProcessIds()
+            if not self.kernel.QueryInformationJobObject(
+                self.handle, 3, ctypes.byref(info), ctypes.sizeof(info), None
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if info.count > 256 or info.count < info.assigned:
+                raise RuntimeError("Incomplete job membership query")
+            return pid in info.ids[: info.count]
 
         def terminate(self) -> None:
             if self.handle and not self.kernel.TerminateJobObject(self.handle, 1):

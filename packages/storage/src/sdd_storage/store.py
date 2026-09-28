@@ -3,7 +3,7 @@
 import sqlite3
 import time
 from collections.abc import Iterator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 
@@ -48,12 +48,12 @@ class Store:
         self.path = path.resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists():
-            with closing(sqlite3.connect(self.path)) as probe:
+            with self.transaction() as probe:
                 exists = probe.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone()
                 version = probe.execute("SELECT version FROM meta").fetchone() if exists else None
             if version and version[0] == 1:
                 self.backup(self.path.with_name(self.path.name + f".pre-v2-{time.time_ns()}.bak"))
-        with self.transaction() as db:
+        with self.transaction(initialize=True) as db:
             for statement in SCHEMA.split(";"):
                 if statement.strip():
                     db.execute(statement)
@@ -72,19 +72,52 @@ class Store:
         with self.transaction() as db:
             yield SQLiteUnit(self, db)
 
+    def _begin(self, initialize: bool) -> sqlite3.Connection:
+        # Retry only acquisition, on a fresh connection. Never replay a transaction
+        # body or COMMIT: its effects may already have become durable.
+        for attempt in range(6):
+            db = None
+            try:
+                db = sqlite3.connect(self.path, timeout=10)
+                db.row_factory = sqlite3.Row
+                if initialize:
+                    mode = db.execute("PRAGMA journal_mode=WAL").fetchone()
+                    if mode is None or mode[0] != "wal":
+                        raise RuntimeError("SQLite WAL mode is required")
+                db.execute("PRAGMA synchronous=FULL")
+                db.execute("PRAGMA foreign_keys=ON")
+                db.execute("BEGIN IMMEDIATE")
+                return db
+            except BaseException as error:
+                if db is not None:
+                    with suppress(sqlite3.Error):
+                        db.close()
+                code = getattr(error, "sqlite_errorcode", 0)
+                if (
+                    not isinstance(error, sqlite3.OperationalError)
+                    or code & 0xFF != sqlite3.SQLITE_IOERR
+                ):
+                    raise
+                if attempt == 5:
+                    error.add_note(
+                        f"SQLite acquisition failed after 6 connections; "
+                        f"code={code}, name={getattr(error, 'sqlite_errorname', 'unknown')}"
+                    )
+                    raise
+                time.sleep(min(0.05 * 2**attempt, 0.4))
+        raise AssertionError("Unreachable acquisition state")
+
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
+    def transaction(self, *, initialize: bool = False) -> Iterator[sqlite3.Connection]:
+        db = self._begin(initialize)
         try:
-            db.execute("PRAGMA journal_mode=WAL")
-            db.execute("PRAGMA synchronous=FULL")
-            db.execute("PRAGMA foreign_keys=ON")
-            db.execute("BEGIN IMMEDIATE")
             yield db
             db.commit()
         except BaseException:
-            db.rollback()
+            # Preserve the primary failure (and its extended SQLite code) even
+            # when rollback itself fails after a storage error.
+            with suppress(sqlite3.Error):
+                db.rollback()
             raise
         finally:
             db.close()
@@ -96,6 +129,13 @@ class Store:
         with self.transaction() as db:
             db.execute("INSERT OR IGNORE INTO definitions VALUES(?,?)", (identifier, document))
         return identifier
+
+    def definitions(self) -> tuple[tuple[str, Workflow], ...]:
+        with self.transaction() as db:
+            return tuple(
+                (str(row[0]), workflow_load(str(row[1])))
+                for row in db.execute("SELECT digest,document FROM definitions ORDER BY rowid DESC")
+            )
 
     def workflow(self, identifier: str) -> Workflow:
         with self.transaction() as db:

@@ -16,7 +16,8 @@ def run(args: list[str], cwd: Path = ROOT) -> None:
 
 
 for path in [
-    ROOT / "packages" / name for name in ("core", "storage", "runtime", "providers", "workflows")
+    ROOT / "packages" / name
+    for name in ("core", "storage", "runtime", "providers", "workflows", "ui")
 ] + [ROOT, ROOT / "examples/extension"]:
     run(
         [
@@ -60,9 +61,20 @@ with tempfile.TemporaryDirectory(prefix="sdd-wheel-check-") as temp:
         folder,
     )
     launcher = python.parent / ("ffai.exe" if os.name == "nt" else "ffai")
+    assert (python.parent / ("ffai-app.exe" if os.name == "nt" else "ffai-app")).is_file()
     assert not (python.parent / ("sdd.exe" if os.name == "nt" else "sdd")).exists()
     assert not (python.parent / ("ff.exe" if os.name == "nt" else "ff")).exists()
     run([str(launcher), "--version"], folder)
+    run([str(launcher), "ui", "--help"], folder)
+    run([str(python), str(ROOT / "tools/ui_smoke.py")], folder)
+    run(
+        [
+            str(python),
+            "-c",
+            "from importlib.resources import files; from sdd_ui.server import create_server; assert files('sdd_ui').joinpath('static', 'app.js').is_file(); assert files('sdd_ui').joinpath('static', 'index.html').is_file()",
+        ],
+        folder,
+    )
     run([str(launcher), "demo", "--directory", str(folder / "demo space")], folder)
     run([str(python), "-m", "sdd_runtime.cli", "--help"], folder)
     run(

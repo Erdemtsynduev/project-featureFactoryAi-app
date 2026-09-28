@@ -3,6 +3,7 @@
 import hashlib
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from sdd_core.models import Artifact
@@ -17,7 +18,14 @@ def atomic_write(path: Path, content: str) -> None:
         stream.write(content)
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(temporary, path)
+    for attempt in range(8):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 def revision(root: Path) -> str:

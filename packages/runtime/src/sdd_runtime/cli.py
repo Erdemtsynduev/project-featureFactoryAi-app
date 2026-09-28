@@ -154,13 +154,17 @@ def supervise(args: argparse.Namespace) -> int:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
-        prog="ffai", description="Feature Factory AI — deterministic workflow orchestration"
+        prog="ffai", description="Feature Factory AI - deterministic workflow orchestration"
     )
     root.add_argument("--database", type=Path, default=Path(".state/engine.sqlite3"))
     root.add_argument("--version", action="version", version="Feature Factory AI 0.1.0")
     commands = root.add_subparsers(dest="action")
     demo = commands.add_parser("demo", help="Run an isolated example without model calls")
     demo.add_argument("--directory", type=Path, default=Path(".state/demo"))
+    ui = commands.add_parser("ui", help="Open the local visual workspace")
+    ui.add_argument("--port", type=int, default=8787)
+    ui.add_argument("--config", type=Path)
+    ui.add_argument("--no-browser", action="store_true")
     commands.add_parser("schema")
     export = commands.add_parser("export")
     export.add_argument("definition")
@@ -190,7 +194,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--config", type=Path)
         command.add_argument("--mandatory", nargs="*", default=[])
     template = commands.add_parser("template")
-    template.add_argument("name", choices=["main-flow", "interview"])
+    template.add_argument("name", choices=["feature", "main-flow", "interview"])
     template.add_argument("--output", type=Path, required=True)
     create = commands.add_parser("create")
     create.add_argument("definition")
@@ -244,6 +248,16 @@ def main() -> int:
     if args.action is None:
         argument_parser.print_help()
         return 0
+    if args.action == "ui":
+        from collections.abc import Callable
+        from importlib.metadata import entry_points
+        from typing import cast
+
+        installed = entry_points(group="ffai.commands", name="ui")
+        if len(installed) != 1:
+            raise ValueError("Install the feature-factory-ai product to use its UI")
+        launch = cast(Callable[[Path, Path | None, int, bool], int], next(iter(installed)).load())
+        return launch(args.database, args.config, args.port, not args.no_browser)
     if args.action == "demo":
         from sdd_runtime.demo import demonstrate
 
@@ -337,10 +351,13 @@ def main() -> int:
         )
         return 0
     if args.action == "template":
-        from sdd_workflows.templates import interview, main_flow
+        from sdd_workflows.templates import feature, interview, main_flow
 
         atomic_write(
-            args.output, workflow_json(main_flow() if args.name == "main-flow" else interview())
+            args.output,
+            workflow_json(
+                {"feature": feature, "main-flow": main_flow, "interview": interview}[args.name]()
+            ),
         )
         return 0
     if args.action == "validate":

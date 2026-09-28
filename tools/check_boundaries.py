@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED = {
+    "ui": {"ui", "core", "runtime", "storage", "providers", "workflows"},
     "core": {"core"},
     "storage": {"core", "storage"},
     "runtime": {"core", "runtime"},

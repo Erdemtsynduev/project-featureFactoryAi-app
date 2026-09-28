@@ -10,13 +10,26 @@ license-files = ["LICENSE"]
 description = "Feature Factory AI: deterministic, extensible workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["sdd-runtime[local]==0.1.0", "sdd-providers==0.1.0", "sdd-workflows==0.1.0"]
+dependencies = ["sdd-runtime[local]==0.1.0", "sdd-providers==0.1.0", "sdd-workflows==0.1.0", "sdd-ui==0.1.0"]
 
 [project.scripts]
 ffai = "sdd_runtime.cli:main"
 
+[project.gui-scripts]
+ffai-app = "sdd_ui.app:main"
+
 [project.optional-dependencies]
-dev = ["pytest>=8", "hypothesis>=6", "mypy>=1.15", "ruff>=0.11", "build>=1.2", "setuptools>=77", "wheel", "types-psutil>=7"]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6",
+    "mypy>=1.15",
+    "ruff>=0.11",
+    "build>=1.2",
+    "setuptools>=77",
+    "wheel",
+    "types-psutil>=7",
+    "pytest-playwright>=0.9.0",
+]
 
 [tool.setuptools]
 packages = []
@@ -43,6 +56,7 @@ ignore = ["E501"]
 members = ["packages/*", "examples/extension"]
 
 [tool.uv.sources]
+sdd-ui = { workspace = true }
 sdd-core = { workspace = true }
 sdd-storage = { workspace = true }
 sdd-runtime = { workspace = true }

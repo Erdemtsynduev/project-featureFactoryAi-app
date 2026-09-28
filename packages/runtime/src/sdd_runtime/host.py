@@ -25,6 +25,10 @@ def main() -> int:
     environment.update(
         {key: text(value, "environment") for key, value in mapping(config["environment"]).items()}
     )
+    environment.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    temporary = folder / "tmp"
+    temporary.mkdir(exist_ok=True)
+    environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
     with (folder / "stdout.log").open("wb") as out, (folder / "stderr.log").open("wb") as err:
         result = subprocess.run(
             argv,

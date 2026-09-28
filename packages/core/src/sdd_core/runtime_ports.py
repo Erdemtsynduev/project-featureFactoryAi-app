@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from sdd_core.models import Run
+
 
 @dataclass(frozen=True)
 class EffectRecord:
@@ -19,6 +21,7 @@ class EffectRecord:
 
 
 class RuntimeRecords(Protocol):
+    def runs(self) -> tuple[Run, ...]: ...
     def bind_handler(self, run_id: str, handler: str, manifest: str) -> None: ...
     def context(self, run_id: str) -> str: ...
     def recent_results(self, run_id: str, limit: int) -> tuple[str, ...]: ...

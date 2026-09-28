@@ -14,6 +14,13 @@ if TYPE_CHECKING:
 
 
 class SQLiteUnit(SQLiteRuntimeRecords):
+    def set_context(self, identifier: str, context: str) -> None:
+        if (
+            self.db.execute("UPDATE runs SET context=? WHERE id=?", (context, identifier)).rowcount
+            != 1
+        ):
+            raise KeyError(identifier)
+
     def __init__(self, store: "Store", db: sqlite3.Connection) -> None:
         super().__init__(db)
         self.store = store

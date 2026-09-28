@@ -44,6 +44,7 @@ def workflow_schema() -> dict[str, Json]:
             "id": {"type": "string"},
             "entry": identifier,
             "schema": {"const": 1},
+            "max_planning_calls": {"type": ["integer", "null"], "minimum": 0},
             "max_calls": {"type": "integer", "minimum": 1},
             "max_input_chars": {"type": "integer", "minimum": 128},
             "max_tokens": {"type": ["integer", "null"], "minimum": 1},

@@ -160,6 +160,21 @@ class Coordinator:
     def collect(self, identifier: str, now: float) -> None:
         live = self.live[identifier]
         packet = live.packet
+        state = self.engine.store.get(packet.run_id)
+        if state.paused and state.reason == "Stop requested":
+            live.job.stop_and_confirm()
+            live.process.wait(timeout=10)
+            live.job.close()
+            self.resource_job.forget(live.process.pid)
+            del self.live[identifier]
+            self.engine.recover(
+                packet.run_id,
+                now,
+                True,
+                "Stopped by operator",
+                self.revision(Path(packet.workspace)),
+            )
+            return
         code = live.process.poll()
         if code is None and now < packet.attempt.deadline:
             return
@@ -293,21 +308,6 @@ class Coordinator:
         current_time = time.time() if now is None else now
         for identifier in tuple(self.live):
             running = self.live[identifier]
-            state = self.engine.store.get(running.packet.run_id)
-            if state.paused and state.reason == "Stop requested":
-                running.job.stop_and_confirm()
-                running.process.wait(timeout=10)
-                running.job.close()
-                self.resource_job.forget(running.process.pid)
-                del self.live[identifier]
-                self.engine.recover(
-                    state.id,
-                    current_time,
-                    True,
-                    "Stopped by operator",
-                    self.revision(Path(running.packet.workspace)),
-                )
-                continue
             try:
                 self.collect(identifier, current_time)
             except (ValueError, OSError) as error:

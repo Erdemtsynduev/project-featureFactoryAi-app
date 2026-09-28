@@ -8,6 +8,7 @@ from sdd_core import machine
 from sdd_core.codec import (
     canonical,
     digest,
+    object_json,
     result_json,
     run_json,
     run_load,
@@ -19,10 +20,23 @@ from sdd_core.sdk import ProjectAdapter
 
 
 class ApplicationEngine:
-    def __init__(self, store: StateStore, project: ProjectAdapter, workspace: Workspace) -> None:
+    def __init__(
+        self,
+        store: StateStore,
+        project: ProjectAdapter,
+        workspace: Workspace,
+        max_queue_calls: int | None = None,
+        max_queue_planning_calls: int | None = None,
+    ) -> None:
+        if any(
+            value is not None and value < 0 for value in (max_queue_calls, max_queue_planning_calls)
+        ):
+            raise ValueError("Queue call budgets cannot be negative")
         self.store = store
         self.project = project
         self.workspace = workspace
+        self.max_queue_calls = max_queue_calls
+        self.max_queue_planning_calls = max_queue_planning_calls
 
     def create(
         self,
@@ -84,7 +98,28 @@ class ApplicationEngine:
         workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
         with self.store.unit() as db:
             run = db.run(run_id)
-            kind = workflow.step(run.step).kind
+            step = workflow.step(run.step)
+            kind = step.kind
+            transition = machine.dispatch(run, workflow, now, attempt_id)
+            if kind == "agent" and transition.effects:
+                states = db.runs()
+                planning = object_json(step.config).get("purpose") == "planning"
+                if (
+                    self.max_queue_calls is not None
+                    and sum(r.calls for r in states) >= self.max_queue_calls
+                ) or (
+                    planning
+                    and self.max_queue_planning_calls is not None
+                    and sum(r.planning_calls for r in states) >= self.max_queue_planning_calls
+                ):
+                    return db.apply(
+                        run,
+                        machine.changed(
+                            replace(run, status="blocked", reason="Queue call budget exhausted"),
+                            now,
+                            "limit",
+                        ),
+                    )
             if kind == "finish" and run.gates:
                 root = db.location(run_id)[0]
                 if self.project.revision(str(root)) != run.revision:
@@ -94,7 +129,7 @@ class ApplicationEngine:
                         self.workspace.verify(result, root, run.revision)
             if not self._admitted(db, run, kind):
                 raise Conflict("Waiting for dependency or resource ownership")
-            return db.apply(run, machine.dispatch(run, workflow, now, attempt_id))
+            return db.apply(run, transition)
 
     def _normalize(self, run_id: str, result: Result) -> Result:
         if not result.artifacts:
@@ -125,15 +160,94 @@ class ApplicationEngine:
             return state
 
     def recover(self, run_id: str, now: float, confirmed: bool, reason: str, revision: str) -> Run:
+        workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
         with self.store.unit() as db:
             run = db.run(run_id)
             transition = machine.recover(
                 run, now, termination_confirmed=confirmed, reason=reason, observed_revision=revision
             )
+            target = object_json(workflow.step(run.step).config).get("recovery_step")
+            if confirmed and target and transition.state.status == "waiting":
+                if not isinstance(target, str) or workflow.step(target).mutates:
+                    raise ValueError("Recovery requires a read-only step")
+                transition = replace(
+                    transition, state=replace(transition.state, step=target, gates=())
+                )
             state = db.apply(run, transition)
             if run.active:
                 db.effect_status(run.active.id, "abandoned" if confirmed else "uncertain")
             return state
+
+    def message(self, run_id: str, message: str, request_id: str, expected: int, now: float) -> Run:
+        """Persist operator guidance for the next packet, never inject into a live process."""
+        if not message.strip():
+            raise ValueError("Message cannot be empty")
+        workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
+        request = canonical([run_id, "message", expected, message])
+        with self.store.unit() as db:
+            old = db.command(request_id)
+            if old:
+                if old[0] != request:
+                    raise Conflict("Command id reused")
+                return run_load(old[1])
+            run = db.run(run_id)
+            if run.version != expected:
+                raise Conflict("Stale message; refresh the task")
+            if run.status == "accepted":
+                raise ValueError("Accepted tasks cannot receive new execution instructions")
+            context = db.context(run_id) + "\nOperator guidance:\n" + message.strip()
+            if len(context) > workflow.max_input_chars - 1000:
+                raise ValueError("Message exceeds context budget; use a smaller instruction")
+            db.set_context(run_id, context)
+            state = db.apply(
+                run,
+                machine.changed(
+                    run,
+                    now,
+                    "operator_message",
+                    canonical(
+                        {
+                            "text": message.strip(),
+                            "after_generation": run.generation,
+                        }
+                    ),
+                ),
+            )
+            db.save_command(request_id, request, run_json(state))
+            return state
+
+    def request_recovery(self, run_id: str, expected: int, now: float) -> Run:
+        """Select the workflow's declared reconciliation path without accepting work."""
+        workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
+        with self.store.unit() as unit:
+            root = unit.location(run_id)[0]
+        observed = self.project.revision(root)
+        with self.store.unit() as db:
+            run = db.run(run_id)
+            if run.version != expected:
+                raise Conflict("Stale recovery request")
+            if run.active or run.status not in ("blocked", "waiting"):
+                raise ValueError("Recovery requires an inactive blocked or waiting task")
+            target = object_json(workflow.step(run.step).config).get("recovery_step")
+            if not isinstance(target, str) or workflow.step(target).mutates:
+                raise ValueError("Workflow has no read-only recovery path")
+            return db.apply(
+                run,
+                machine.changed(
+                    replace(
+                        run,
+                        step=target,
+                        revision=observed,
+                        status="ready",
+                        paused=True,
+                        wake_at=None,
+                        gates=(),
+                        reason="Reconciliation requested; resume when ready",
+                    ),
+                    now,
+                    "reconciliation_requested",
+                ),
+            )
 
     def invalidate(self, run_id: str, revision: str, now: float) -> Run:
         with self.store.unit() as db:

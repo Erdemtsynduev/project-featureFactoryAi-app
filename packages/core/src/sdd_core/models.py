@@ -35,6 +35,7 @@ class Workflow:
     max_calls: int = 10
     max_input_chars: int = 24000
     max_tokens: int | None = None
+    max_planning_calls: int | None = None
 
     def step(self, identifier: str) -> Step:
         return next(step for step in self.steps if step.id == identifier)
@@ -102,6 +103,7 @@ class Run:
     wake_at: float | None = None
     reason: str = ""
     previous_attempt: str | None = None
+    planning_calls: int = 0
 
 
 @dataclass(frozen=True)

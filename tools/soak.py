@@ -32,6 +32,7 @@ def source_fingerprint() -> str:
     root = Path(__file__).resolve().parents[1]
     checksum = hashlib.sha256()
     paths = list(root.glob("packages/*/src/**/*.py"))
+    paths += [path for path in root.glob("packages/*/src/**/static/*") if path.is_file()]
     paths += list((root / "tests" / "fixtures").glob("*.jsonl"))
     paths += list((root / "examples" / "extension").glob("*.py"))
     paths += list((root / "tests").glob("*.py")) + list((root / "tools").glob("*.py"))

@@ -1,10 +1,15 @@
 """Application flows are ordinary data; they have no special dispatch path."""
 
+from dataclasses import replace
+
+from sdd_core.codec import canonical, object_json
 from sdd_core.models import Step, Workflow
+
+from sdd_workflows import prompts
 
 
 def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str = "{}") -> Workflow:
-    return Workflow(
+    flow = Workflow(
         "main-flow",
         "spec",
         (
@@ -12,7 +17,7 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
                 "spec",
                 "agent",
                 reviewer,
-                "Write a bounded specification with explicit acceptance. Return questions for missing user decisions.",
+                prompts.SPEC,
                 (("done", "tickets"), ("questions", "interview")),
                 required=True,
             ),
@@ -26,7 +31,7 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
                 "tickets",
                 "agent",
                 reviewer,
-                "Describe bounded dependency-ordered tickets covering the entire specification. Do not drop acceptance criteria.",
+                prompts.TICKETS,
                 (("done", "implement"),),
                 required=True,
             ),
@@ -34,8 +39,8 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
                 "implement",
                 "agent",
                 implementer,
-                "Implement the bounded task, using test-first where meaningful. Preserve acceptance.",
-                (("done", "checks"), ("failed", "diagnose")),
+                prompts.IMPLEMENT,
+                (("done", "checks"), ("failed", "diagnose"), ("interrupted", "reconcile")),
                 required=True,
                 mutates=True,
             ),
@@ -53,7 +58,7 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
                 "review",
                 "agent",
                 reviewer,
-                "Read-only independent review. Assess Standards and Spec separately, including original scope. Return passed only when both pass.",
+                prompts.REVIEW,
                 (("passed", "accepted"), ("failed", "diagnose")),
                 required=True,
                 gate=True,
@@ -63,7 +68,7 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
                 "diagnose",
                 "agent",
                 reviewer,
-                "Reproduce the recorded failure and propose a bounded correction. Do not weaken acceptance.",
+                prompts.DIAGNOSE,
                 (("done", "repair"),),
                 max_visits=3,
             ),
@@ -71,14 +76,37 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
                 "repair",
                 "agent",
                 implementer,
-                "Apply the diagnosed correction. Preserve original acceptance.",
-                (("done", "checks"), ("failed", "diagnose")),
+                prompts.REPAIR,
+                (("done", "checks"), ("failed", "diagnose"), ("interrupted", "reconcile")),
                 mutates=True,
+                max_visits=3,
+            ),
+            Step(
+                "reconcile",
+                "agent",
+                reviewer,
+                prompts.RECONCILE,
+                (("done", "checks"), ("failed", "diagnose")),
                 max_visits=3,
             ),
             Step("accepted", "finish"),
         ),
         max_calls=16,
+    )
+
+    return replace(
+        flow,
+        max_planning_calls=4,
+        steps=tuple(
+            replace(step, config='{"purpose":"planning"}')
+            if step.id in ("spec", "tickets")
+            else replace(
+                step, config=canonical({**object_json(step.config), "recovery_step": "reconcile"})
+            )
+            if step.id in ("implement", "checks", "review", "diagnose", "repair", "reconcile")
+            else step
+            for step in flow.steps
+        ),
     )
 
 
@@ -91,8 +119,9 @@ def interview(provider: str = "claude") -> Workflow:
                 "ask",
                 "agent",
                 provider,
-                "Ask the next necessary question or propose a complete specification.",
+                prompts.INTERVIEW,
                 (("questions", "answer"), ("done", "approve")),
+                config='{"purpose":"planning"}',
             ),
             Step(
                 "answer",
@@ -109,4 +138,26 @@ def interview(provider: str = "claude") -> Workflow:
             ),
             Step("finish", "finish"),
         ),
+        max_planning_calls=4,
+    )
+
+
+def feature() -> Workflow:
+    """Execute an explicitly approved requirement without a portfolio audit loop."""
+    flow = main_flow()
+    steps = tuple(step for step in flow.steps if step.id not in ("spec", "tickets", "interview"))
+    approval = Step(
+        "approve",
+        "human",
+        prompt="Confirm this bounded requirement and its acceptance criteria",
+        transitions=(("approved", "implement"),),
+        required=True,
+    )
+    return replace(
+        flow,
+        id="feature",
+        entry="approve",
+        steps=(approval, *steps),
+        max_calls=8,
+        max_planning_calls=0,
     )

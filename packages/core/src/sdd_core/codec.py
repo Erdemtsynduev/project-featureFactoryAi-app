@@ -78,7 +78,16 @@ def workflow_json(workflow: Workflow) -> str:
 
 def workflow_load(raw: str) -> Workflow:
     doc = object_json(raw)
-    allowed = {"id", "entry", "steps", "schema", "max_calls", "max_input_chars", "max_tokens"}
+    allowed = {
+        "id",
+        "entry",
+        "steps",
+        "schema",
+        "max_calls",
+        "max_input_chars",
+        "max_tokens",
+        "max_planning_calls",
+    }
     if doc.keys() - allowed:
         raise ValueError("Unknown workflow fields")
     steps: list[Step] = []
@@ -120,6 +129,9 @@ def workflow_load(raw: str) -> Workflow:
         integer(doc.get("max_calls", 10), "max_calls"),
         integer(doc.get("max_input_chars", 24000), "max_input_chars"),
         None if maximum is None else integer(maximum, "max_tokens"),
+        None
+        if doc.get("max_planning_calls") is None
+        else integer(doc["max_planning_calls"], "max_planning_calls"),
     )
 
 
@@ -162,6 +174,7 @@ def run_load(raw: str) -> Run:
             for x in sequence(d["gates"])
         ),
         calls=integer(d["calls"], "calls"),
+        planning_calls=integer(d.get("planning_calls", 0), "planning_calls"),
         tokens=integer(d["tokens"], "tokens"),
         usage_unknown=flag(d["usage_unknown"], "usage_unknown"),
         infrastructure_failures=integer(d["infrastructure_failures"], "failures"),
