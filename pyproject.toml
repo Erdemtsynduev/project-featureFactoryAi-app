@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feature-factory-ai"
+version = "0.1.0"
+license = "MIT"
+license-files = ["LICENSE"]
+description = "Feature Factory AI: deterministic, extensible workflow orchestration"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["sdd-runtime[local]==0.1.0", "sdd-providers==0.1.0", "sdd-workflows==0.1.0"]
+
+[project.scripts]
+ffai = "sdd_runtime.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6", "mypy>=1.15", "ruff>=0.11", "build>=1.2", "setuptools>=77", "wheel", "types-psutil>=7"]
+
+[tool.setuptools]
+packages = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["packages", "tools", "examples/extension", "install.py", "ffai.py"]
+exclude = ["/build/"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+
+[tool.uv.workspace]
+members = ["packages/*", "examples/extension"]
+
+[tool.uv.sources]
+sdd-core = { workspace = true }
+sdd-storage = { workspace = true }
+sdd-runtime = { workspace = true }
+sdd-providers = { workspace = true }
+sdd-workflows = { workspace = true }
+sdd-example-extension = { workspace = true }

@@ -1,0 +1,264 @@
+"""Volatile transactional backend for embedding and contract tests; never durable storage."""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
+from threading import RLock
+
+from sdd_core.codec import digest, result_load, workflow_json
+from sdd_core.graph import validate
+from sdd_core.models import Result, Run, Transition, Workflow
+from sdd_core.ports import Conflict, UnitOfWork
+from sdd_core.runtime_ports import EffectRecord
+
+
+@dataclass
+class MemoryState:
+    flows: dict[str, Workflow] = field(default_factory=dict)
+    runs: dict[str, Run] = field(default_factory=dict)
+    inputs: dict[str, tuple[str, str, str, tuple[str, ...]]] = field(default_factory=dict)
+    created: dict[str, float] = field(default_factory=dict)
+    events: list[tuple[str, float, str]] = field(default_factory=list)
+    effects: dict[str, EffectRecord] = field(default_factory=dict)
+    results: dict[str, tuple[str, str]] = field(default_factory=dict)
+    commands: dict[str, tuple[str, str]] = field(default_factory=dict)
+    bindings: dict[tuple[str, str], str] = field(default_factory=dict)
+    executions: dict[str, tuple[str, str]] = field(default_factory=dict)
+    portfolios: dict[str, str] = field(default_factory=dict)
+    policies: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+class MemoryUnit:
+    def __init__(self, state: MemoryState) -> None:
+        self.state = state
+
+    def run(self, identifier: str) -> Run:
+        return self.state.runs[identifier]
+
+    def apply(self, before: Run, transition: Transition) -> Run:
+        after = transition.state
+        if after.id != before.id or after.version != before.version + 1:
+            raise ValueError("Invalid transition version")
+        if self.run(before.id).version != before.version:
+            raise Conflict("Stale state version")
+        self.state.runs[before.id] = after
+        self.state.events.extend((before.id, event.at, event.kind) for event in transition.events)
+        for effect in transition.effects:
+            if effect.id in self.state.effects:
+                raise Conflict("Duplicate effect")
+            self.state.effects[effect.id] = EffectRecord(
+                effect.id, before.id, effect.kind, "pending", self.location(before.id)[0]
+            )
+        return after
+
+    def command(self, identifier: str) -> tuple[str, str] | None:
+        return self.state.commands.get(identifier)
+
+    def save_command(self, identifier: str, request: str, response: str) -> None:
+        if identifier in self.state.commands:
+            raise Conflict("Duplicate command")
+        self.state.commands[identifier] = (request, response)
+
+    def location(self, identifier: str) -> tuple[str, str]:
+        workspace, _, claim, _ = self.state.inputs[identifier]
+        return workspace, claim
+
+    def policy(self, workspace: str) -> tuple[str, ...]:
+        return self.state.policies.get(workspace, ())
+
+    def set_policy(self, workspace: str, mandatory: tuple[str, ...]) -> None:
+        self.state.policies[workspace] = tuple(sorted(set(mandatory)))
+
+    def dependencies(self, identifier: str) -> tuple[Run, ...]:
+        return tuple(self.run(key) for key in self.state.inputs[identifier][3])
+
+    def active_claims(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (record.kind, self.location(record.run_id)[1])
+            for record in self.effects(("pending", "running", "uncertain"))
+            if record.kind not in ("human", "condition")
+        )
+
+    def unfinished_claims(self, identifier: str) -> tuple[str, ...]:
+        return tuple(
+            self.location(key)[1]
+            for key, run in self.state.runs.items()
+            if key != identifier and run.generation > 0 and run.status != "accepted"
+        )
+
+    def results(self, identifier: str) -> tuple[Result, ...]:
+        return tuple(
+            result_load(document)
+            for key, (_, document) in self.state.results.items()
+            if self.effect(key).run_id == identifier
+        )
+
+    def receipt(self, attempt: str) -> tuple[str, str] | None:
+        entry = self.state.results.get(attempt)
+        return None if entry is None else (entry[0], self.effect(attempt).run_id)
+
+    def save_result(self, attempt: str, fingerprint: str, document: str) -> None:
+        if attempt in self.state.results:
+            raise Conflict("Duplicate result")
+        self.state.results[attempt] = (fingerprint, document)
+        self.state.effects[attempt] = replace(self.effect(attempt), status="done", receipt=document)
+
+    def effect_status(self, attempt: str, status: str) -> None:
+        self.state.effects[attempt] = replace(self.effect(attempt), status=status)
+
+    def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
+        key = (run_id, handler)
+        old = self.state.bindings.get(key)
+        if old is not None and old != manifest:
+            raise Conflict("Pinned handler settings or version changed")
+        self.state.bindings[key] = manifest
+
+    def context(self, run_id: str) -> str:
+        return self.state.inputs[run_id][1]
+
+    def recent_results(self, run_id: str, limit: int) -> tuple[str, ...]:
+        if limit < 1:
+            raise ValueError("Positive result limit required")
+        return tuple(
+            self.state.results[key][1]
+            for key in reversed(self.state.effects)
+            if key in self.state.results and self.effect(key).run_id == run_id
+        )[:limit]
+
+    def effect(self, attempt: str) -> EffectRecord:
+        return self.state.effects[attempt]
+
+    def effects(self, statuses: tuple[str, ...]) -> tuple[EffectRecord, ...]:
+        return tuple(record for record in self.state.effects.values() if record.status in statuses)
+
+    def claim_host(self, attempt: str, packet: str, nonce: str) -> None:
+        record = self.effect(attempt)
+        if (
+            record.external
+            or record.status != "pending"
+            or record.host_nonce is not None
+            or record.pid is not None
+        ):
+            raise Conflict("Attempt already claimed")
+        self.state.effects[attempt] = replace(record, host_nonce=nonce)
+
+    def host_started(self, attempt: str, nonce: str, pid: int, created: float) -> None:
+        record = self.effect(attempt)
+        if record.status != "pending" or record.host_nonce != nonce or record.pid is not None:
+            raise Conflict("Dispatch ownership changed before launch")
+        self.state.effects[attempt] = replace(record, status="running", pid=pid, created=created)
+
+    def execution(self, attempt: str) -> tuple[str, str] | None:
+        return self.state.executions.get(attempt)
+
+    def bind_execution(self, run_id: str, attempt: str, backend: str, document: str) -> None:
+        record = self.effect(attempt)
+        if record.run_id != run_id or record.status not in ("pending", "running"):
+            raise Conflict("Attempt is not available for execution")
+        old = self.execution(attempt)
+        if old is not None and old != (backend, document):
+            raise Conflict("Execution request is immutable")
+        if record.host_nonce is not None or record.pid is not None:
+            raise Conflict("Attempt already belongs to a local host")
+        self.state.executions[attempt] = (backend, document)
+        self.state.effects[attempt] = replace(record, external=True)
+
+    def runnable(self) -> tuple[str, ...]:
+        def priority(identifier: str) -> tuple[float, float, str]:
+            dispatched = [
+                at
+                for key, at, kind in self.state.events
+                if key == identifier and kind == "dispatched"
+            ]
+            created = self.state.created[identifier]
+            return max(dispatched, default=created), created, identifier
+
+        return tuple(
+            sorted(
+                (
+                    key
+                    for key, run in self.state.runs.items()
+                    if not run.paused and run.status not in ("accepted", "blocked")
+                ),
+                key=priority,
+            )
+        )
+
+    def last_transition(self) -> float | None:
+        return max((at for _, at, _ in self.state.events), default=None)
+
+    def portfolio(self, identifier: str) -> str | None:
+        return self.state.portfolios.get(identifier)
+
+    def bind_portfolio(self, identifier: str, document: str) -> None:
+        old = self.portfolio(identifier)
+        if old is not None and old != document:
+            raise Conflict("Approved portfolio revision is immutable")
+        self.state.portfolios[identifier] = document
+
+
+class MemoryStore:
+    """Thread-serialized transactions. Data disappears when this object is discarded."""
+
+    def __init__(self) -> None:
+        self._state = MemoryState()
+        self._lock = RLock()
+        self._in_transaction = False
+
+    @contextmanager
+    def unit(self) -> Iterator[UnitOfWork]:
+        with self._lock:
+            if self._in_transaction:
+                raise RuntimeError("Nested units of work are not supported")
+            self._in_transaction = True
+            try:
+                candidate = deepcopy(self._state)
+                yield MemoryUnit(candidate)
+                self._state = candidate
+            finally:
+                self._in_transaction = False
+
+    def publish(self, workflow: Workflow, mandatory: tuple[str, ...] = ()) -> str:
+        validate(workflow, mandatory)
+        key = digest(workflow_json(workflow))
+        with self._lock:
+            self._state.flows[key] = workflow
+        return key
+
+    def workflow(self, identifier: str) -> Workflow:
+        with self._lock:
+            return self._state.flows[identifier]
+
+    def get(self, identifier: str) -> Run:
+        with self._lock:
+            return self._state.runs[identifier]
+
+    def create(
+        self,
+        run: Run,
+        workspace: str,
+        context: str,
+        claim: str,
+        now: float,
+        dependencies: tuple[str, ...] = (),
+    ) -> Run:
+        inputs = (workspace, context, claim, tuple(sorted(set(dependencies))))
+        with self._lock:
+            old = self._state.runs.get(run.id)
+            if old:
+                if (
+                    old.workflow_digest != run.workflow_digest
+                    or self._state.inputs[run.id] != inputs
+                ):
+                    raise Conflict("Run id reused with different input")
+                return old
+            if run.workflow_digest not in self._state.flows:
+                raise KeyError(run.workflow_digest)
+            if run.id in dependencies or any(key not in self._state.runs for key in dependencies):
+                raise ValueError("Invalid dependencies")
+            self._state.runs[run.id] = run
+            self._state.inputs[run.id] = inputs
+            self._state.created[run.id] = now
+            self._state.events.append((run.id, now, "created"))
+            return run

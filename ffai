@@ -1,0 +1,7 @@
+#!/bin/sh
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ ! -x "$ROOT/.venv/bin/python" ]; then
+    echo "Install first: python3 \"$ROOT/install.py\"" >&2
+    exit 2
+fi
+exec "$ROOT/.venv/bin/python" -m sdd_runtime.cli "$@"
