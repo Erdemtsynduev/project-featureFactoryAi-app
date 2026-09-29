@@ -18,6 +18,10 @@ class StaleVersion(Conflict):
     """Optimistic concurrency: the run changed since it was read; re-read and retry."""
 
 
+# Effect kinds that launch no handler process, so they never lock a pinned manifest.
+UNPINNED_KINDS = ("human", "condition")
+
+
 @dataclass(frozen=True)
 class EffectRecord:
     id: str
@@ -96,7 +100,14 @@ class ResultRecords(Protocol):
 class ExecutionRecords(Protocol):
     """Outbox effects, pinned handlers and host ownership of attempts."""
 
-    def bind_handler(self, run_id: str, handler: str, manifest: str) -> None: ...
+    def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
+        """Pin a handler's manifest to a run.
+
+        A different manifest is a Conflict once the run has dispatched any process
+        attempt; before that the pin follows the operator's current profiles.
+        """
+        ...
+
     def effect(self, attempt: str) -> EffectRecord: ...
     def effects(self, statuses: tuple[str, ...]) -> tuple[EffectRecord, ...]: ...
     def claim_host(self, attempt: str, packet: str, nonce: str) -> None: ...

@@ -31,6 +31,10 @@ digest they were created with.
   refused while the feature still awaits approval. An approval interrupted
   between accepting the feature and admitting its tickets is finished on the next
   start (`tickets_readmitted` in the flight log).
+- A run's pinned handler manifest follows the operator's current profiles until
+  the run dispatches its first process attempt. Tickets admitted before a profile
+  or rotation change were blocked with "Pinned handler settings or version
+  changed" without ever running; runs that already executed keep their pin.
 
 ## 0.3.1 — 2026-09-28
 

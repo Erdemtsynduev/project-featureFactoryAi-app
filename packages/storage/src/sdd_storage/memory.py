@@ -14,7 +14,7 @@ from sdd_core.codec import digest, result_load, workflow_json
 from sdd_core.graph import validate
 from sdd_core.models import Attempt, Result, Run, Transition, Workflow
 from sdd_core.ports import Conflict, StaleVersion, UnitOfWork
-from sdd_core.runtime_ports import EffectRecord
+from sdd_core.runtime_ports import UNPINNED_KINDS, EffectRecord
 
 
 @dataclass
@@ -132,9 +132,14 @@ class MemoryUnit:
     def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
         key = (run_id, handler)
         old = self.state.bindings.get(key)
-        if old is not None and old != manifest:
+        if old is not None and old != manifest and self._executed(run_id):
             raise Conflict("Pinned handler settings or version changed")
         self.state.bindings[key] = manifest
+
+    def _executed(self, run_id: str) -> bool:
+        return any(
+            e.run_id == run_id and e.kind not in UNPINNED_KINDS for e in self.state.effects.values()
+        )
 
     def context(self, run_id: str) -> str:
         return self.state.inputs[run_id][1]

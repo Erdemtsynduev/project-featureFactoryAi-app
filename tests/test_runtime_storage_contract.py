@@ -156,10 +156,15 @@ def test_binding_portfolio_policy_and_projection_transactions(configured):
         assert unit.context("one") == "test"
         assert unit.runnable() == ("one",)
         assert unit.last_transition() == 1
+    # Nothing ran yet: the pin follows the operator's changed profiles.
+    with engine.store.unit() as unit:
+        unit.bind_handler("one", "handler", "version2")
+    engine.dispatch("one", 2, "attempt")
     with pytest.raises(Conflict), engine.store.unit() as unit:
         unit.set_policy(str(workspace), ())
-        unit.bind_handler("one", "handler", "version2")
+        unit.bind_handler("one", "handler", "version3")
     with engine.store.unit() as unit:
+        unit.bind_handler("one", "handler", "version2")
         assert unit.policy(str(workspace)) == ("check", "review")
         assert unit.portfolio("portfolio") == "approved"
         with pytest.raises(Conflict):

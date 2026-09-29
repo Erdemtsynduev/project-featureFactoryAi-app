@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from sdd_core.records import (
+    UNPINNED_KINDS,
     EffectRecord,
     ExecutionRecords,
     LaneRecords,
@@ -10,7 +11,7 @@ from sdd_core.records import (
     RunRecords,
 )
 
-__all__ = ["EffectRecord", "RuntimeRecords"]
+__all__ = ["UNPINNED_KINDS", "EffectRecord", "RuntimeRecords"]
 
 
 class RuntimeRecords(

@@ -5,7 +5,7 @@ import sqlite3
 from sdd_core.codec import canonical, digest, run_load
 from sdd_core.models import Run
 from sdd_core.ports import Conflict
-from sdd_core.runtime_ports import EffectRecord
+from sdd_core.runtime_ports import UNPINNED_KINDS, EffectRecord
 
 
 class SQLiteRuntimeRecords:
@@ -22,9 +22,22 @@ class SQLiteRuntimeRecords:
         old = self.db.execute(
             "SELECT manifest FROM bindings WHERE run=? AND handler=?", (run_id, handler)
         ).fetchone()
-        if old and old[0] != manifest:
-            raise Conflict("Pinned handler settings or version changed")
-        self.db.execute("INSERT OR IGNORE INTO bindings VALUES(?,?,?)", (run_id, handler, manifest))
+        if old and old[0] == manifest:
+            return
+        if old:
+            executed = self.db.execute(
+                "SELECT 1 FROM effects WHERE run=? AND kind NOT IN (?,?) LIMIT 1",
+                (run_id, *UNPINNED_KINDS),
+            ).fetchone()
+            if executed:
+                raise Conflict("Pinned handler settings or version changed")
+            # Nothing ran yet: the pin follows the operator's current profiles.
+            self.db.execute(
+                "UPDATE bindings SET manifest=? WHERE run=? AND handler=?",
+                (manifest, run_id, handler),
+            )
+            return
+        self.db.execute("INSERT INTO bindings VALUES(?,?,?)", (run_id, handler, manifest))
 
     def context(self, run_id: str) -> str:
         row = self.db.execute("SELECT context FROM runs WHERE id=?", (run_id,)).fetchone()

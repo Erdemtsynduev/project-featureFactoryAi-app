@@ -101,6 +101,10 @@ def test_model_profile_is_pinned(tmp_path):
     handler = coordinator.registry.get("command")
     old = handler.manifest
     try:
+        # Until an attempt is dispatched the pin follows the installed handler.
+        handler.manifest = replace(old, version="98.0")
+        coordinator.bind("one")
+        coordinator.engine.dispatch("one", time.time(), "attempt")
         handler.manifest = replace(old, version="99.0")
         with pytest.raises(ValueError, match="Pinned"):
             coordinator.bind("one")
