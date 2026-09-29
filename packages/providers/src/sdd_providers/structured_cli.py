@@ -12,7 +12,7 @@ from sdd_core.codec import canonical, flag, object_json, text
 from sdd_core.models import Result
 from sdd_core.sdk import Launch, Manifest, Packet
 
-from sdd_providers.handlers import artifact
+from sdd_providers.handlers import artifact, time_budget
 from sdd_providers.protocols import cursor_response, opencode_response, structured_answer
 
 
@@ -68,6 +68,7 @@ class StructuredCliHandler:
             "and specification (the last two are booleans). Allowed outcomes: "
             + canonical(list(dict(packet.step.transitions)) + ["blocked"])
             + "\n"
+            + time_budget(packet)
             + packet.step.prompt
             + "\nContext:\n"
             + packet.context

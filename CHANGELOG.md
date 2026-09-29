@@ -81,6 +81,8 @@ digest they were created with.
   that allows silent breakaway, the whole agent tree then stayed outside the
   attempt's job, outlived a confirmed stop and changed the workspace afterwards,
   blocking the run with "Workspace changed outside attempt".
+- Agent prompts state the attempt's time budget: a stopped step returns no result,
+  so agents keep commands well inside it and leave long verification to check steps.
 
 ## 0.3.1 — 2026-09-28
 

@@ -147,6 +147,22 @@ def instructions(packet: Packet) -> str:
     return PREAMBLE + (TICKETS_INSTRUCTION if emits_tickets(packet) else "")
 
 
+def time_budget(packet: Packet) -> str:
+    """The attempt's wall-clock bound, stated so the agent can plan within it.
+
+    A stopped attempt keeps its files but not its result: work in flight at the
+    limit only reaches a read-only reconciliation.
+    """
+    minutes = max(1, round((packet.attempt.deadline - packet.attempt.started) / 60))
+    return (
+        f"Time budget: the engine stops this step {minutes} min after it starts. "
+        "A stopped step returns no result and its unfinished work is only reconciled. "
+        "Do not start a command that may not finish well inside the budget; leave long "
+        "verification to the workflow's check steps. Before the last tenth of the budget, "
+        "leave the workspace coherent and return your result.\n"
+    )
+
+
 def shared_data(doc: dict[str, Json], packet: Packet) -> dict[str, Json]:
     """Questions, notes and tickets an agent declared, validated before routing."""
     data: dict[str, Json] = {}
@@ -204,10 +220,16 @@ class CliHandler:
         if packet.resume:
             prompt = (
                 "Continue the same bounded step in this session with the new input below, "
-                "then return the same structured result.\n" + packet.context
+                "then return the same structured result.\n" + time_budget(packet) + packet.context
             )
         else:
-            prompt = instructions(packet) + packet.step.prompt + "\nContext:\n" + packet.context
+            prompt = (
+                instructions(packet)
+                + time_budget(packet)
+                + packet.step.prompt
+                + "\nContext:\n"
+                + packet.context
+            )
         argv = self.dialect.argv(Invocation(self.executable, self.model, packet, schema))
         # The dialect reads the prompt from stdin: a long brief never reaches the command line.
         return Launch(tuple(argv), packet.workspace, input=prompt)

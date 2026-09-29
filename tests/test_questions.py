@@ -176,6 +176,9 @@ def test_cli_handlers_continue_sessions_and_record_them(tmp_path):
     fresh = codex.prepare(attempt_packet(tmp_path))
     assert "resume" not in fresh.argv and "--sandbox" in fresh.argv
     assert fresh.argv[-1] == "-" and "New" in fresh.input
+    # Agents plan within the attempt's bound; a resumed session gets a fresh one.
+    assert "Time budget: the engine stops this step 1 min after" in fresh.input
+    assert "Time budget:" in launch.input
     packet = attempt_packet(tmp_path)
     Path(packet.directory, "stdout.log").write_text(
         json.dumps(
