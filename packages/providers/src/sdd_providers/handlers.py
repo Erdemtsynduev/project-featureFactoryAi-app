@@ -6,13 +6,14 @@ import re
 import time
 from pathlib import Path
 
-from sdd_core.codec import canonical, flag, integer, object_json, text
+from sdd_core.codec import canonical, flag, text
 from sdd_core.memory import notes, tickets_of
-from sdd_core.models import Artifact, Json, Result, Usage
+from sdd_core.models import Artifact, Json, Result
 from sdd_core.options import StepOptions
 from sdd_core.questions import questions
 from sdd_core.sdk import Launch, Manifest, Packet
 
+from sdd_providers.dialects import DIALECTS, SCHEMA_FILE, STDOUT_FILE, Invocation, ReportedError
 from sdd_providers.failures import classify
 
 
@@ -162,9 +163,18 @@ def shared_data(doc: dict[str, Json], packet: Packet) -> dict[str, Json]:
     return data
 
 
+# Recognised limits wait this long when the provider names no reset time.
+WAITS = {"usage_limit": 3600.0, "rate_limit": 120.0, "unreachable": 60.0}
+# Stay inside the engine's one-week bound on any wait.
+MAX_WAIT = 6.5 * 86400
+
+
 class CliHandler:
+    """A fresh (or resumed) agent CLI session; its dialect owns the provider's flags."""
+
     def __init__(self, provider: str, executable: str, model: str | None = None) -> None:
-        if provider not in ("claude", "codex"):
+        dialect = DIALECTS.get(provider)
+        if dialect is None:
             raise ValueError("Unsupported provider")
         path = Path(executable)
         if (
@@ -174,6 +184,7 @@ class CliHandler:
         ):
             raise ValueError("Pin the real CLI executable, not a shell wrapper")
         self.provider, self.executable, self.model = provider, str(path), model
+        self.dialect = dialect
         self.manifest = Manifest(
             provider,
             "0.1.0",
@@ -188,10 +199,8 @@ class CliHandler:
         )
 
     def prepare(self, packet: Packet) -> Launch:
-        folder = Path(packet.directory)
         schema = result_schema(packet)
-        schema_path = folder / "schema.json"
-        schema_path.write_text(json.dumps(schema), encoding="utf-8")
+        (Path(packet.directory) / SCHEMA_FILE).write_text(json.dumps(schema), encoding="utf-8")
         if packet.resume:
             prompt = (
                 "Continue the same bounded step in this session with the new input below, "
@@ -199,74 +208,8 @@ class CliHandler:
             )
         else:
             prompt = instructions(packet) + packet.step.prompt + "\nContext:\n" + packet.context
-        output = folder / "agent-result.json"
-        sandbox = "workspace-write" if packet.step.mutates else "read-only"
-        if self.provider == "codex" and packet.resume:
-            # `exec resume` inherits the working directory and takes the sandbox as config.
-            argv = [
-                self.executable,
-                "exec",
-                "resume",
-                "--json",
-                "-c",
-                'approval_policy="never"',
-                "-c",
-                f'sandbox_mode="{sandbox}"',
-                "--output-schema",
-                str(schema_path),
-                "-o",
-                str(output),
-            ]
-            if self.model:
-                argv += ["--model", self.model]
-            argv += [packet.resume, "-"]
-        elif self.provider == "codex":
-            argv = [
-                self.executable,
-                "exec",
-                "--json",
-                "-C",
-                packet.workspace,
-                "--sandbox",
-                "workspace-write" if packet.step.mutates else "read-only",
-                "-c",
-                'approval_policy="never"',
-                "--output-schema",
-                str(schema_path),
-                "-o",
-                str(output),
-            ]
-            if self.model:
-                argv += ["--model", self.model]
-            argv += ["-"]
-        else:
-            argv = [
-                self.executable,
-                "-p",
-                "--output-format",
-                "json",
-                "--json-schema",
-                json.dumps(schema),
-                "--permission-mode",
-                "acceptEdits",
-                "--disallowedTools",
-                "Agent,Task"
-                + (
-                    ""
-                    if packet.step.mutates
-                    else ",Write,Edit,MultiEdit,NotebookEdit,Bash,PowerShell"
-                ),
-            ]
-            if packet.step.mutates:
-                # acceptEdits approves edits only; a non-interactive session refuses every
-                # command, so a working step could never run its checks. Codex gets the
-                # same through its workspace-write sandbox with approvals off.
-                argv += ["--allowedTools", "Bash,PowerShell"]
-            if self.model:
-                argv += ["--model", self.model]
-            if packet.resume:
-                argv += ["--resume", packet.resume]
-        # `-` (codex) or a bare `-p` (claude) reads the prompt from stdin.
+        argv = self.dialect.argv(Invocation(self.executable, self.model, packet, schema))
+        # The dialect reads the prompt from stdin: a long brief never reaches the command line.
         return Launch(tuple(argv), packet.workspace, input=prompt)
 
     def failure(self, packet: Packet, revision: str, summary: str) -> Result:
@@ -285,15 +228,14 @@ class CliHandler:
         data = canonical(
             {"failure": found.kind, "handler": self.provider, "reset_at": found.reset_at}
         )
-        waits = {"usage_limit": 3600.0, "rate_limit": 120.0, "unreachable": 60.0}
-        if found.kind in waits:
-            resume = min(found.reset_at or now + waits[found.kind], now + 6.5 * 86400)
-            reason = f"{summary}: {found.kind.replace('_', ' ')} · {found.excerpt}"
+        kind = found.kind.replace("_", " ")
+        if found.kind in WAITS:
+            resume = min(found.reset_at or now + WAITS[found.kind], now + MAX_WAIT)
             return Result(
                 packet.attempt.id,
                 packet.attempt.generation,
                 "waiting",
-                reason,
+                f"{summary}: {kind} · {found.excerpt}",
                 revision,
                 resume_at=resume,
                 data=data,
@@ -303,7 +245,7 @@ class CliHandler:
             packet.attempt.id,
             packet.attempt.generation,
             "blocked",
-            f"{summary}; {found.kind.replace('_', ' ')}{hint}: {found.excerpt or 'inspect stderr.log'}",
+            f"{summary}; {kind}{hint}: {found.excerpt or 'inspect stderr.log'}",
             revision,
             data=data,
         )
@@ -312,77 +254,32 @@ class CliHandler:
         folder = Path(packet.directory)
         if exit_code != 0:
             return self.failure(packet, revision, f"{self.provider} exit {exit_code}")
-        usage = Usage()
-        session: object = None
-        model: object = self.model
-        reported: object = None
-        if self.provider == "codex":
-            doc = object_json((folder / "agent-result.json").read_text(encoding="utf-8"))
-            for line in (folder / "stdout.log").read_text(encoding="utf-8").splitlines():
-                item = object_json(line)
-                if item.get("type") == "thread.started":
-                    session = item.get("thread_id")
-                raw_usage = item.get("usage")
-                if item.get("type") == "turn.completed" and isinstance(raw_usage, dict):
-                    usage = Usage(
-                        integer(raw_usage.get("input_tokens"), "input_tokens"),
-                        integer(raw_usage.get("output_tokens"), "output_tokens"),
-                        integer(raw_usage.get("cached_input_tokens", 0), "cached_input_tokens"),
-                    )
-        else:
-            envelope = object_json((folder / "stdout.log").read_text(encoding="utf-8"))
-            if envelope.get("is_error") is True:
-                return self.failure(packet, revision, f"{self.provider} reported an error")
-            structured = envelope.get("structured_output")
-            if not isinstance(structured, dict):
-                raise ValueError("No structured result")
-            doc = structured
-            session = envelope.get("session_id")
-            # The exact model id(s) Claude billed; the largest one names the attempt.
-            spent = envelope.get("modelUsage")
-            if isinstance(spent, dict) and spent:
-
-                def produced(name: str) -> int:
-                    entry = spent[name]
-                    value = entry.get("outputTokens") if isinstance(entry, dict) else None
-                    return value if isinstance(value, int) else 0
-
-                model = max(spent, key=produced)
-            reported = envelope.get("total_cost_usd")
-            raw_usage = envelope.get("usage")
-            if isinstance(raw_usage, dict):
-                usage = Usage(
-                    integer(raw_usage.get("input_tokens"), "input_tokens")
-                    + integer(
-                        raw_usage.get("cache_read_input_tokens", 0), "cache_read_input_tokens"
-                    )
-                    + integer(
-                        raw_usage.get("cache_creation_input_tokens", 0),
-                        "cache_creation_input_tokens",
-                    ),
-                    integer(raw_usage.get("output_tokens"), "output_tokens"),
-                    integer(raw_usage.get("cache_read_input_tokens", 0), "cache_read_input_tokens"),
-                    integer(
-                        raw_usage.get("cache_creation_input_tokens", 0),
-                        "cache_creation_input_tokens",
-                    ),
-                )
+        try:
+            reply = self.dialect.reply(folder)
+        except ReportedError as error:
+            return self.failure(packet, revision, f"{self.provider} {error}")
+        doc = reply.document
         data: dict[str, Json] = {}
+        model = reply.model if reply.model is not None else self.model
         if isinstance(model, str) and model:
             data["model"] = model
-        if isinstance(reported, (int, float)):
-            data["reported_cost_usd"] = float(reported)
+        if isinstance(reply.reported_cost, (int, float)):
+            data["reported_cost_usd"] = float(reply.reported_cost)
         data.update(shared_data(doc, packet))  # malformed output fails before routing
-        if isinstance(session, str) and session:
-            data["session"] = {"id": session, "step": packet.step.id, "handler": self.provider}
+        if isinstance(reply.session, str) and reply.session:
+            data["session"] = {
+                "id": reply.session,
+                "step": packet.step.id,
+                "handler": self.provider,
+            }
         return Result(
             packet.attempt.id,
             packet.attempt.generation,
             text(doc.get("outcome"), "outcome"),
             text(doc.get("reason"), "reason"),
             revision,
-            (artifact(folder / "stdout.log", packet, revision),),
-            usage,
+            (artifact(folder / STDOUT_FILE, packet, revision),),
+            reply.usage,
             flag(doc.get("standards"), "standards"),
             flag(doc.get("specification"), "specification"),
             data=canonical(data),
