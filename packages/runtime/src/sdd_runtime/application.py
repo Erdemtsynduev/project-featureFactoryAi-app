@@ -16,7 +16,7 @@ from sdd_core.graph import validate
 from sdd_core.models import Json, Result, Run, Workflow
 from sdd_core.options import StepOptions
 from sdd_core.ports import Conflict, StaleVersion, StateStore, Workspace
-from sdd_core.records import AdmissionRecords
+from sdd_core.records import AdmissionRecords, CommandLog, ResultRecords
 from sdd_core.sdk import ProjectAdapter
 
 # Slow observations (Git revision, evidence hashes) run outside transactions; the
@@ -55,6 +55,20 @@ class ApplicationEngine:
         if identifier not in self._flows:
             self._flows[identifier] = self.store.workflow(identifier)
         return self._flows[identifier]
+
+    def _workflow_of(self, run_id: str) -> Workflow:
+        return self._flow(self.store.get(run_id).workflow_digest)
+
+    @staticmethod
+    def _recovery_step(workflow: Workflow, step: str) -> str | None:
+        """The read-only step `step` declares for reconciliation, if it declares one."""
+        target = StepOptions.parse(workflow.step(step).config).recovery_step
+        if not target:
+            return None
+        # `graph.validate` already refuses this; a stored workflow is checked again.
+        if workflow.step(target).mutates:
+            raise ValueError("Recovery requires a read-only step")
+        return target
 
     def create(
         self,
@@ -105,17 +119,11 @@ class ApplicationEngine:
     def command(self, run_id: str, command: str, request_id: str, expected: int, now: float) -> Run:
         request = canonical([run_id, command, expected])
         # A retry past the call limit grants the workflow's budget once more.
-        grant = (
-            self._flow(self.store.get(run_id).workflow_digest).max_calls
-            if command == "retry"
-            else 0
-        )
+        grant = self._workflow_of(run_id).max_calls if command == "retry" else 0
         with self.store.unit() as db:
-            old = db.command(request_id)
-            if old:
-                if old[0] != request:
-                    raise Conflict("Command id reused")
-                return run_load(str(old[1]))
+            done = _replayed(db, request_id, request)
+            if done is not None:
+                return done
             run = db.run(run_id)
             if run.version != expected:
                 raise Conflict("Stale command version")
@@ -184,10 +192,7 @@ class ApplicationEngine:
         workflow = self._flow(run.workflow_digest)
         step = workflow.step(run.step)
         kind = step.kind
-        facts = "{}"
-        if kind == "condition" and run.previous_attempt is not None:
-            previous = run.previous_attempt
-            facts = next((r.data for r in results if r.attempt_id == previous), "{}")
+        facts = _data_of(results, run.previous_attempt) if kind == "condition" else "{}"
         transition = machine.dispatch(run, workflow, now, attempt_id, facts)
         if kind == "finish" and run.gates:
             if self.revision_of(claim) != run.revision:
@@ -222,12 +227,10 @@ class ApplicationEngine:
         result = self._normalize(run_id, result)
         document = result_json(result)
         fingerprint = digest(document)
+        receipt = (fingerprint, run_id)
         for _ in range(RETRIES):
             with self.store.unit() as db:
-                old = db.receipt(result.attempt_id)
-                if old:
-                    if old != (fingerprint, run_id):
-                        raise Conflict("Conflicting repeated result")
+                if _received(db, result.attempt_id, receipt):
                     return db.run(run_id)
                 run = db.run(run_id)
                 root, claim = db.location(run_id)
@@ -237,15 +240,10 @@ class ApplicationEngine:
                 self.workspace.verify(result, root, result.revision)
                 if self.revision_of(claim) != result.revision:
                     raise ValueError("Result no longer matches workspace")
-            transition = machine.complete(
-                run, self.store.workflow(run.workflow_digest), result, now
-            )
+            transition = machine.complete(run, self._flow(run.workflow_digest), result, now)
             try:
                 with self.store.unit() as db:
-                    old = db.receipt(result.attempt_id)
-                    if old:
-                        if old != (fingerprint, run_id):
-                            raise Conflict("Conflicting repeated result")
+                    if _received(db, result.attempt_id, receipt):
                         return db.run(run_id)
                     state = db.apply(run, transition)
                     db.save_result(result.attempt_id, fingerprint, document)
@@ -256,27 +254,21 @@ class ApplicationEngine:
         raise Conflict("Task kept changing while its result was applied")
 
     def recover(self, run_id: str, now: float, confirmed: bool, reason: str, revision: str) -> Run:
-        workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
+        workflow = self._workflow_of(run_id)
         with self.store.unit() as db:
             run = db.run(run_id)
-            transition = machine.recover(
-                run, now, termination_confirmed=confirmed, reason=reason, observed_revision=revision
-            )
-            target = StepOptions.parse(workflow.step(run.step).config).recovery_step or None
             # An attempt that left the workspace as it found it has nothing to reconcile:
             # the same step simply runs again (a launch that never started, a lost host).
             touched = run.active is not None and revision != run.active.base_revision
-            if confirmed and target and touched and transition.state.status == "waiting":
-                if not isinstance(target, str) or workflow.step(target).mutates:
-                    raise ValueError("Recovery requires a read-only step")
-                transition = machine.recover(
-                    run,
-                    now,
-                    termination_confirmed=confirmed,
-                    reason=reason,
-                    observed_revision=revision,
-                    recovery_step=target,
-                )
+            reroute = self._recovery_step(workflow, run.step) if confirmed and touched else None
+            transition = machine.recover(
+                run,
+                now,
+                termination_confirmed=confirmed,
+                reason=reason,
+                observed_revision=revision,
+                recovery_step=reroute,
+            )
             state = db.apply(run, transition)
             if run.active:
                 db.effect_status(run.active.id, "abandoned" if confirmed else "uncertain")
@@ -301,14 +293,12 @@ class ApplicationEngine:
         with self.store.unit() as db:
             run = db.run(run_id)
             previous = run.active.previous if run.active else run.previous_attempt
-            if previous is None:
-                return "{}"
-            return next((r.data for r in db.results(run_id) if r.attempt_id == previous), "{}")
+            return _data_of(db.results(run_id), previous)
 
     def outputs(self, run_id: str, product: str) -> tuple[Result, ...]:
         """Processed results of the run's steps that declare `produces: <product>`, newest
         first. A product is what a step's result is for: a specification, tickets."""
-        workflow = self._flow(self.store.get(run_id).workflow_digest)
+        workflow = self._workflow_of(run_id)
         steps = {
             step.id for step in workflow.steps if StepOptions.parse(step.config).produces == product
         }
@@ -324,7 +314,7 @@ class ApplicationEngine:
         run = self.store.get(run_id)
         if run.active is None:
             return "{}"
-        step = self.store.workflow(run.workflow_digest).step(run.active.step)
+        step = self._flow(run.workflow_digest).step(run.active.step)
         return canonical({"questions": list[Json](StepOptions.parse(step.config).questions)})
 
     def answer(
@@ -338,19 +328,16 @@ class ApplicationEngine:
     ) -> Run:
         """Resolve a waiting human step with chosen options and/or free text."""
         run = self.store.get(run_id)
-        workflow = self.store.workflow(run.workflow_digest)
+        workflow = self._flow(run.workflow_digest)
         if run.version != expected:
             raise Conflict("Stale answer; refresh the task")
         if run.active is None or workflow.step(run.active.step).kind != "human":
             raise ValueError("Not waiting for a human")
         asked = questions.questions(self.asked(run_id)) if choices else ()
-        if choices and not {key for key in choices} <= {q.id for q in asked}:
+        if choices and not set(choices) <= {q.id for q in asked}:
             raise ValueError("Answer refers to an unknown question")
         text, data = questions.answer(asked, choices, reply)
-        result = Result(
-            run.active.id, run.active.generation, outcome, text, run.revision, data=data
-        )
-        return self.complete(run_id, result, now, expected)
+        return self.complete(run_id, _human_result(run, outcome, text, data), now, expected)
 
     def auto_answer(self, run_id: str, now: float) -> Run | None:
         """Answer a waiting human step with the agent's recommendations when allowed.
@@ -361,7 +348,7 @@ class ApplicationEngine:
         run = self.store.get(run_id)
         if run.active is None:
             return None
-        step = self.store.workflow(run.workflow_digest).step(run.active.step)
+        step = self._flow(run.workflow_digest).step(run.active.step)
         settings = StepOptions.parse(step.config)
         if step.kind != "human" or not (run.auto_answer or settings.auto_answer == "recommended"):
             return None
@@ -373,14 +360,11 @@ class ApplicationEngine:
             return None
         outcome = settings.auto_outcome or step.transitions[0][0]
         text, data = decision
-        result = Result(
-            run.active.id, run.active.generation, outcome, text, run.revision, data=data
-        )
-        return self.complete(run_id, result, now)
+        return self.complete(run_id, _human_result(run, outcome, text, data), now)
 
     def release_condition(self, run_id: str, now: float) -> Run:
         """Return a condition attempt persisted by an earlier release to pure routing."""
-        workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
+        workflow = self._workflow_of(run_id)
         with self.store.unit() as db:
             run = db.run(run_id)
             if run.active is None or workflow.step(run.active.step).kind != "condition":
@@ -393,14 +377,12 @@ class ApplicationEngine:
         """Persist operator guidance for the next packet, never inject into a live process."""
         if not message.strip():
             raise ValueError("Message cannot be empty")
-        workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
+        workflow = self._workflow_of(run_id)
         request = canonical([run_id, "message", expected, message])
         with self.store.unit() as db:
-            old = db.command(request_id)
-            if old:
-                if old[0] != request:
-                    raise Conflict("Command id reused")
-                return run_load(old[1])
+            done = _replayed(db, request_id, request)
+            if done is not None:
+                return done
             run = db.run(run_id)
             if run.version != expected:
                 raise Conflict("Stale message; refresh the task")
@@ -419,23 +401,23 @@ class ApplicationEngine:
         When no mutating attempt has changed anything yet, there is nothing to
         reconcile: the run goes back to its first mutating step instead.
         """
-        workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
+        workflow = self._workflow_of(run_id)
         observed = self.observe(run_id)
         with self.store.unit() as db:
             run = db.run(run_id)
             if run.version != expected:
                 raise Conflict("Stale recovery request")
-            if run.active or run.status not in ("blocked", "waiting", "ready"):
+            if not machine.restartable(run):
                 raise ValueError("Recovery requires an inactive unfinished task")
             first = _untouched(
                 workflow, db.attempt_bases(run_id), db.step_results(run_id), observed
             )
             if first is not None and first != run.step:
                 return db.apply(run, machine.restart(run, first, observed, now))
-            if run.status == "ready":
+            if not machine.reconcilable(run):
                 raise ValueError("Recovery requires an inactive blocked or waiting task")
-            target = StepOptions.parse(workflow.step(run.step).config).recovery_step or None
-            if not isinstance(target, str) or workflow.step(target).mutates:
+            target = self._recovery_step(workflow, run.step)
+            if target is None:
                 raise ValueError("Workflow has no read-only recovery path")
             return db.apply(run, machine.reconcile(run, target, observed, now))
 
@@ -451,6 +433,38 @@ class ApplicationEngine:
         with self.store.unit() as db:
             run = db.run(run_id)
             return db.apply(run, machine.block(run, now, reason))
+
+
+def _replayed(db: CommandLog, request_id: str, request: str) -> Run | None:
+    """The response of an already applied command; its id reused for other input fails."""
+    old = db.command(request_id)
+    if old is None:
+        return None
+    if old[0] != request:
+        raise Conflict("Command id reused")
+    return run_load(old[1])
+
+
+def _received(db: ResultRecords, attempt: str, receipt: tuple[str, str]) -> bool:
+    """Whether this very result was applied; another result for the attempt fails."""
+    old = db.receipt(attempt)
+    if old and old != receipt:
+        raise Conflict("Conflicting repeated result")
+    return bool(old)
+
+
+def _data_of(results: tuple[Result, ...], attempt: str | None) -> str:
+    """The data object the given attempt returned; empty when there is none."""
+    if attempt is None:
+        return "{}"
+    return next((r.data for r in results if r.attempt_id == attempt), "{}")
+
+
+def _human_result(run: Run, outcome: str, text: str, data: str) -> Result:
+    """An answer to the run's waiting human step, bound to its attempt and revision."""
+    if run.active is None:
+        raise ValueError("Not waiting for a human")
+    return Result(run.active.id, run.active.generation, outcome, text, run.revision, data=data)
 
 
 def _untouched(

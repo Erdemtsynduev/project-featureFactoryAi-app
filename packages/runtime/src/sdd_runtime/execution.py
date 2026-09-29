@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 
+from sdd_core import machine
 from sdd_core.codec import canonical
 from sdd_core.execution import (
     ExecutionBackend,
@@ -73,5 +74,5 @@ class ExecutionDriver:
                 observation.reason or observation.status,
                 observed_revision,
             )
-        elif now >= run.active.deadline or (run.paused and run.reason == "Stop requested"):
+        elif now >= run.active.deadline or machine.stop_requested(run):
             self.backend.cancel(handle)

@@ -9,6 +9,7 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 
+from sdd_core import machine
 from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load
 from sdd_core.models import Result
 from sdd_core.options import StepOptions
@@ -27,6 +28,19 @@ __all__ = ["Coordinator", "Running"]
 COMMAND_LINE_CHARS = 32000
 # The attempt file the host feeds to the process's stdin.
 INPUT_FILE = "input.txt"
+# How often `contain` re-reads a run that moved while its failure was being recorded.
+CONTAIN_RETRIES = 3
+
+
+def read_exit(path: Path, nonce: str | None) -> tuple[int, float]:
+    """The exit code and completion time the host recorded for this attempt.
+
+    A receipt carrying another host's nonce belongs to an earlier launch.
+    """
+    data = object_json(path.read_text(encoding="utf-8"))
+    if data.get("nonce") != nonce:
+        raise ValueError("Wrong host receipt")
+    return integer(data["exit_code"], "exit_code"), number(data["completed_at"])
 
 
 class Coordinator:
@@ -54,7 +68,7 @@ class Coordinator:
     def contain(self, run_id: str, now: float, error: Exception) -> None:
         """Record a failure on its own run so the queue can go on."""
         reason = f"{type(error).__name__}: {error}"
-        for _ in range(3):
+        for _ in range(CONTAIN_RETRIES):
             run = self.engine.store.get(run_id)
             try:
                 if run.active is None:
@@ -146,7 +160,7 @@ class Coordinator:
         live = self.live[identifier]
         packet = live.packet
         state = self.engine.store.get(packet.run_id)
-        if state.paused and state.reason == "Stop requested":
+        if machine.stop_requested(state):
             self.hosts.settle(live, wait=True)
             del self.live[identifier]
             self.engine.recover(
@@ -172,13 +186,11 @@ class Coordinator:
                 packet.run_id, now, True, "Host exited without durable completion", current
             )
             return
-        exit_data = object_json(exit_path.read_text(encoding="utf-8"))
-        if exit_data.get("nonce") != live.nonce:
-            raise ValueError("Wrong host receipt")
-        result = self._collect_result(packet, integer(exit_data["exit_code"], "exit_code"), current)
+        exit_code, completed_at = read_exit(exit_path, live.nonce)
+        result = self._collect_result(packet, exit_code, current)
         verify_evidence(result.artifacts, Path(packet.workspace), current)
         atomic_write(Path(packet.directory) / "receipt.json", result_json(result))
-        self.engine.complete(packet.run_id, result, number(exit_data["completed_at"]))
+        self.engine.complete(packet.run_id, result, completed_at)
 
     def _collect_result(self, packet: Packet, exit_code: int, current: str) -> Result:
         try:
@@ -219,21 +231,15 @@ class Coordinator:
             exit_path = receipt.with_name("exit.json")
             if confirmed and exit_path.exists():
                 try:
-                    exit_data = object_json(exit_path.read_text(encoding="utf-8"))
-                    completed_at = number(exit_data["completed_at"])
-                    if (
-                        exit_data.get("nonce") != row.host_nonce
-                        or completed_at > run.active.deadline
-                    ):
+                    exit_code, completed_at = read_exit(exit_path, row.host_nonce)
+                    if completed_at > run.active.deadline:
                         raise ValueError("Host receipt is stale")
                     if receipt.exists():
                         result = result_load(receipt.read_text(encoding="utf-8"))
                     else:
                         self.bind(run_id)
                         packet = self.packet(run_id)
-                        result = self._collect_result(
-                            packet, integer(exit_data["exit_code"], "exit_code"), current
-                        )
+                        result = self._collect_result(packet, exit_code, current)
                         atomic_write(receipt, result_json(result))
                     if result.revision != current:
                         raise ValueError("Workspace changed after completion")
@@ -249,12 +255,7 @@ class Coordinator:
     def _advance(self, run_id: str, now: float) -> bool:
         """Dispatch one runnable run and start its host. True when an attempt began."""
         run = self.engine.store.get(run_id)
-        if (
-            run.paused
-            or run.active
-            or run.status in ("blocked", "accepted")
-            or (run.wake_at and run.wake_at > now)
-        ):
+        if not machine.dispatchable(run, now):
             return False
         # Cheap checks first: dependencies, process slots and claimed paths. Only a run
         # that could start now pays for lanes and Git revisions.
