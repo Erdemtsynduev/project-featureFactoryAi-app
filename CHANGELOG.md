@@ -52,6 +52,10 @@ digest they were created with.
   implement or repair step had every test, check and `git status` refused and
   could deliver code without running a single check. Read-only steps still deny
   commands and edits; project hooks keep applying.
+- **Retry** on a run stopped by "Model call limit" grants it the workflow's
+  `max_calls` once more (`calls_granted` in the journal; runs record
+  `granted_calls`). Before, the limit had no operator remedy: a retry dispatched
+  and hit the same limit. The queue's call budget still applies.
 
 ## 0.3.1 — 2026-09-28
 

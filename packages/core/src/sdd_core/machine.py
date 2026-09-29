@@ -11,6 +11,7 @@ from sdd_core.options import StepOptions
 # Consecutive infrastructure waits ended in a block; the operator (or a revival
 # policy once limits have reset) retries explicitly.
 WAIT_RETRY_LIMIT = "Wait retry limit"
+CALL_LIMIT = "Model call limit"
 
 
 def valid_time(now: float) -> None:
@@ -137,7 +138,9 @@ def guidance(run: Run, now: float, message: str) -> Transition:
     )
 
 
-def control(run: Run, command: str, now: float) -> Transition:
+def control(run: Run, command: str, now: float, call_grant: int = 0) -> Transition:
+    """Apply an operator command. A retry of a run stopped by its model call limit
+    grants `call_grant` more calls (the caller passes the workflow's budget)."""
     if command == "stop":
         return changed(replace(run, paused=True, reason="Stop requested"), now, "stop_requested")
     if command == "pause":
@@ -151,6 +154,14 @@ def control(run: Run, command: str, now: float) -> Transition:
             "auto_answer_enabled" if command == "auto" else "auto_answer_disabled",
         )
     if command == "retry" and run.status == "blocked" and run.active is None:
+        if run.reason == CALL_LIMIT and call_grant > 0:
+            granted = run.granted_calls + call_grant
+            return changed(
+                replace(run, status="ready", reason="", wake_at=None, granted_calls=granted),
+                now,
+                "calls_granted",
+                str(call_grant),
+            )
         return changed(
             replace(run, status="ready", reason="", wake_at=None), now, "retry_requested"
         )
@@ -270,8 +281,8 @@ def dispatch(
             "limit",
         )
     if step.kind == "agent":
-        if run.calls >= workflow.max_calls:
-            return changed(replace(run, status="blocked", reason="Model call limit"), now, "limit")
+        if run.calls >= workflow.max_calls + run.granted_calls:
+            return changed(replace(run, status="blocked", reason=CALL_LIMIT), now, "limit")
         if workflow.max_tokens is not None and (
             run.usage_unknown or run.tokens >= workflow.max_tokens
         ):

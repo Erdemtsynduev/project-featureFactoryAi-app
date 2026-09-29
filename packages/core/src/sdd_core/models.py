@@ -109,6 +109,8 @@ class Run:
     planning_calls: int = 0
     # Operator's choice: answer structured agent questions with their recommendations.
     auto_answer: bool = False
+    # Model calls the operator granted beyond the workflow's `max_calls`.
+    granted_calls: int = 0
 
 
 @dataclass(frozen=True)

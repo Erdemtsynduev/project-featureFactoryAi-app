@@ -104,6 +104,12 @@ class ApplicationEngine:
 
     def command(self, run_id: str, command: str, request_id: str, expected: int, now: float) -> Run:
         request = canonical([run_id, command, expected])
+        # A retry past the call limit grants the workflow's budget once more.
+        grant = (
+            self._flow(self.store.get(run_id).workflow_digest).max_calls
+            if command == "retry"
+            else 0
+        )
         with self.store.unit() as db:
             old = db.command(request_id)
             if old:
@@ -113,7 +119,7 @@ class ApplicationEngine:
             run = db.run(run_id)
             if run.version != expected:
                 raise Conflict("Stale command version")
-            state = db.apply(run, machine.control(run, command, now))
+            state = db.apply(run, machine.control(run, command, now, grant))
             db.save_command(request_id, request, run_json(state))
             return state
 

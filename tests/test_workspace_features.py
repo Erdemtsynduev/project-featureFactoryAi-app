@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 from sdd_core import machine
-from sdd_core.models import Result, Step, Workflow
+from sdd_core.models import Result, Run, Step, Workflow
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Registry
 from sdd_runtime.application import ApplicationEngine
@@ -189,3 +189,36 @@ def test_subscription_failure_does_not_claim_zero_usage(tmp_path, monkeypatch):
         assert service.state()["totals"]["calls"] == 0
     finally:
         service.coordinator.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_retry_after_the_call_limit_grants_the_workflow_budget_once_more(tmp_path, backend):
+    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+    root = tmp_path / "project"
+    root.mkdir()
+    flow = Workflow(
+        "limited",
+        "work",
+        (
+            Step("work", "agent", "fake", transitions=(("failed", "work"), ("done", "finish"))),
+            Step("finish", "finish"),
+        ),
+        max_calls=1,
+    )
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine.create("one", store.publish(flow), root, "Task", revision(root), 0)
+    engine.command("one", "resume", "resume", 0, 1)
+    run = engine.dispatch("one", 2, "first")
+    engine.complete("one", Result("first", run.generation, "failed", "Again", run.revision), 3)
+    limited = engine.dispatch("one", 4, "second")
+    assert limited.status == "blocked" and limited.reason == machine.CALL_LIMIT
+    granted = engine.command("one", "retry", "grant", limited.version, 5)
+    assert granted.status == "ready" and granted.granted_calls == 1
+    assert store.get("one").granted_calls == 1, "the grant survives a reload"
+    assert engine.dispatch("one", 6, "second").active is not None
+
+
+def test_an_ordinary_retry_grants_no_calls():
+    run = replace(Run("one", "digest", "work", "rev"), status="blocked", reason="Other")
+    retried = machine.control(run, "retry", 1, call_grant=5).state
+    assert retried.status == "ready" and retried.granted_calls == 0

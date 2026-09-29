@@ -176,6 +176,7 @@ def run_load(raw: str) -> Run:
         calls=integer(d["calls"], "calls"),
         planning_calls=integer(d.get("planning_calls", 0), "planning_calls"),
         auto_answer=flag(d.get("auto_answer", False), "auto_answer"),
+        granted_calls=integer(d.get("granted_calls", 0), "granted_calls"),
         tokens=integer(d["tokens"], "tokens"),
         usage_unknown=flag(d["usage_unknown"], "usage_unknown"),
         infrastructure_failures=integer(d["infrastructure_failures"], "failures"),
