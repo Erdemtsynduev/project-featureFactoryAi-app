@@ -4,7 +4,7 @@
 
 import { byId, h, replace, stableLabel } from "../core/dom.js";
 import { toggleQueue } from "./bulk.js";
-import { applyStatic, formatNumber, money, t } from "../core/i18n.js";
+import { applyStatic, callsOf, formatNumber, money, t } from "../core/i18n.js";
 import * as api from "../core/api.js";
 import {
   currentProject,
@@ -200,7 +200,7 @@ function renderMeters() {
     byId("meters"),
     meter(
       t("meter.calls"),
-      `${totals.calls} / ${settings.max_calls}`,
+      callsOf(totals.calls, settings.max_calls),
       t("meter.callsHint"),
     ),
     meter(

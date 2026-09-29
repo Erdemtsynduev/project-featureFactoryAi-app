@@ -32,6 +32,9 @@ class ExecutionObservation:
     result: Result | None = None
     reason: str = ""
     completed_at: float | None = None
+    # False only with proof that the payload never started (terminated before GO):
+    # nothing could have called a model.
+    launched: bool = True
 
 
 class ExecutionBackend(Protocol):
@@ -68,3 +71,5 @@ def validate_observation(expected: ExecutionHandle, observation: ExecutionObserv
             raise ValueError("Result belongs to another attempt")
     elif result is not None or observation.completed_at is not None:
         raise ValueError("Only confirmed completion can carry a result")
+    if not observation.launched and observation.status != "terminated":
+        raise ValueError("Only a confirmed end can prove the payload never started")

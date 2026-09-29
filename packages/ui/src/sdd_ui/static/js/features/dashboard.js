@@ -7,7 +7,7 @@
 
 import * as api from "../core/api.js";
 import { h, memo, replace } from "../core/dom.js";
-import { formatTime, money, t } from "../core/i18n.js";
+import { callsOf, formatTime, money, t } from "../core/i18n.js";
 import { recall, remember } from "../core/storage.js";
 import {
   hasScope,
@@ -454,7 +454,7 @@ function draw() {
         ),
         tile(
           t("meter.calls"),
-          `${totals.calls} / ${settings.max_calls}`,
+          callsOf(totals.calls, settings.max_calls),
           t("overview.tile.callsHint"),
           () => go("usage"),
         ),

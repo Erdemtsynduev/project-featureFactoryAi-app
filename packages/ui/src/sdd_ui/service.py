@@ -44,6 +44,8 @@ type Action = Callable[[dict[str, Json]], object]
 SPURIOUS_BLOCK = "Run is not dispatchable"
 # How often projects with a tracker are mirrored, in seconds.
 TRACKER_EVERY = 30.0
+# How often the quota loop wakes; each subscription is read on its own slower schedule.
+QUOTA_EVERY = 60.0
 COORDINATOR_ACTIONS = frozenset({"queue", "budget", "profiles", "connect", "rotation", "wake"})
 # Actions whose `id` names a task (other actions use `id` for projects).
 TASK_ACTIONS = frozenset(
@@ -226,7 +228,20 @@ class WorkspaceService:
         self.log.record("application_started")
         mirror = threading.Thread(target=self._mirror_loop, name="tracker-mirror", daemon=True)
         mirror.start()
+        quotas = threading.Thread(target=self._quota_loop, name="subscription-quotas", daemon=True)
+        quotas.start()
         self.queue.work()
+
+    def _quota_loop(self) -> None:
+        """Read subscription windows on their own schedule, outside the queue's lock:
+        a spent subscription rests its profiles until the window resets."""
+        while True:
+            try:
+                self.agents.watch_quotas(time.time())
+            except Exception as error:  # a quota probe never stops the application
+                self.log.record("quota_failed", "warning", error=f"{type(error).__name__}: {error}")
+            if self.queue.quit.wait(QUOTA_EVERY):
+                return
 
     # Trackers ------------------------------------------------------------------
 

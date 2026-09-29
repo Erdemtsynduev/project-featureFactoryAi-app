@@ -42,6 +42,11 @@ export function applyStatic(root = document) {
       );
 }
 
+/** Calls used, against an optional cap: "12" with no cap, "12 / 40" with one. */
+export function callsOf(calls, cap) {
+  return cap == null ? `${calls}` : `${calls} / ${cap}`;
+}
+
 export function formatNumber(value) {
   return new Intl.NumberFormat(language()).format(value);
 }

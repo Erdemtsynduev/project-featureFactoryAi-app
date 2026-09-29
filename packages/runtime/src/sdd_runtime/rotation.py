@@ -20,12 +20,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sdd_core.codec import canonical, integer, mapping, object_json, sequence, text
-from sdd_core.models import Json, Result
+from sdd_core.models import REFUSALS, Json, Result
 from sdd_core.sdk import Handler, Launch, Packet, Registry
 
 from sdd_runtime.files import atomic_write
 
-FAILURES = ("usage_limit", "rate_limit", "authentication", "model_not_available", "unreachable")
+# The provider refusals a rotation may act on: the engine's own vocabulary.
+FAILURES = REFUSALS
 
 
 @dataclass(frozen=True)

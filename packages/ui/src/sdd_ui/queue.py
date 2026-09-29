@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from sdd_core.admission import QueueBudget
 from sdd_core.catalog import CatalogRecords
 from sdd_core.codec import canonical, flag, integer, object_json
 from sdd_core.models import Json, Run, Workflow
@@ -23,10 +24,14 @@ from sdd_runtime.engine import Engine
 
 DEFAULTS: dict[str, Json] = {
     "running": False,
-    "max_calls": 40,
-    "max_planning_calls": 8,
+    # Optional call caps for agents billed per token; None is no cap.
+    "max_calls": None,
+    "max_planning_calls": None,
     "revive": True,
 }
+# Caps every earlier release saved by default. They were never a subscription's limit,
+# so a queue still holding exactly them runs uncapped from now on.
+LEGACY_DEFAULT_CAPS = (40, 8)
 # A run blocked after repeated limit waits is retried once its agents rest no more.
 REVIVE_AFTER = 30 * 60
 MAX_REVIVALS = 5
@@ -77,8 +82,8 @@ class QueueController:
         # Opening the application never starts work, except right after a restart
         # the operator asked for: then the queue continues as it was.
         resumed = bool(stored.pop("restarting", False)) and bool(stored.get("running"))
-        self.settings: dict[str, Json] = {**DEFAULTS, **stored, "running": resumed}
-        self.coordinator = Coordinator(engine, handlers, health_path)
+        self.settings: dict[str, Json] = {**DEFAULTS, **_uncapped(stored), "running": resumed}
+        self.coordinator = self._coordinator()
         self.error: str | None = None
         self.last_tick: float | None = None
         self.quit = threading.Event()
@@ -88,15 +93,16 @@ class QueueController:
         self.watched = 0.0
         self.apply_limits()
 
+    def _coordinator(self) -> Coordinator:
+        return Coordinator(self.engine, self.handlers, self.health_path, self.available)
+
     # Settings -----------------------------------------------------------------
 
     def apply_limits(self) -> None:
-        maximum = integer(self.settings["max_calls"], "max_calls")
-        planning = integer(self.settings["max_planning_calls"], "max_planning_calls")
-        if not 0 <= planning <= maximum <= 100000:
-            raise ValueError("Queue budgets must satisfy 0 <= planning <= total <= 100000")
-        self.engine.max_queue_calls = maximum
-        self.engine.max_queue_planning_calls = planning
+        self.engine.budget = QueueBudget(
+            _cap(self.settings["max_calls"], "max_calls"),
+            _cap(self.settings["max_planning_calls"], "max_planning_calls"),
+        )
 
     def save(self) -> dict[str, Json]:
         self.store.save(self.settings)
@@ -106,7 +112,7 @@ class QueueController:
         running = flag(doc.get("running"), "running")
         if running and self.error:
             self.coordinator.close()
-            self.coordinator = Coordinator(self.engine, self.handlers, self.health_path)
+            self.coordinator = self._coordinator()
             self.coordinator.restore(time.time())
             self.log.record("queue_restarted", previous_error=self.error)
             self.error = None
@@ -117,8 +123,8 @@ class QueueController:
     def set_budget(self, doc: dict[str, Json]) -> dict[str, Json]:
         previous = dict(self.settings)
         self.settings.update(
-            max_calls=integer(doc.get("max_calls"), "max_calls"),
-            max_planning_calls=integer(doc.get("max_planning_calls"), "max_planning_calls"),
+            max_calls=_cap(doc.get("max_calls"), "max_calls"),
+            max_planning_calls=_cap(doc.get("max_planning_calls"), "max_planning_calls"),
         )
         if "revive" in doc:
             self.settings["revive"] = flag(doc.get("revive"), "revive")
@@ -247,3 +253,15 @@ class QueueController:
             return
         self.revivals[run.id] = self.revivals.get(run.id, 0) + 1
         self.log.record("revived", "warning", run=run.id, step=run.step)
+
+
+def _cap(value: Json, name: str) -> int | None:
+    """An optional call cap: a whole number, or null for none."""
+    return None if value is None else integer(value, name)
+
+
+def _uncapped(stored: dict[str, Json]) -> dict[str, Json]:
+    """Settings saved with the legacy default caps, read as uncapped."""
+    if (stored.get("max_calls"), stored.get("max_planning_calls")) == LEGACY_DEFAULT_CAPS:
+        return {**stored, "max_calls": None, "max_planning_calls": None}
+    return stored

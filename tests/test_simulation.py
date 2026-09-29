@@ -100,6 +100,8 @@ class Simulation:
         self.accepted: set[str] = set()
         self.versions: dict[str, int] = {}
         self.delivered: dict[str, Result] = {}
+        # Agent attempts that could have reached a model, counted outside the engine.
+        self.model_calls: dict[str, int] = {}
         self.attempts = 0
         for run_id, workspace in self.workspaces.items():
             self.engine.create(run_id, self.definition, workspace, "", None, self.world.now)  # type: ignore[arg-type]
@@ -124,6 +126,8 @@ class Simulation:
             (self.answer, 4),
             (self.redeliver, 2),
             (self.lose_attempt, 1),
+            (self.refuse, 1),
+            (self.fail_launch, 1),
             (self.change_outside, 1),
             (self.restart_process, 1),
             (self.tick, 3),
@@ -142,7 +146,39 @@ class Simulation:
         self.engine.command(run_id, command, self._id(), run.version, self.world.now)
 
     def dispatch(self, run_id: str) -> None:
-        self.engine.dispatch(run_id, self.world.now, self._id())
+        before = self.store.get(run_id).generation
+        after = self.engine.dispatch(run_id, self.world.now, self._id())
+        if after.generation > before and self._agent(after):
+            self.model_calls[run_id] = self.model_calls.get(run_id, 0) + 1
+
+    def _agent(self, run: Run) -> bool:
+        return run.active is not None and FLOW.step(run.active.step).kind == "agent"
+
+    def refuse(self, run_id: str) -> None:
+        """The provider refuses at once (a spent subscription): no model work was done."""
+        run = self.store.get(run_id)
+        if not self._agent(run) or run.active is None:
+            return
+        refusal = Result(
+            run.active.id,
+            run.active.generation,
+            "waiting",
+            "usage limit",
+            run.active.base_revision,
+            resume_at=self.world.now + 60,
+            data='{"failure":"usage_limit"}',
+        )
+        self.engine.complete(run_id, refusal, self.world.now)
+        self.model_calls[run_id] -= 1
+
+    def fail_launch(self, run_id: str) -> None:
+        """The host dies before GO: the payload, and so any model, never started."""
+        run = self.store.get(run_id)
+        if not self._agent(run) or run.active is None:
+            return
+        revision = self.world.revision(self.workspaces[run_id])
+        self.engine.recover(run_id, self.world.now, True, "no GO", revision, launched=False)
+        self.model_calls[run_id] -= 1
 
     def finish_attempt(self, run_id: str) -> None:
         run = self.store.get(run_id)
@@ -235,6 +271,7 @@ class Simulation:
         assert sum(run.spend.calls for run in runs) <= MAX_QUEUE_CALLS, "queue budget exceeded"
 
     def _check_run(self, run: Run) -> None:
+        assert run.spend.calls == self.model_calls.get(run.id, 0), "a call no model made"
         assert run.version >= self.versions.get(run.id, 0), "version went back"
         self.versions[run.id] = run.version
         if run.status == "running":

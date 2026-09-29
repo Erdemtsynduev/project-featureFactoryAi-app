@@ -11,13 +11,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from sdd_core.models import Json, Run
+from sdd_core.sdk import STDERR_LOG, STDOUT_LOG
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import attempt_folder
 
 from sdd_factory.journal import FlightLog
 
 TAIL_CHARS = 1500
-FILES = ("stderr.log", "stdout.log", "exit.json", "rotation.json")
+FILES = (STDERR_LOG, STDOUT_LOG, "exit.json", "rotation.json")
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,7 @@ def live(engine: Engine, run_id: str, hosted: bool) -> dict[str, object]:
     folder = attempt_folder(root, run_id, run.active.id)
     streams: dict[str, object] = {}
     last_output = None
-    for name in ("stdout.log", "stderr.log"):
+    for name in (STDOUT_LOG, STDERR_LOG):
         path = folder / name
         if path.is_file():
             stat = path.stat()

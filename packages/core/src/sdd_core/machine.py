@@ -13,6 +13,7 @@ from dataclasses import astuple, replace
 
 from sdd_core.models import (
     RECORD_ID,
+    REFUSALS,
     STATUS_CHANGES,
     Attempt,
     Cause,
@@ -427,6 +428,7 @@ def dispatch(
     exceeded = _over_budget(run, workflow, step, planning)
     if exceeded is not None:
         return limit(run, now, *exceeded)
+    agent = step.kind == "agent"
     attempt = Attempt(
         attempt_id,
         step.id,
@@ -435,6 +437,8 @@ def dispatch(
         now + step.timeout,
         run.revision,
         run.previous_attempt,
+        calls=int(agent),
+        planning_calls=int(planning),
     )
     state = replace(
         _released(run),
@@ -443,7 +447,7 @@ def dispatch(
         generation=attempt.generation,
         visits=_visits(run, step.id, 1),
         wake_at=None,
-        spend=run.spend.reserve(step.kind == "agent", planning),
+        spend=run.spend.reserve(agent, planning),
         gates=() if step.mutates else run.gates,
     )
     effect = Effect(attempt_id, step.kind, attempt)
@@ -477,6 +481,19 @@ def _passed_gate(step: Step, result: Result) -> None:
         raise ValueError("Review must pass Standards and Spec independently")
 
 
+def _refused(result: Result) -> bool:
+    """The provider refused the attempt before any model work: a declared refusal
+    with no measured tokens. Its reserved calls go back to the run."""
+    if result.outcome not in ("waiting", "blocked"):
+        return False
+    try:
+        failure = object_json(result.data or "{}").get("failure")
+    except ValueError:
+        return False
+    usage = result.usage
+    return failure in REFUSALS and not (usage.input_tokens or usage.output_tokens)
+
+
 def complete(run: Run, workflow: Workflow, result: Result, now: float) -> Transition:
     valid_time(now)
     attempt = run.active
@@ -493,12 +510,14 @@ def complete(run: Run, workflow: Workflow, result: Result, now: float) -> Transi
         raise ValueError("Read-only step changed the revision")
     if any(v is not None and v < 0 for v in astuple(result.usage)):
         raise ValueError("Negative usage")
+    refused = _refused(result)
+    spend = run.spend.measure(result.usage, step.kind == "agent" and not refused)
     state = replace(
         run,
         active=None,
         previous_attempt=attempt.id,
         revision=result.revision,
-        spend=run.spend.measure(result.usage, step.kind == "agent"),
+        spend=spend.release(attempt) if refused else spend,
     )
     if result.outcome == "waiting":
         return _wait(run, state, step, result, now)
@@ -540,10 +559,18 @@ def recover(
     observed_revision: str,
     max_retries: int = INFRASTRUCTURE_RETRIES,
     recovery_step: str | None = None,
+    launched: bool = True,
 ) -> Transition:
-    """Settle a lost attempt. A confirmed retry may reroute to a read-only `recovery_step`."""
+    """Settle a lost attempt. A confirmed retry may reroute to a read-only `recovery_step`.
+
+    `launched=False` is the runtime's proof that the payload never started (no host
+    identity, a failed preflight): no model ran, so the reservation is returned and
+    token accounting stays known. It still counts against the infrastructure retries.
+    """
     if run.active is None:
         raise ValueError("No active attempt")
+    if not launched and not termination_confirmed:
+        raise ValueError("An attempt that never launched has ended")
     if not termination_confirmed:
         return block(
             run, now, f"{UNCERTAIN}: {reason}", cause="uncertain", event="uncertain", detail=""
@@ -553,7 +580,9 @@ def recover(
         run,
         active=None,
         previous_attempt=run.active.id,
-        spend=replace(run.spend, usage_unknown=run.spend.usage_unknown or run.spend.calls > 0),
+        spend=run.spend.release(run.active)
+        if not launched
+        else replace(run.spend, usage_unknown=run.spend.usage_unknown or run.spend.calls > 0),
         revision=observed_revision,
         gates=() if observed_revision != run.revision else run.gates,
         infrastructure_failures=count,

@@ -6,6 +6,10 @@ from typing import Protocol
 from sdd_core.models import Attempt, Result, Step
 
 API_VERSION = 1
+# What a launched payload writes in its attempt folder; the host opens both right
+# before the payload starts, so their presence proves the launch.
+STDOUT_LOG = "stdout.log"
+STDERR_LOG = "stderr.log"
 
 
 def handler_key(step: Step) -> str:

@@ -240,8 +240,8 @@ def test_budget_validation_and_persistence(page, workshop):
     form.locator('input[name="max_calls"]').fill("12")
     form.locator('input[name="max_planning_calls"]').fill("13")
     form.get_by_role("button", name="Сохранить").click()
-    expect(page.locator(".toast-error")).to_contain_text("Queue budgets")
-    assert service.engine.max_queue_calls == 40
+    expect(page.locator(".toast-error")).to_contain_text("Planning calls are part of all calls")
+    assert service.engine.max_queue_calls is None, "no cap until one is saved"
     form.locator('input[name="max_planning_calls"]').fill("3")
     form.get_by_role("button", name="Сохранить").click()
     expect(page.locator("#meters")).to_contain_text("0 / 12")

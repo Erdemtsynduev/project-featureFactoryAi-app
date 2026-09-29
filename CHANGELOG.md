@@ -13,6 +13,23 @@ digest they were created with.
 
 ## Unreleased
 
+- **Subscriptions are paced by their windows, not by counted calls.** Two tasks
+  stopped on a fixed 40-call queue cap while both subscriptions had room; 16 of those
+  40 calls never reached a model. Now:
+  - Claude (account usage endpoint) and Codex (app-server) windows are read on a slow
+    schedule without a model turn; a spent window rests its profiles until the reset,
+    and the coordinator leaves their steps unstarted instead of spending attempts.
+  - The Usage view shows every subscription's remaining share per window, its reset
+    time and which agents rest because of it.
+  - An attempt that provably reached no model (host ended before the payload
+    started, failed preflight, immediate provider refusal) returns its reserved call
+    and keeps token accounting known.
+  - Absolute reset times ("try again at Oct 4th, 2026 11:41 PM", "resets 3pm") are
+    parsed, so a weekly limit is no longer retried every hour.
+  - The queue call cap is optional (for API-key agents) and off by default; settings
+    holding the old defaults 40/8 are read as no cap.
+  - Attempt log names are part of the handler contract (`sdd_core.sdk.STDOUT_LOG`).
+
 - **One execution path.** The coordinator only schedules: every attempt is
   submitted through `ExecutionDriver` to the local `Supervisor` (an
   `ExecutionBackend`) and applied from its observations. The compatibility launch

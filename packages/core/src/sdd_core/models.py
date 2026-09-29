@@ -80,6 +80,9 @@ COMMANDS: tuple[Command, ...] = get_args(Command.__value__)
 PROCESS_KINDS: tuple[Kind, ...] = ("agent", "check", "operation")
 # Effect kinds that launch no handler process, so they never lock a pinned manifest.
 UNPINNED_KINDS: tuple[Kind, ...] = ("human", "condition")
+# Provider failures that refuse an attempt before any model work: the attempt's
+# reserved calls are returned when its result also measured no tokens.
+REFUSALS = ("usage_limit", "rate_limit", "authentication", "unreachable", "model_not_available")
 # Outcomes the engine interprets itself; a workflow cannot route them.
 RESERVED_OUTCOMES = ("waiting", "blocked")
 # Spelling of step ids (graph documents) and of run and attempt ids (commands).
@@ -173,6 +176,9 @@ class Attempt:
     deadline: float
     base_revision: str
     previous: str | None = None
+    # Model calls reserved for this attempt at dispatch, returned if none happened.
+    calls: int = 0
+    planning_calls: int = 0
 
 
 @dataclass(frozen=True)
@@ -206,6 +212,14 @@ class Spend:
 
     def grant(self, calls: int) -> "Spend":
         return replace(self, granted_calls=self.granted_calls + calls)
+
+    def release(self, attempt: "Attempt") -> "Spend":
+        """Return what an attempt reserved: it provably reached no model."""
+        return replace(
+            self,
+            calls=max(0, self.calls - attempt.calls),
+            planning_calls=max(0, self.planning_calls - attempt.planning_calls),
+        )
 
 
 # Fields of a nested value that the wire spells at its owner's level.

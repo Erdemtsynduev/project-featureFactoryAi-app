@@ -18,7 +18,7 @@ from sdd_runtime.workspace import LocalWorkspace
 from sdd_storage.memory import MemoryStore
 from sdd_storage.store import Store
 from sdd_ui.service import WorkspaceService
-from sdd_ui.subscriptions import read_codex_limits
+from sdd_ui.subscriptions import read_codex_buckets, read_codex_quota
 from sdd_workflows.templates import main_flow
 
 
@@ -159,13 +159,13 @@ print(json.dumps({"id": 1, "result": {"rateLimitsByLimitId": {
     "codex": {"primary": {"usedPercent": 24, "windowDurationMins": 300, "resetsAt": 1000}, "secondary": None}
 }}}), flush=True)
 """)
-    result = read_codex_limits((sys.executable, str(script)))
-    assert result["status"] == "available"
-    assert result["windows"][0]["remaining_percent"] == 76
-    assert len(result["windows"]) == 1
+    quota = read_codex_quota((sys.executable, str(script)), 500.0)
+    assert quota.status == "available" and len(quota.windows) == 1
+    (window,) = quota.windows
+    assert (window.name, window.remaining_percent, window.resets_at) == ("session", 76, 1000)
     script.write_text("import time; time.sleep(60)")
     with pytest.raises(queue.Empty):
-        read_codex_limits((sys.executable, str(script)), timeout=0.2)
+        read_codex_buckets((sys.executable, str(script)), timeout=0.2)
 
 
 def test_subscription_failure_does_not_claim_zero_usage(tmp_path, monkeypatch):
@@ -175,17 +175,19 @@ def test_subscription_failure_does_not_claim_zero_usage(tmp_path, monkeypatch):
             {
                 "schema": 1,
                 "runners": {"test": {"adapter": "codex", "executable": sys.executable}},
-                "profiles": {},
+                "profiles": {"coder": {"runner": "test", "model": "gpt-test"}},
             }
         )
     )
     monkeypatch.setattr(
-        "sdd_ui.agents.read_codex_limits",
-        lambda argv: (_ for _ in ()).throw(ValueError("offline")),
+        "sdd_ui.agents.read_codex_quota",
+        lambda argv, now: (_ for _ in ()).throw(ValueError("offline")),
     )
     try:
         result = service.mutate("subscription", {})
-        assert result["status"] == "unavailable" and result["windows"] == []
+        (codex,) = result["subscriptions"]
+        assert result["status"] == "unavailable" and codex["windows"] == []
+        assert "offline" in codex["error"], "a failed reading says so, never 0% used"
         assert service.state()["totals"]["calls"] == 0
     finally:
         service.coordinator.close()

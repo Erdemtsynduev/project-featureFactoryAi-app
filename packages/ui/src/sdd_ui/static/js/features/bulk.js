@@ -62,10 +62,15 @@ function counts(list, ids = []) {
   };
 }
 
+/** Calls left under an optional queue cap; no cap (subscriptions) leaves no limit. */
 function budgetLeft() {
   const { totals, settings } = store.state;
-  return Math.max(0, settings.max_calls - totals.calls);
+  return settings.max_calls == null
+    ? Infinity
+    : Math.max(0, settings.max_calls - totals.calls);
 }
+
+const shown = (value) => (value == null || value === Infinity ? "∞" : value);
 
 function option(value, count, checked) {
   return h(
@@ -246,10 +251,10 @@ export function openBulkResume(reason = "", target = null) {
     const need = callsNeeded(starting);
     const { totals, settings } = store.state;
     const left = budgetLeft();
-    const planningLeft = Math.max(
-      0,
-      settings.max_planning_calls - totals.planning_calls,
-    );
+    const planningLeft =
+      settings.max_planning_calls == null
+        ? Infinity
+        : Math.max(0, settings.max_planning_calls - totals.planning_calls);
     const short = need.calls > left || need.planning > planningLeft;
     const features = starting.filter(
       (r) => kindOf(r) === "feature",
@@ -262,10 +267,10 @@ export function openBulkResume(reason = "", target = null) {
         t("bulk.estimate", {
           calls: need.calls,
           planning: need.planning,
-          left,
-          max: settings.max_calls,
-          pleft: planningLeft,
-          pmax: settings.max_planning_calls,
+          left: shown(left),
+          max: shown(settings.max_calls),
+          pleft: shown(planningLeft),
+          pmax: shown(settings.max_planning_calls),
         }),
         short ? " " : null,
         short
@@ -299,11 +304,14 @@ export function openBulkResume(reason = "", target = null) {
     const { totals, settings } = store.state;
     try {
       await api.post("budget", {
-        max_calls: Math.max(settings.max_calls, totals.calls + need.calls),
-        max_planning_calls: Math.max(
-          settings.max_planning_calls,
-          totals.planning_calls + need.planning,
-        ),
+        max_calls:
+          settings.max_calls == null
+            ? null
+            : Math.max(settings.max_calls, totals.calls + need.calls),
+        max_planning_calls:
+          settings.max_planning_calls == null
+            ? null
+            : Math.max(settings.max_planning_calls, totals.planning_calls + need.planning),
       });
       await refresh();
       toast(t("bulk.raised"), { tone: "success" });

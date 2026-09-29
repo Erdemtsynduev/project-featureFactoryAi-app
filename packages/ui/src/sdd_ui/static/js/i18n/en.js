@@ -599,20 +599,25 @@ export default {
   "usage.budgetTitle": "Queue limits",
   "usage.allCalls": "All calls",
   "usage.planningCalls": "Of them planning",
+  "usage.capHint":
+    "Optional caps for API-key (pay-per-token) agents; leave empty for subscriptions. Subscriptions are paced by their own windows: a spent 5-hour or weekly window rests its agent until the reset, and attempts that never reached a model are not counted.",
   "usage.revive":
     "Automatically resume tasks blocked by limits once profiles are available again",
   "usage.saveLimits": "Save",
   "usage.limitsSaved": "Limits saved",
   "usage.budgetHint":
     "A ceiling on runs over the whole database history, not a subscription forecast. Reserved calls count even when a CLI fails. After raising it, retry blocked tasks.",
-  "usage.quotaTitle": "Codex account quotas",
+  "usage.quotaTitle": "Subscriptions: what is left",
   "usage.refreshQuota": "Refresh",
   "usage.quotaChecked": "Checked {when}",
   "usage.quotaNever": "Not checked yet.",
   "usage.quotaUnavailable": "Quotas unavailable: {error}",
   "usage.quotaHint":
-    "Read through the Codex app-server without a model call; refreshes every 10 minutes while this page is open. Claude, Cursor and OpenCode offer no such API.",
+    "Claude through its account usage endpoint, Codex through its app-server; no model call. Read every 15 minutes (every 5 near a limit, at once after a refusal). A spent window rests its agent until the reset.",
   "usage.resets": "resets {when}",
+  "usage.left": "{percent}% left",
+  "usage.agentsRest": "{agents} rest until {when}: the window is spent; their steps wait unstarted.",
+  "usage.agentsWork": "Working on this subscription: {agents}.",
   "usage.byAgent": "By profile",
   "usage.profile": "profile",
   "usage.noCalls": "No model calls yet.",

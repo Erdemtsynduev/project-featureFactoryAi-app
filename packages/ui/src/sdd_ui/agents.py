@@ -5,7 +5,6 @@ building a complete registry from a candidate file before it replaces the old
 one, so a bad edit never reaches the running queue.
 """
 
-import queue
 import time
 import tomllib
 from collections.abc import Callable
@@ -18,12 +17,17 @@ from sdd_core.ports import Conflict
 from sdd_core.sdk import Registry
 from sdd_providers.catalog import adapters
 from sdd_runtime.composition import registry
-from sdd_runtime.discovery import discover, list_models
+from sdd_runtime.discovery import list_models
 from sdd_runtime.files import atomic_write
 from sdd_runtime.profiles import load_profiles
 from sdd_runtime.rotation import Cooldowns
 
-from sdd_ui.subscriptions import read_codex_limits
+from sdd_ui.subscriptions import (
+    QuotaMonitor,
+    claude_credentials,
+    read_claude_quota,
+    read_codex_quota,
+)
 from sdd_ui.workspace import WorkspaceCatalog
 
 EMPTY: dict[str, Json] = {"schema": 1, "runners": {}, "profiles": {}}
@@ -42,6 +46,18 @@ class AgentSettings:
         self.busy, self.installed = busy, installed
         self.cooldowns = Cooldowns(config.with_suffix(".cooldowns.json"))
         self.handlers = registry(config if config.exists() else None)
+        self.quotas = QuotaMonitor(
+            self.cooldowns,
+            self.subscription_adapters,
+            {
+                "claude": lambda now: read_claude_quota(claude_credentials(), now),
+                "codex": lambda now: read_codex_quota(self._codex_argv(), now),
+            },
+        )
+
+    def subscription_adapters(self) -> dict[str, str]:
+        """Profile name -> runner adapter; no profiles file means no subscriptions."""
+        return load_profiles(self.config).adapters() if self.config.exists() else {}
 
     def document(self) -> dict[str, Json]:
         if not self.config.exists():
@@ -162,28 +178,19 @@ class AgentSettings:
                 pass
         return tuple(dict.fromkeys(suggestions))
 
-    def subscription(self) -> dict[str, object]:
-        """Codex account quotas through its native app-server; no model turn."""
-        candidates: list[tuple[str, ...]] = []
-        if self.config.exists():
-            candidates = [
-                (runner.executable, *runner.arguments)
-                for runner in load_profiles(self.config).runners.values()
-                if runner.adapter == "codex"
-            ]
-        if not candidates:
-            probe = discover(adapters()["codex"])
-            candidates = [p.argv for p in probe.candidates if p.error is None]
-        candidates = list(dict.fromkeys(candidates))
-        if len(candidates) != 1:
+    def _codex_argv(self) -> tuple[str, ...]:
+        """The one configured Codex installation (the monitor reads configured adapters)."""
+        installed = load_profiles(self.config).installations("codex")
+        if len(installed) != 1:
             raise ValueError("Select exactly one Codex installation in agent profiles")
-        try:
-            self.catalog.subscription = read_codex_limits(candidates[0])
-        except (OSError, ValueError, queue.Empty) as error:
-            self.catalog.subscription = {
-                "status": "unavailable",
-                "windows": [],
-                "checked_at": time.time(),
-                "error": type(error).__name__,
-            }
+        return (installed[0].executable, *installed[0].arguments)
+
+    def watch_quotas(self, now: float, force: bool = False) -> dict[str, object]:
+        """Read due subscriptions, rest spent profiles, publish the overview."""
+        self.quotas.refresh(now, force)
+        self.catalog.subscription = self.quotas.overview(now)
         return self.catalog.subscription
+
+    def subscription(self) -> dict[str, object]:
+        """Every subscription's windows, read now; no model turn."""
+        return self.watch_quotas(time.time(), force=True)

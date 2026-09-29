@@ -81,6 +81,7 @@ class ExecutionDriver:
                 observation.status == "terminated",
                 ended_reason(run, now, observation.reason or observation.status),
                 observed_revision,
+                launched=observation.launched,
             )
 
 

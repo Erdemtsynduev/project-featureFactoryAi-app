@@ -257,15 +257,19 @@ revival is logged. Queue budgets still apply.
 
 Tokens come from each CLI's own report and are stored with the step result; runs
 without a report are marked unreported, never zero. Cost prices those tokens at
-public API rates (`sdd-usage`), not a subscription bill. Model calls are reserved
-when a step starts, so the queue budget (default 40 calls, 8 of them planning,
-cumulative over the database) cannot be exceeded through failures; raise it and
-retry blocked tasks explicitly. When the project has more unfinished tasks than
-calls left, the budget panel says so before the queue runs out midway.
-**Квоты аккаунта Codex** reads account windows
-through a temporary Codex app-server without a model turn; it refreshes when this
-page opens and the last check is older than ten minutes. Other providers expose no
-quota API; their limits appear only in error messages, which the engine classifies.
+public API rates (`sdd-usage`), not a subscription bill.
+
+**Подписки: сколько осталось** shows, for every subscription the agent profiles use
+(Claude and Codex), each window's remaining share and reset time, and which agents
+rest until a spent window resets. The server reads them on its own schedule (every
+15 minutes, every 5 near a limit, at once after a refusal) without a model turn;
+**Refresh** reads now. A resting agent's steps wait unstarted, so no attempt is
+spent on a refusal, and they start by themselves at the reset.
+
+The queue call cap is optional and empty by default: it is for agents billed per
+token. Attempts that never reached a model (a host that died before starting, an
+immediate provider refusal) are not counted. Settings saved with the earlier
+defaults (40 calls, 8 of them planning) are read as no cap.
 
 ## Log
 

@@ -47,10 +47,17 @@ class Coordinator:
     """
 
     def __init__(
-        self, engine: ApplicationEngine, registry: Registry, health_path: Path | None = None
+        self,
+        engine: ApplicationEngine,
+        registry: Registry,
+        health_path: Path | None = None,
+        available: Callable[[str], bool] | None = None,
     ) -> None:
+        """`available(profile)` says whether an agent profile (or its rotation) can take
+        work now; a resting one's steps wait unstarted instead of spending an attempt."""
         self.engine, self.registry = engine, registry
         self.health_path = health_path
+        self.available = available
         self.supervisor = Supervisor(self._request, self._collect)
         self.driver = ExecutionDriver(engine, self.supervisor)
         self.lanes = LaneKeeper(engine)
@@ -250,7 +257,8 @@ class Coordinator:
             # A host launched by a release before the supervisor: prove it is gone.
             gone = host_alive(int(row.pid), float(row.created or 0)) is False
             confirmed, reason = gone, "Coordinator restart reconciliation"
-        self.engine.recover(row.run_id, now, confirmed, reason, self.revision(row.run_id))
+        launched = row.pid is not None
+        self.engine.recover(row.run_id, now, confirmed, reason, self.revision(row.run_id), launched)
 
     # Scheduling ------------------------------------------------------------------
 
@@ -261,9 +269,12 @@ class Coordinator:
             return False
         # Cheap checks first: dependencies, process slots and claimed paths. Only a run
         # that could start now pays for lanes and Git revisions.
+        workflow = self.engine.store.workflow(run.workflow_digest)
+        step = workflow.step(run.step)
+        if step.kind == "agent" and self.available and not self.available(handler_key(step)):
+            return False  # every profile that could run it rests until its window resets
         if not self.engine.admissible(run_id):
             return False
-        workflow = self.engine.store.workflow(run.workflow_digest)
         if any(step.handler.startswith("lane-") for step in workflow.steps):
             try:
                 self.lanes.open(run_id, now)
@@ -295,8 +306,9 @@ class Coordinator:
         try:
             self.submit(run_id)
         except (ValueError, KeyError, OSError) as error:
+            # Preflight failed before any host started: no model could have run.
             self.engine.recover(
-                run_id, now, True, "Preflight: " + str(error), self.revision(run_id)
+                run_id, now, True, "Preflight: " + str(error), self.revision(run_id), False
             )
         return True
 

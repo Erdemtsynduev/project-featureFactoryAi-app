@@ -22,6 +22,19 @@ class ProfileConfiguration:
     runners: dict[str, RunnerInstallation]
     profiles: tuple[AgentProfile, ...]
 
+    def adapters(self) -> dict[str, str]:
+        """Profile name -> the adapter of the runner it uses."""
+        return {
+            profile.name: self.runners[profile.runner].adapter
+            for profile in self.profiles
+            if profile.runner in self.runners
+        }
+
+    def installations(self, adapter: str) -> tuple[RunnerInstallation, ...]:
+        """Distinct installations of one adapter, in configuration order."""
+        found = (runner for runner in self.runners.values() if runner.adapter == adapter)
+        return tuple(dict.fromkeys(found))
+
 
 class HandlerFactory(Protocol):
     def __call__(self, installation: RunnerInstallation, model: str) -> Handler: ...

@@ -58,21 +58,21 @@ class ApplicationEngine:
         return self.runs.workspace
 
     @property
-    def max_queue_calls(self) -> int | None:
-        return self.scheduler.budget.calls
+    def budget(self) -> QueueBudget:
+        """The optional queue-wide call cap (for agents billed per token)."""
+        return self.scheduler.budget
 
-    @max_queue_calls.setter
-    def max_queue_calls(self, value: int | None) -> None:
-        budget = self.scheduler.budget
-        self.scheduler.budget = QueueBudget(value, budget.planning_calls)
+    @budget.setter
+    def budget(self, budget: QueueBudget) -> None:
+        self.scheduler.budget = budget
+
+    @property
+    def max_queue_calls(self) -> int | None:
+        return self.budget.calls
 
     @property
     def max_queue_planning_calls(self) -> int | None:
-        return self.scheduler.budget.planning_calls
-
-    @max_queue_planning_calls.setter
-    def max_queue_planning_calls(self, value: int | None) -> None:
-        self.scheduler.budget = QueueBudget(self.scheduler.budget.calls, value)
+        return self.budget.planning_calls
 
     def workflow_of(self, run_id: str) -> Workflow:
         return self.runs.workflow_of(run_id)
@@ -133,8 +133,16 @@ class ApplicationEngine:
     def complete(self, run_id: str, result: Result, now: float, expected: int | None = None) -> Run:
         return self.intake.complete(run_id, result, now, expected)
 
-    def recover(self, run_id: str, now: float, confirmed: bool, reason: str, revision: str) -> Run:
-        return self.intake.recover(run_id, now, confirmed, reason, revision)
+    def recover(
+        self,
+        run_id: str,
+        now: float,
+        confirmed: bool,
+        reason: str,
+        revision: str,
+        launched: bool = True,
+    ) -> Run:
+        return self.intake.recover(run_id, now, confirmed, reason, revision, launched)
 
     def release_condition(self, run_id: str, now: float) -> Run:
         return self.intake.release_condition(run_id, now)

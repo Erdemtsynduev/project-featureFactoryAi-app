@@ -23,6 +23,7 @@ import psutil
 from sdd_core.codec import canonical, flag, integer, mapping, number, object_json, sequence, text
 from sdd_core.execution import ExecutionHandle, ExecutionObservation, ExecutionRequest
 from sdd_core.models import Result
+from sdd_core.sdk import STDOUT_LOG
 
 from sdd_runtime.files import atomic_write, evidence, revision
 from sdd_runtime.interpreters import contained_path
@@ -85,7 +86,7 @@ def command_result(request: ExecutionRequest, plan: Plan, exit_code: int) -> Res
     workspace = Path(plan.workspace)
     current = revision(workspace)
     outcome = ("passed" if plan.gate else "done") if exit_code == 0 else "failed"
-    stdout = Path(plan.folder) / "stdout.log"
+    stdout = Path(plan.folder) / STDOUT_LOG
     return Result(
         request.id,
         request.generation,
@@ -302,7 +303,9 @@ class Supervisor:
         identity_path = folder / IDENTITY_FILE
         if not identity_path.exists():
             # No GO was ever sent: the host ran nothing and ends with its launcher.
-            return ExecutionObservation(handle, "terminated", reason="Launch never started")
+            return ExecutionObservation(
+                handle, "terminated", reason="Launch never started", launched=False
+            )
         identity = object_json(identity_path.read_text(encoding="utf-8"))
         pid, created = integer(identity["pid"], "pid"), number(identity["created"])
         alive = host_alive(pid, created)
@@ -325,10 +328,18 @@ class Supervisor:
         *,
         restored: bool,
     ) -> ExecutionObservation:
-        exit_path = Path(plan.folder) / EXIT_FILE
+        folder = Path(plan.folder)
+        exit_path = folder / EXIT_FILE
         if not exit_path.exists():
+            # The host opens the payload's log only after GO, right before it starts.
+            launched = (folder / IDENTITY_FILE).exists() and (folder / STDOUT_LOG).exists()
             return ExecutionObservation(
-                handle, "terminated", reason="Host exited without durable completion"
+                handle,
+                "terminated",
+                reason="Host exited without durable completion"
+                if launched
+                else "Host exited before the payload started",
+                launched=launched,
             )
         try:
             exit_code, completed_at = read_exit(exit_path, nonce)

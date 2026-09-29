@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from sdd_core.codec import canonical, integer, mapping, object_json, sequence, text
+from sdd_core.sdk import STDERR_LOG, STDOUT_LOG
 
 from sdd_runtime.files import atomic_write
 from sdd_runtime.platform import NO_WINDOW
@@ -33,8 +34,8 @@ def main() -> int:
     source = folder / text(config["input"], "input") if "input" in config else Path(os.devnull)
     with (
         source.open("rb") as feed,
-        (folder / "stdout.log").open("wb") as out,
-        (folder / "stderr.log").open("wb") as err,
+        (folder / STDOUT_LOG).open("wb") as out,
+        (folder / STDERR_LOG).open("wb") as err,
     ):
         result = subprocess.run(
             argv,

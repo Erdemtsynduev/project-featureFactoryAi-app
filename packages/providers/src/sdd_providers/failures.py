@@ -7,6 +7,7 @@ when it states one; otherwise callers apply a configured cooldown.
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 AUTHENTICATION = re.compile(
     r"not (?:authenticated|logged in|signed in)|please (?:log|sign) in|login required|"
@@ -39,6 +40,18 @@ RELATIVE = re.compile(
     r"(?:(\d+)\s*(?:minutes?|mins?|m)\b)?",
     re.IGNORECASE,
 )
+
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_CUE = r"(?:try again|resets?|available again)\s+(?:at|on)?\s*"
+# No trailing \b: "11:41 PM." ends in a dot, which a word boundary would refuse.
+_CLOCK = r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m(?![a-z])"
+# "try again at Oct 4th, 2026 11:41 PM" (Codex weekly limit), local wall time.
+DATED = re.compile(
+    _CUE + r"([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?,?\s*(?:at\s+)?" + _CLOCK,
+    re.IGNORECASE,
+)
+# "resets 3pm", "try again at 11:41 PM": the next such local time.
+CLOCK = re.compile(_CUE + _CLOCK, re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -76,4 +89,50 @@ def reset_time(text: str, now: float) -> float | None:
         days, hours, minutes = (int(x or 0) for x in relative.groups())
         seconds = days * 86400 + hours * 3600 + minutes * 60
         return now + seconds if 0 < seconds <= 7 * 86400 else None
-    return None
+    moment = _dated(text, now) or _clock(text, now)
+    return moment if moment is not None and now < moment <= now + 7 * 86400 else None
+
+
+def _hour(hour: str, meridiem: str) -> int:
+    value = int(hour) % 12
+    return value + 12 if meridiem.lower() == "p" else value
+
+
+def _dated(text: str, now: float) -> float | None:
+    found = DATED.search(text)
+    if not found:
+        return None
+    month_name, day, year, hour, minute, meridiem = found.groups()
+    month = month_name[:3].lower()
+    if month not in _MONTHS or not 1 <= int(hour) <= 12:
+        return None
+    current = datetime.fromtimestamp(now)
+    try:
+        moment = datetime(
+            int(year) if year else current.year,
+            _MONTHS.index(month) + 1,
+            int(day),
+            _hour(hour, meridiem),
+            int(minute or 0),
+        )
+    except ValueError:
+        return None
+    if not year and moment < current:
+        moment = moment.replace(year=current.year + 1)
+    return moment.timestamp()
+
+
+def _clock(text: str, now: float) -> float | None:
+    found = CLOCK.search(text)
+    if not found or not 1 <= int(found.group(1)) <= 12:
+        return None
+    current = datetime.fromtimestamp(now)
+    moment = current.replace(
+        hour=_hour(found.group(1), found.group(3)),
+        minute=int(found.group(2) or 0),
+        second=0,
+        microsecond=0,
+    )
+    if moment <= current:
+        moment += timedelta(days=1)
+    return moment.timestamp()

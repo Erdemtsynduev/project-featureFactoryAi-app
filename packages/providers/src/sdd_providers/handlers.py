@@ -10,7 +10,7 @@ from sdd_core.codec import canonical, flag, text
 from sdd_core.memory import notes
 from sdd_core.models import Artifact, Json, Result
 from sdd_core.questions import questions
-from sdd_core.sdk import Launch, Manifest, Packet
+from sdd_core.sdk import STDERR_LOG, STDOUT_LOG, Launch, Manifest, Packet
 from sdd_core.tickets import tickets_of
 
 from sdd_providers import budget
@@ -47,7 +47,7 @@ class CommandHandler:
         return Launch(argv, str(cwd))
 
     def collect(self, packet: Packet, exit_code: int, revision: str) -> Result:
-        logs = [Path(packet.directory) / name for name in ("stdout.log", "stderr.log")]
+        logs = [Path(packet.directory) / name for name in (STDOUT_LOG, STDERR_LOG)]
         pattern = packet.step.options.error_pattern
         failed = exit_code != 0 or bool(
             pattern
@@ -244,7 +244,7 @@ class CliHandler:
         folder = Path(packet.directory)
         output = "\n".join(
             (folder / name).read_text(encoding="utf-8", errors="replace")
-            for name in ("stdout.log", "stderr.log")
+            for name in (STDOUT_LOG, STDERR_LOG)
             if (folder / name).is_file()
         )
         now = time.time()

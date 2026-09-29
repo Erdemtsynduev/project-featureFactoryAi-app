@@ -54,7 +54,16 @@ class ResultIntake:
 
         return optimistic(attempt, "Task kept changing while its result was applied")
 
-    def recover(self, run_id: str, now: float, confirmed: bool, reason: str, revision: str) -> Run:
+    def recover(
+        self,
+        run_id: str,
+        now: float,
+        confirmed: bool,
+        reason: str,
+        revision: str,
+        launched: bool = True,
+    ) -> Run:
+        """Settle a lost attempt; `launched=False` proves no model ran (see machine.recover)."""
         workflow = self.runs.workflow_of(run_id)
         with self.runs.store.unit() as db:
             run = db.run(run_id)
@@ -65,6 +74,7 @@ class ResultIntake:
                 reason=reason,
                 observed_revision=revision,
                 recovery_step=machine.recovery_route(run, workflow, confirmed, revision),
+                launched=launched,
             )
             state = db.apply(run, transition)
             if run.active:

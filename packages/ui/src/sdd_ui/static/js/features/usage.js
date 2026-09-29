@@ -20,7 +20,6 @@ import { refresh, runs, store } from "../core/store.js";
 import { attempt, toastError } from "../ui/toast.js";
 import { registerView } from "./shell.js";
 
-const QUOTA_STALE = 10 * 60; // seconds
 let root = null;
 let nodes = {};
 const renderUsage = memo();
@@ -55,21 +54,24 @@ function budgetPanel() {
   const { totals, settings } = store.state;
   // A budget smaller than the open work stops the queue midway; say it upfront.
   const open = runs().filter((r) => r.status !== "accepted").length;
-  const small = open > settings.max_calls - totals.calls;
+  // The cap is optional: subscriptions are paced by their windows, not by calls.
+  const capped = settings.max_calls != null;
+  const small = capped && open > settings.max_calls - totals.calls;
   const calls = h("input", {
     name: "max_calls",
     type: "number",
     min: "0",
-    required: true,
-    value: settings.max_calls,
+    placeholder: "∞",
+    value: settings.max_calls ?? "",
   });
   const planning = h("input", {
     name: "max_planning_calls",
     type: "number",
     min: "0",
-    required: true,
-    value: settings.max_planning_calls,
+    placeholder: "∞",
+    value: settings.max_planning_calls ?? "",
   });
+  const cap = (input) => (input.value === "" ? null : Number(input.value));
   const revive = h("input", {
     type: "checkbox",
     name: "revive",
@@ -91,12 +93,15 @@ function budgetPanel() {
           t("usage.budgetSmall", { open, max: settings.max_calls }),
         )
       : null,
-    meterBar(t("usage.allCalls"), totals.calls, settings.max_calls),
-    meterBar(
-      t("usage.planningCalls"),
-      totals.planning_calls,
-      settings.max_planning_calls,
-    ),
+    capped ? meterBar(t("usage.allCalls"), totals.calls, settings.max_calls) : null,
+    settings.max_planning_calls != null
+      ? meterBar(
+          t("usage.planningCalls"),
+          totals.planning_calls,
+          settings.max_planning_calls,
+        )
+      : null,
+    h("p", { class: "hint" }, t("usage.capHint")),
     h(
       "form",
       {
@@ -107,8 +112,8 @@ function budgetPanel() {
           save.disabled = true;
           await attempt(async () => {
             await api.post("budget", {
-              max_calls: Number(calls.value),
-              max_planning_calls: Number(planning.value),
+              max_calls: cap(calls),
+              max_planning_calls: cap(planning),
               revive: revive.checked,
             });
             await refresh();
@@ -236,8 +241,62 @@ function duration(minutes) {
   }).format(value);
 }
 
+/** One window of a subscription: what is left of it and when it starts afresh. */
+function windowMeter(w) {
+  const left = Math.round(w.remaining_percent);
+  const reset = w.resets_at ? t("usage.resets", { when: formatTime(w.resets_at, true) }) : "";
+  return h(
+    "div",
+    { class: "meter" + (w.spent ? " is-high" : left <= 10 ? " is-high" : "") },
+    h(
+      "div",
+      { class: "meter-head" },
+      h("strong", {}, `${w.name} · ${duration(w.duration_minutes)}`),
+      h("span", { class: "mono" }, t("usage.left", { percent: left })),
+    ),
+    h(
+      "div",
+      {
+        class: "meter-track",
+        role: "progressbar",
+        "aria-label": w.name,
+        "aria-valuenow": left,
+        "aria-valuemax": 100,
+      },
+      h("span", { style: { width: left + "%" } }),
+    ),
+    reset ? h("small", { class: "hint" }, reset) : null,
+  );
+}
+
+/** A subscription: its windows, and which agents rest until one of them resets. */
+function subscriptionBlock(s) {
+  const resting = s.profiles.filter((p) => p.resting_until);
+  return h(
+    "div",
+    { class: "subscription" },
+    h("h3", {}, [s.runner, s.plan].filter(Boolean).join(" · ")),
+    s.error
+      ? h("p", { class: "attention tone-blocked" }, t("usage.quotaUnavailable", { error: s.error }))
+      : null,
+    s.windows.map(windowMeter),
+    resting.length
+      ? h(
+          "p",
+          { class: "attention tone-waiting" },
+          t("usage.agentsRest", {
+            agents: resting.map((p) => p.name).join(", "),
+            when: formatTime(Math.max(...resting.map((p) => p.resting_until)), true),
+          }),
+        )
+      : s.windows.length
+        ? h("p", { class: "hint" }, t("usage.agentsWork", { agents: s.profiles.map((p) => p.name).join(", ") }))
+        : null,
+  );
+}
+
 function quotaPanel() {
-  const subscription = store.state.usage?.subscription;
+  const quota = store.state.usage?.subscription;
   const button = h(
     "button",
     {
@@ -247,42 +306,15 @@ function quotaPanel() {
     },
     t("usage.refreshQuota"),
   );
-  const windows = subscription?.windows || [];
+  const subscriptions = quota?.subscriptions || [];
   return h(
     "section",
     { class: "panel" },
-    h(
-      "div",
-      { class: "panel-head" },
-      h("h2", {}, t("usage.quotaTitle")),
-      button,
-    ),
-    subscription
-      ? h(
-          "small",
-          { class: "hint" },
-          t("usage.quotaChecked", {
-            when: relativeTime(subscription.checked_at),
-          }),
-        )
+    h("div", { class: "panel-head" }, h("h2", {}, t("usage.quotaTitle")), button),
+    quota?.checked_at
+      ? h("small", { class: "hint" }, t("usage.quotaChecked", { when: relativeTime(quota.checked_at) }))
       : h("p", { class: "hint" }, t("usage.quotaNever")),
-    subscription?.status === "unavailable"
-      ? h(
-          "p",
-          { class: "attention tone-blocked" },
-          t("usage.quotaUnavailable", { error: subscription.error || "" }),
-        )
-      : null,
-    windows.map((w) =>
-      meterBar(
-        `${w.bucket} · ${duration(w.duration_minutes)}`,
-        w.used_percent,
-        100,
-        w.resets_at
-          ? t("usage.resets", { when: formatTime(w.resets_at, true) })
-          : "",
-      ),
-    ),
+    subscriptions.map(subscriptionBlock),
     h("p", { class: "hint" }, t("usage.quotaHint")),
   );
 }
@@ -369,14 +401,6 @@ function draw() {
   );
 }
 
-/** Quotas refresh by themselves while this page is open and a Codex runner exists. */
-function maybeRefreshQuota() {
-  const runners = Object.values(store.state?.profile_config?.runners || {});
-  if (!runners.some((r) => r.adapter === "codex")) return;
-  const checked = store.state.usage?.subscription?.checked_at || 0;
-  if (Date.now() / 1000 - checked > QUOTA_STALE) loadQuota(null);
-}
-
 registerView({
   id: "usage",
   order: 5,
@@ -386,7 +410,6 @@ registerView({
     root = container;
     renderUsage(null, () => {});
     draw();
-    maybeRefreshQuota();
   },
   update() {
     draw();

@@ -12,14 +12,14 @@ from typing import Protocol
 
 from sdd_core.codec import integer, object_json
 from sdd_core.models import Json, Usage
-from sdd_core.sdk import Packet
+from sdd_core.sdk import STDOUT_LOG, Packet
 
 from sdd_providers.budget import claude_settings
 
 # The attempt files a dialect writes its result into and reads it back from.
 SCHEMA_FILE = "schema.json"
 OUTPUT_FILE = "agent-result.json"
-STDOUT_FILE = "stdout.log"
+STDOUT_FILE = STDOUT_LOG
 
 
 @dataclass(frozen=True)

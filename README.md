@@ -145,9 +145,9 @@ foreground; it does not install an OS startup service. Use `run --once` for one
 coordinator pass. Validate workflows on isolated test projects first.
 
 The approved-feature template has a human scope gate and no autonomous planning.
-The full main flow allows four planning calls per task. UI queue defaults are 40
-model calls and 8 planning calls across the database's history. These limits are
-editable cumulative ceilings, not estimates of subscription usage.
+The full main flow allows four planning calls per task. Subscriptions are paced by
+their own five-hour and weekly windows, which the Usage view shows with what is left;
+an optional queue call cap exists for agents billed per token.
 
 ## Daily commands
 

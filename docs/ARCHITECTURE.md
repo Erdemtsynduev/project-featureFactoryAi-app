@@ -140,14 +140,35 @@ a link to the full previous receipt. `assemble` supports revision-scoped records
 non-truncatable required content. There is no automatic LLM summarizer: the brief is a pure
 function of recorded results.
 
-Model calls are conservatively reserved on dispatch. An infrastructure launch failure can consume
-a call reservation even if no provider request was sent; it cannot cause extra unbudgeted calls.
-Measured input/output/cache usage is retained in results; unknown values stay unknown. Configured
+Model calls are reserved on dispatch, and the attempt records its reservation. The reservation
+returns when the attempt provably reached no model: its host ended before the payload started
+(no host identity or payload log, a failed preflight), or the provider refused at once (a
+`REFUSALS` failure with no measured tokens). Such an attempt still counts against the
+infrastructure retries and leaves token accounting known. Measured input/output/cache usage is retained in results; unknown values stay unknown. Configured
 token budgets deny the next dispatch after exhaustion/unknown measurement. They cannot guarantee
 the exact maximum tokens used inside a provider CLI attempt. Waiting performs no model calls.
 
 Provider adapters currently block on unclassified CLI failures. A trusted adapter may return
 `waiting` with an explicit bounded reset timestamp; guessed reset times are not manufactured.
+Reset moments are read from epochs, "in N hours" and absolute local times ("try again at
+Oct 4th, 2026 11:41 PM", "resets 3pm"), bounded to a week.
+
+## Subscriptions are paced by their windows
+
+Subscriptions (Claude Pro/Max, a ChatGPT plan for Codex) are not billed per call; they refuse
+work once a five-hour or weekly window is spent. `sdd_usage.quota` models the windows and
+decides, purely, when a subscription can take no work (`Quota.rest_until`), which rest a
+report asks for (`next_rest`) and when to read again (`next_reading`: every 15 minutes, every 5
+near a limit, at once after a refusal, backing off on errors). `sdd_ui.subscriptions` reads
+Claude's account usage endpoint with the CLI's own sign-in and Codex's app-server, neither
+starting a model turn, and writes the decided rests to the profiles' cooldowns. The
+coordinator does not start an agent step whose profile (and every rotation member) rests,
+so a spent subscription costs no attempt and work resumes by itself at the reset. A rest a
+refusal set is never lifted by a report, which may omit the limit that refused.
+
+The queue-wide call cap (`sdd_core.admission.QueueBudget`) is optional and meant for agents
+billed per token; by default there is none. Workflow `max_calls` stays a per-run guard
+against runaway loops and counts only calls that may have reached a model.
 
 ## Storage and operations
 

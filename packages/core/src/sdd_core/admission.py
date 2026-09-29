@@ -34,9 +34,16 @@ class Slots:
         return taken < (self.agents if wanted == "agent" else self.operations)
 
 
+MAX_QUEUE_CALLS = 100000
+
+
 @dataclass(frozen=True)
 class QueueBudget:
-    """Model calls the whole queue may reserve; None is unlimited."""
+    """An optional cap on the model calls the whole queue may reserve; None is no cap.
+
+    A cap fits agents billed per token (API keys). Subscriptions are not paced by
+    calls: their windows are (see `sdd_usage.quota`), so their queues run uncapped.
+    """
 
     calls: int | None = None
     planning_calls: int | None = None
@@ -44,6 +51,11 @@ class QueueBudget:
     def __post_init__(self) -> None:
         if any(value is not None and value < 0 for value in (self.calls, self.planning_calls)):
             raise ValueError("Queue call budgets cannot be negative")
+        if self.calls is not None and self.calls > MAX_QUEUE_CALLS:
+            raise ValueError(f"Queue call budget cannot exceed {MAX_QUEUE_CALLS}")
+        total, planning = self.calls, self.planning_calls
+        if total is not None and planning is not None and planning > total:
+            raise ValueError("Planning calls are part of all calls: planning cannot exceed total")
 
     def exhausted(self, calls: int, planning_calls: int, planning: bool) -> bool:
         return (self.calls is not None and calls >= self.calls) or (

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sdd_core.codec import canonical, flag, object_json, text
 from sdd_core.models import Result
-from sdd_core.sdk import Launch, Manifest, Packet
+from sdd_core.sdk import STDOUT_LOG, Launch, Manifest, Packet
 
 from sdd_providers.handlers import artifact, time_budget
 from sdd_providers.protocols import cursor_response, opencode_response, structured_answer
@@ -96,7 +96,7 @@ class StructuredCliHandler:
                 f"{self.provider} exited {exit_code}; inspect stderr.log",
                 revision,
             )
-        log = Path(packet.directory) / "stdout.log"
+        log = Path(packet.directory) / STDOUT_LOG
         events = [
             object_json(line)
             for line in log.read_text(encoding="utf-8").splitlines()
