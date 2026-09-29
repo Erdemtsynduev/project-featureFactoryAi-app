@@ -56,6 +56,12 @@ digest they were created with.
   `max_calls` once more (`calls_granted` in the journal; runs record
   `granted_calls`). Before, the limit had no operator remedy: a retry dispatched
   and hit the same limit. The queue's call budget still applies.
+- Tickets show their place in the plan: number and wave (`T15 · wave 3`: it
+  starts once the tickets it depends on are accepted), "after T12, T20" while it
+  waits, and a "needs a person" mark for HITL tickets. The tree lists a parent's
+  tickets by wave, then number. The state read model adds `ticket` per run.
+- Resuming many tasks leaves HITL tickets paused unless they are named by id;
+  the dialog says how many were held and the result lists them in `held`.
 
 ## 0.3.1 — 2026-09-28
 

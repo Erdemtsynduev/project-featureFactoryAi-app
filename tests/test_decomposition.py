@@ -91,6 +91,15 @@ def test_approval_creates_ticket_tasks_once_with_dependencies(tmp_path, monkeypa
         }
         runs = {r["id"]: r for r in state["runs"]}
         assert all(runs[c]["paused"] for c in children)
+        # The board shows each ticket's number, wave and what it follows.
+        assert runs[children[0]]["ticket"] == {"key": "api", "wave": 1, "after": [], "hitl": False}
+        assert runs[children[1]]["ticket"] == {
+            "key": "ui",
+            "wave": 2,
+            "after": ["api"],
+            "hitl": False,
+        }
+        assert runs[identifier]["ticket"] is None
         with service.engine.store.unit() as unit:
             assert [d.id for d in unit.dependencies(children[1])] == [children[0]]
             context = unit.context(children[1])
@@ -157,6 +166,45 @@ def test_interrupted_approval_is_finished_on_restart_with_the_whole_specificatio
         assert restarted.tasks.readmit() == []
     finally:
         restarted.coordinator.close()
+
+
+def test_a_hitl_ticket_starts_only_when_named(tmp_path, monkeypatch):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        root = tmp_path / "project"
+        root.mkdir()
+        service.mutate("project", {"id": "app", "name": "App", "workspace": str(root)})
+        ticket = service.engine.store.publish(Workflow("ticket", "done", (Step("done", "finish"),)))
+        monkeypatch.setattr(
+            service.flows, "ensure", lambda name, project, language, repositories=(): ticket
+        )
+        definition = service.engine.store.publish(planning_flow())
+        run = service.mutate("create", {"id": "plan", "project": "app", "definition": definition})
+        service.mutate("resume", {"id": "plan", "version": run["version"]})
+        complete(service, "plan", "SPEC", "s1")
+        tickets = [
+            {"id": "T1", "title": "Build"},
+            {
+                "id": "T2",
+                "title": "Blind test",
+                "goal": "HITL: people compare",
+                "depends_on": ["T1"],
+            },
+        ]
+        complete(service, "plan", "Two", "t1", tickets=tickets)
+        waiting = service.engine.dispatch("plan", 12, "h1")
+        service.mutate("answer", {"id": "plan", "outcome": "approved", "version": waiting.version})
+        runs = {r["id"]: r for r in service.state()["runs"]}
+        assert runs["plan-T2"]["ticket"]["hitl"] is True
+        result = service.mutate("resume-many", {"project": "app", "scope": "all"})
+        assert result["changed"] == ["plan-T1"] and result["held"] == ["plan-T2"]
+        assert service.engine.store.get("plan-T2").paused
+        named = service.mutate(
+            "resume-many", {"project": "app", "scope": "all", "ids": ["plan-T2"]}
+        )
+        assert named["changed"] == ["plan-T2"] and named["held"] == []
+    finally:
+        service.coordinator.close()
 
 
 def test_failed_actions_are_recorded_in_the_flight_log(tmp_path):
@@ -235,7 +283,7 @@ def test_bulk_resume_respects_dependencies_and_project(tmp_path):
         )
         assert filtered["changed"] == []
         result = service.mutate("resume-many", {"project": "app", "scope": "startable"})
-        assert result == {"changed": ["base"], "skipped": 0}
+        assert result == {"changed": ["base"], "skipped": 0, "held": []}
         result = service.mutate("resume-many", {"project": "app", "scope": "all"})
         assert result["changed"] == ["child"]
         assert service.engine.store.get("elsewhere").paused

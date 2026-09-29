@@ -91,3 +91,43 @@ def language_rule(language: str) -> str:
         f"Response language: {LANGUAGES.get(language, 'Russian')}. Write user-facing questions,"
         " summaries and explanations in this language; keep protocol keys in English.\n"
     )
+
+
+def ticket_places(breakdown: Json) -> dict[str, dict[str, Json]]:
+    """Where each admitted ticket stands in its parent's plan, by run id.
+
+    `breakdown` is the data of a parent's tickets artifact: the approved drafts with
+    the run each became. A ticket's wave is 1 plus the latest wave it waits for, so
+    wave 1 can start at once and each later wave follows the one before; `after`
+    names the tickets it waits for, and `hitl` marks a ticket a person must take part in.
+    """
+    drafts = (
+        [item for item in breakdown if isinstance(item, dict)]
+        if isinstance(breakdown, list)
+        else []
+    )
+    needs: dict[str, list[str]] = {}
+    for item in drafts:
+        listed = item.get("depends_on")
+        needs[str(item.get("id"))] = [str(x) for x in listed] if isinstance(listed, list) else []
+    waves: dict[str, int] = {}
+
+    def wave(key: str, seen: frozenset[str]) -> int:
+        if key not in waves:
+            earlier = [d for d in needs.get(key, []) if d in needs and d not in seen]
+            waves[key] = 1 + max((wave(d, seen | {key}) for d in earlier), default=0)
+        return waves[key]
+
+    places: dict[str, dict[str, Json]] = {}
+    for item in drafts:
+        key = str(item.get("id"))
+        run = item.get("run")
+        if not isinstance(run, str):
+            continue
+        places[run] = {
+            "key": key,
+            "wave": wave(key, frozenset()),
+            "after": list[Json](needs.get(key, [])),
+            "hitl": str(item.get("goal", "")).lstrip().upper().startswith("HITL"),
+        }
+    return places

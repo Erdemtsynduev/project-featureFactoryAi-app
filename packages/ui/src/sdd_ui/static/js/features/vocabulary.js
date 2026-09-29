@@ -3,7 +3,7 @@
 
 import { h } from "../core/dom.js";
 import { formatTime, relativeTime, t } from "../core/i18n.js";
-import { titleOf } from "../core/store.js";
+import { run as runById, titleOf } from "../core/store.js";
 
 const KNOWN_STEPS = new Set([
   "spec",
@@ -79,6 +79,48 @@ function waitingFor(run) {
       ? " " + t("attention.dependenciesMore", { count: ids.length - 2 })
       : "";
   return names.join(", ") + more;
+}
+
+/** A ticket's place in its parent's plan: "T15 · wave 3", a HITL mark and, while
+ * it still waits, which tickets must be accepted first. Null for other work. */
+export function ticketPlace(run) {
+  const place = run.ticket;
+  if (!place) return null;
+  const waiting = (run.pending_dependencies || []).map(
+    (id) => runById(id)?.ticket?.key || id,
+  );
+  return h(
+    "span",
+    { class: "ticket-place" },
+    h(
+      "span",
+      { class: "ticket-chip", title: t("ticket.waveHint", { wave: place.wave }) },
+      t("ticket.place", { key: place.key, wave: place.wave }),
+    ),
+    place.hitl
+      ? h("span", { class: "ticket-hitl", title: t("ticket.hitlHint") }, t("ticket.hitl"))
+      : null,
+    waiting.length && run.status !== "accepted"
+      ? h(
+          "span",
+          { class: "ticket-after", title: waiting.join(", ") },
+          t("ticket.after", {
+            keys:
+              waiting.slice(0, 4).join(", ") +
+              (waiting.length > 4 ? " +" + (waiting.length - 4) : ""),
+          }),
+        )
+      : null,
+  );
+}
+
+/** Tickets of one parent in plan order: by wave, then by their number. */
+export function planOrder(a, b) {
+  const pa = a.ticket;
+  const pb = b.ticket;
+  if (!pa || !pb) return 0;
+  const number = (key) => parseInt(String(key).replace(/\D+/g, ""), 10) || 0;
+  return pa.wave - pb.wave || number(pa.key) - number(pb.key);
 }
 
 export function attentionTone(run) {

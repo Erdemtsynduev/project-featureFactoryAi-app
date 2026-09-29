@@ -14,7 +14,9 @@ import {
   attentionText,
   KIND_GLYPH,
   kindLabel,
+  planOrder,
   stepName,
+  ticketPlace,
 } from "../features/vocabulary.js";
 import { closable, closeButton } from "../features/work.js";
 import { progressLine } from "./cards.js";
@@ -22,7 +24,8 @@ import { folds, LANES, PAGE, shown, view } from "./state.js";
 
 const ORDER = ["needs", "running", "queue", "done"];
 
-/** Children by parent within `all`, oldest first (the order they were cut in). */
+/** Children by parent within `all`: tickets in plan order (wave, then number),
+ * other work oldest first (the order it was cut in). */
 function hierarchy(all) {
   const ids = new Set(all.map((r) => r.id));
   const children = new Map();
@@ -34,6 +37,7 @@ function hierarchy(all) {
       children.get(parent).push(run);
     } else roots.push(run);
   }
+  for (const list of children.values()) list.sort(planOrder);
   return { children, roots };
 }
 
@@ -183,6 +187,7 @@ function row(run, depth, count, open, context) {
             )
           : null,
       ),
+      ticketPlace(run),
       h(
         "span",
         { class: "tree-why" },

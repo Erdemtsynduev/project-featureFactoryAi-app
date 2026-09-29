@@ -47,13 +47,15 @@ function selection(target) {
   return { filter, list };
 }
 
-function counts(list) {
+/** `ids`: tasks the operator named; only those can start a ticket that needs a person. */
+function counts(list, ids = []) {
   const open = list.filter((r) => r.status !== "accepted" && !r.active);
-  const paused = open.filter(
-    (r) => r.paused && r.status !== "blocked",
-  );
+  const held = (r) => r.ticket?.hitl && !ids.includes(r.id);
+  const waiting = open.filter((r) => r.paused && r.status !== "blocked");
+  const paused = waiting.filter((r) => !held(r));
   return {
     paused,
+    hitl: waiting.length - paused.length,
     startable: paused.filter((r) => !r.pending_dependencies?.length),
     blocked: open.filter((r) => r.status === "blocked").length,
     moving: open.filter((r) => !r.paused).length,
@@ -102,7 +104,7 @@ export function openBulkResume(reason = "", target = null) {
   const project = currentProject();
   if (!project) return;
   const { filter, list } = selection(target);
-  const c = counts(list);
+  const c = counts(list, filter.ids);
   const queuePaused = !store.state.settings.running;
   const startQueue = h("input", { type: "checkbox", checked: queuePaused });
   const withDependencies = h("input", { type: "checkbox", checked: !!target });
@@ -287,6 +289,7 @@ export function openBulkResume(reason = "", target = null) {
       c.blocked
         ? h("li", {}, t("bulk.fact.blocked", { count: c.blocked }))
         : null,
+      c.hitl ? h("li", { class: "warn" }, t("bulk.fact.hitl", { count: c.hitl })) : null,
     ];
     budget.replaceChildren(...facts.filter(Boolean));
   }
@@ -353,7 +356,7 @@ export function openBulkResume(reason = "", target = null) {
 export async function pauseAll(target = null) {
   const project = currentProject();
   const { filter, list } = selection(target);
-  const c = counts(list);
+  const c = counts(list, filter.ids);
   if (!project || !c.moving) return toast(t("bulk.nothingToPause"));
   const ok = await confirmDialog({
     title: t("bulk.pauseTitle"),

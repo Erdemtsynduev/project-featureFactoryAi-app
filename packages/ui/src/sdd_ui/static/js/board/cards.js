@@ -25,6 +25,7 @@ import {
   KIND_GLYPH,
   kindLabel,
   stepName,
+  ticketPlace,
 } from "../features/vocabulary.js";
 import { filters, LANES, PAGE, shown, view } from "./state.js";
 
@@ -101,6 +102,7 @@ export function card(run, inPlan) {
         : null,
     ),
     h("strong", { class: "card-title", title: titleOf(run) }, titleOf(run)),
+    ticketPlace(run),
     h(
       "div",
       { class: "card-step" },

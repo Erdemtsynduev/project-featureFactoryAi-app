@@ -2708,3 +2708,36 @@ button.link {
   padding: 2px 8px;
   font-size: 12px;
 }
+
+/* A ticket's place in its parent's plan: number and wave, HITL, what it follows. */
+.ticket-place {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+  font-size: 11px;
+}
+.ticket-chip {
+  font: 11px var(--mono);
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--sunken);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ticket-hitl {
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--warn);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ticket-after {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  color: var(--muted);
+}

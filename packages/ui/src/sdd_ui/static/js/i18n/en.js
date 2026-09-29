@@ -674,6 +674,8 @@ export default {
     "Two agents and one operation run at a time; the rest wait in the queue.",
   "bulk.fact.blocked":
     "Blocked tasks ({count}) are not touched — each has its own reason; open them.",
+  "bulk.fact.hitl":
+    "Tickets that need a person ({count}) do not start with the rest: open each and start it yourself when you are ready to take part.",
   "bulk.startQueue": "Start the queue right away",
   "bulk.resume": "Start",
   "bulk.nothingToPause": "No tasks can be paused",
@@ -733,6 +735,13 @@ export default {
   "board.shown": "Showing {shown} of {total}",
   "board.elsewhere": "You are also needed elsewhere:",
   "card.plan": "Plan {id}",
+  "ticket.place": "{key} · wave {wave}",
+  "ticket.waveHint":
+    "Wave {wave}: the ticket starts once every ticket it depends on is accepted. Wave 1 can start at once.",
+  "ticket.hitl": "needs a person",
+  "ticket.hitlHint":
+    "The plan marks this ticket HITL: a person must decide or check inside it. Do not start it with the rest.",
+  "ticket.after": "after {keys}",
   "plans.start": "Start plan",
   "plans.pause": "Pause",
   "plans.external": {

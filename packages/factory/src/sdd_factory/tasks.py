@@ -27,7 +27,14 @@ from sdd_factory.catalog import Artifact, ProjectCatalog
 from sdd_factory.diagnostics import record
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
-from sdd_factory.model import INTENT_KIND, INTENTS, LANGUAGES, TaskRecord, language_rule
+from sdd_factory.model import (
+    INTENT_KIND,
+    INTENTS,
+    LANGUAGES,
+    TaskRecord,
+    language_rule,
+    ticket_places,
+)
 
 # Input a ticket's brief leaves free for task memory, handoffs and operator guidance.
 TICKET_MEMORY_CHARS = 8000
@@ -236,6 +243,8 @@ class TaskService:
         the paused prerequisites of every unfinished selected task, transitively
         within the project, so work that waits on other work moves.
         Each task is commanded at its own current version; moved tasks are skipped.
+        A ticket its plan marks HITL resumes only when named in `ids`: a person takes
+        part in it, so it never starts as part of a whole plan.
         """
         if command not in ("resume", "pause"):
             raise ValueError("Bulk command must be resume or pause")
@@ -263,6 +272,11 @@ class TaskService:
         if command == "resume" and with_dependencies:
             unfinished = [run for run in selected if run.status != "accepted"]
             chosen += self._prerequisites(unfinished, {run.id for run in project})
+        held: list[str] = []
+        if command == "resume":
+            people = self.hitl(records)
+            held = [run.id for run in chosen if run.id in people and run.id not in ids]
+            chosen = [run for run in chosen if run.id not in held]
         done: list[str] = []
         skipped = 0
         for run in chosen:
@@ -280,8 +294,19 @@ class TaskService:
             tasks=len(ids),
             with_dependencies=with_dependencies,
             count=len(done),
+            held=list[Json](held),
         )
-        return {"changed": list[Json](done), "skipped": skipped}
+        return {"changed": list[Json](done), "skipped": skipped, "held": list[Json](held)}
+
+    def hitl(self, records: dict[str, TaskRecord]) -> frozenset[str]:
+        """Tickets whose approved plan says a person must take part in them."""
+        found: set[str] = set()
+        for parent in {item.parent for item in records.values() if item.parent}:
+            breakdown = self.catalog.artifacts(parent).get("tickets")
+            if breakdown is not None:
+                places = ticket_places(breakdown.data)
+                found.update(run for run, place in places.items() if place["hitl"] is True)
+        return frozenset(found)
 
     def _prerequisites(self, selected: list[Run], project: set[str]) -> list[Run]:
         """Resumable prerequisites of `selected` outside it, within the project."""

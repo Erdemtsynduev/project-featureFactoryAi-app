@@ -22,6 +22,7 @@ from sdd_core.sdk import Registry
 from sdd_factory.diagnostics import live, record
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
+from sdd_factory.model import ticket_places
 from sdd_factory.plans import PlanService
 from sdd_factory.tasks import TaskService
 from sdd_runtime.composition import local_engine
@@ -257,6 +258,11 @@ class WorkspaceService:
             if parent in own:
                 children.setdefault(parent, []).append(run.id)
         closed = frozenset(key for key, item in records.items() if item.closed)
+        places: dict[str, dict[str, Json]] = {}
+        for parent in children:
+            breakdown = self.catalog.artifacts(parent).get("tickets")
+            if breakdown is not None:
+                places.update(ticket_places(breakdown.data))
         derived, progress = rollup(
             own, {key: tuple(value) for key, value in children.items()}, closed
         )
@@ -271,6 +277,8 @@ class WorkspaceService:
                     "pending_dependencies": list(pending.get(run.id, ())),
                     "dependencies": prerequisites.get(run.id, []),
                     "progress": asdict(progress[run.id]) if run.id in progress else None,
+                    # Its place in the parent's plan: number, wave, what it follows.
+                    "ticket": places.get(run.id),
                 }
                 for run in reversed(runs)
             ],
