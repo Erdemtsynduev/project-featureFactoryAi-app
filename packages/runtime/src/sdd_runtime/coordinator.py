@@ -1,6 +1,7 @@
 """Single-writer coordinator with gated hosts and durable per-attempt receipts."""
 
 import os
+import subprocess
 import time
 import uuid
 from collections.abc import Callable
@@ -21,6 +22,11 @@ from sdd_runtime.lane_keeper import LaneKeeper
 from sdd_runtime.packets import build_packet
 
 __all__ = ["Coordinator", "Running"]
+
+# Windows refuses a command line past 32,767 characters; keep a margin for quoting.
+COMMAND_LINE_CHARS = 32000
+# The attempt file the host feeds to the process's stdin.
+INPUT_FILE = "input.txt"
 
 
 class Coordinator:
@@ -112,19 +118,20 @@ class Coordinator:
             raise ValueError("Handler cwd must stay inside the owned workspace")
         if not launch.argv or not Path(launch.argv[0]).is_absolute():
             raise ValueError("Explicit executable required")
+        if len(subprocess.list2cmdline(launch.argv)) > COMMAND_LINE_CHARS:
+            raise ValueError("Command line too long; the handler must pass its prompt on stdin")
         atomic_write(folder / "packet.json", canonical(asdict(packet)))
-        atomic_write(
-            folder / "launch.json",
-            canonical(
-                {
-                    "argv": launch.argv,
-                    "cwd": launch.cwd,
-                    "environment": dict(launch.environment),
-                    "nonce": nonce,
-                    "parent_pid": os.getpid(),
-                }
-            ),
-        )
+        document: dict[str, object] = {
+            "argv": launch.argv,
+            "cwd": launch.cwd,
+            "environment": dict(launch.environment),
+            "nonce": nonce,
+            "parent_pid": os.getpid(),
+        }
+        if launch.input:
+            atomic_write(folder / INPUT_FILE, launch.input)
+            document["input"] = INPUT_FILE
+        atomic_write(folder / "launch.json", canonical(document))
         # Until the persisted host identity exists, no GO can be sent.
         with self.engine.store.unit() as db:
             db.claim_host(packet.attempt.id, canonical(asdict(packet)), nonce)

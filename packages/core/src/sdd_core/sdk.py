@@ -42,6 +42,9 @@ class Launch:
     cwd: str
     environment: tuple[tuple[str, str], ...] = ()
     result_file: str = "result.json"
+    # Text the process reads on stdin. A prompt goes here, not in argv: Windows caps
+    # a whole command line at 32,767 characters.
+    input: str = ""
 
 
 class Handler(Protocol):

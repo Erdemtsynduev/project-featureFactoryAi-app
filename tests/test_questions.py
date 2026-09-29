@@ -157,15 +157,21 @@ def attempt_packet(tmp_path: Path, resume: str = "", mutates: bool = False) -> P
 
 def test_cli_handlers_continue_sessions_and_record_them(tmp_path):
     claude = CliHandler("claude", sys.executable, "opus")
-    argv = claude.prepare(attempt_packet(tmp_path, "sess-9")).argv
+    launch = claude.prepare(attempt_packet(tmp_path, "sess-9"))
+    argv = launch.argv
     assert argv[argv.index("--resume") + 1] == "sess-9"
-    assert argv[argv.index("-p") + 1].startswith("Continue the same bounded step")
+    # Prompts travel on stdin: a long brief must never reach the command line.
+    assert argv[argv.index("-p") + 1] == "--output-format"
+    assert launch.input.startswith("Continue the same bounded step")
     codex = CliHandler("codex", sys.executable, "gpt")
-    argv = codex.prepare(attempt_packet(tmp_path, "thread-3", mutates=True)).argv
-    assert list(argv[1:3]) == ["exec", "resume"] and argv[-2] == "thread-3"
+    launch = codex.prepare(attempt_packet(tmp_path, "thread-3", mutates=True))
+    argv = launch.argv
+    assert list(argv[1:3]) == ["exec", "resume"] and list(argv[-2:]) == ["thread-3", "-"]
     assert 'sandbox_mode="workspace-write"' in argv
-    fresh = codex.prepare(attempt_packet(tmp_path)).argv
-    assert "resume" not in fresh and "--sandbox" in fresh
+    assert launch.input.startswith("Continue the same bounded step")
+    fresh = codex.prepare(attempt_packet(tmp_path))
+    assert "resume" not in fresh.argv and "--sandbox" in fresh.argv
+    assert fresh.argv[-1] == "-" and "New" in fresh.input
     packet = attempt_packet(tmp_path)
     Path(packet.directory, "stdout.log").write_text(
         json.dumps(

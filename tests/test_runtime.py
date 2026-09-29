@@ -96,6 +96,43 @@ def test_eof_before_gate_executes_nothing(tmp_path):
     assert not marker.exists() and not (tmp_path / "exit.json").exists()
 
 
+def test_host_feeds_a_long_prompt_on_stdin(tmp_path):
+    prompt = "Контекст тикета\n" + "x" * 60000
+    (tmp_path / "input.txt").write_text(prompt, encoding="utf-8")
+    code = "import sys; data = sys.stdin.buffer.read(); sys.stdout.buffer.write(data)"
+    (tmp_path / "launch.json").write_text(
+        canonical(
+            {
+                "argv": [sys.executable, "-c", code],
+                "cwd": str(tmp_path),
+                "environment": {},
+                "input": "input.txt",
+                "nonce": "n",
+            }
+        ),
+        encoding="utf-8",
+    )
+    host = subprocess.run(
+        [sys.executable, "-m", "sdd_runtime.host", str(tmp_path)],
+        input=b"GO\n",
+        timeout=30,
+    )
+    assert host.returncode == 0
+    assert (tmp_path / "stdout.log").read_text(encoding="utf-8") == prompt
+    assert (tmp_path / "exit.json").exists()
+
+
+def test_command_line_past_the_windows_limit_is_refused_before_launch(tmp_path):
+    coordinator = runtime(tmp_path, code="#" + "x" * 40000)
+    try:
+        coordinator.tick()
+        run = coordinator.engine.store.get("one")
+        assert "Command line too long" in run.reason
+        assert not coordinator.live
+    finally:
+        coordinator.close()
+
+
 def test_job_kills_descendants(tmp_path):
     child_id = tmp_path / "child.txt"
     script = "import subprocess,sys,time; from pathlib import Path; p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']); Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"

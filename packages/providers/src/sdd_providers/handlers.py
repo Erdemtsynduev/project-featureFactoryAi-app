@@ -219,7 +219,7 @@ class CliHandler:
             ]
             if self.model:
                 argv += ["--model", self.model]
-            argv += [packet.resume, prompt]
+            argv += [packet.resume, "-"]
         elif self.provider == "codex":
             argv = [
                 self.executable,
@@ -238,12 +238,11 @@ class CliHandler:
             ]
             if self.model:
                 argv += ["--model", self.model]
-            argv += [prompt]
+            argv += ["-"]
         else:
             argv = [
                 self.executable,
                 "-p",
-                prompt,
                 "--output-format",
                 "json",
                 "--json-schema",
@@ -262,7 +261,8 @@ class CliHandler:
                 argv += ["--model", self.model]
             if packet.resume:
                 argv += ["--resume", packet.resume]
-        return Launch(tuple(argv), packet.workspace)
+        # `-` (codex) or a bare `-p` (claude) reads the prompt from stdin.
+        return Launch(tuple(argv), packet.workspace, input=prompt)
 
     def failure(self, packet: Packet, revision: str, summary: str) -> Result:
         """Recognised limits become a bounded wait; the engine resumes by itself.

@@ -29,12 +29,18 @@ def main() -> int:
     temporary = folder / "tmp"
     temporary.mkdir(exist_ok=True)
     environment.update(TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
-    with (folder / "stdout.log").open("wb") as out, (folder / "stderr.log").open("wb") as err:
+    # The prompt arrives on stdin from an attempt file; argv stays short.
+    source = folder / text(config["input"], "input") if "input" in config else Path(os.devnull)
+    with (
+        source.open("rb") as feed,
+        (folder / "stdout.log").open("wb") as out,
+        (folder / "stderr.log").open("wb") as err,
+    ):
         result = subprocess.run(
             argv,
             cwd=text(config["cwd"], "cwd"),
             env=environment,
-            stdin=subprocess.DEVNULL,
+            stdin=feed,
             stdout=out,
             stderr=err,
             creationflags=NO_WINDOW,

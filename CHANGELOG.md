@@ -35,6 +35,12 @@ digest they were created with.
   the run dispatches its first process attempt. Tickets admitted before a profile
   or rotation change were blocked with "Pinned handler settings or version
   changed" without ever running; runs that already executed keep their pin.
+- Agent prompts reach the Claude and Codex CLIs on stdin instead of the command
+  line. A ticket brief with its whole specification (~50 000 characters) passed
+  the 32 767-character Windows limit, so the host could not start the agent and
+  the attempt ended as "Host exited without durable completion". `Launch.input`
+  carries the text; the coordinator refuses an over-long command line before
+  launch with a clear reason.
 
 ## 0.3.1 — 2026-09-28
 
