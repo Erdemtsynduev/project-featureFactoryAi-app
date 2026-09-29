@@ -1,7 +1,7 @@
 # Changelog
 
 All libraries (`sdd-core`, `sdd-storage`, `sdd-runtime`, `sdd-providers`,
-`sdd-workflows`, `sdd-usage`, `sdd-factory`, `sdd-ui`) and the `feature-factory-ai` product are
+`sdd-workflows`, `sdd-usage`, `sdd-factory`, `sdd-trackers`, `sdd-ui`) and the `feature-factory-ai` product are
 released together with one version and pin each other exactly. The engine version
 is shown in the UI rail, in **About the engine** and by `ffai --version`.
 `tests/test_versions.py` rejects a release where versions or pins diverge.
@@ -62,6 +62,19 @@ digest they were created with.
   tickets by wave, then number. The state read model adds `ticket` per run.
 - Resuming many tasks leaves HITL tickets paused unless they are named by id;
   the dialog says how many were held and the result lists them in `held`.
+- **Trackers** ([docs/TRACKERS.md](docs/TRACKERS.md)): a project's work can come
+  from a tracker instead of plan files, and the factory mirrors the approved
+  specification, the approved tickets (as issues with "blocks" relations) and
+  every item's state back to it. Neutral contracts live in `sdd_core.tracking`
+  (`WorkItem`, `WorkSource`, `Tracker`, `TrackerUpdate`); Markdown plans are one
+  `WorkSource`. Publications are recorded in a `tracker_outbox` (schema version 5)
+  before delivery and delivered in order on their own thread, with growing
+  retries. Adapters register under `sdd.trackers`; settings never store a token
+  (`token_env` names the variable). The new `sdd-trackers` library ships the
+  Linear adapter, covered by a recorded conversation, not yet qualified against a
+  live workspace. Project settings choose the tracker.
+- `install.py` installs `sdd-usage` and `sdd-factory` from the checkout too; before,
+  a plain-pip installation looked for them on the package index.
 
 ## 0.3.1 — 2026-09-28
 

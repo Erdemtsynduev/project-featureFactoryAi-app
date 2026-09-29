@@ -20,6 +20,26 @@ class AgentCall:
     result: str | None
 
 
+@dataclass(frozen=True)
+class OutboxEntry:
+    """A recorded publication to a project's tracker and how its delivery went.
+
+    `status` is `pending` until delivered (`done`) or given up (`failed`); a pending
+    entry is not retried before `next_at`.
+    """
+
+    id: str
+    project: str
+    run: str
+    kind: str
+    document: str
+    status: str = "pending"
+    attempts: int = 0
+    next_at: float = 0.0
+    error: str = ""
+    receipt: str = ""
+
+
 class CatalogRecords(Protocol):
     def projects(self) -> tuple[str, ...]: ...
     def save_project(self, identifier: str, document: str) -> None: ...
@@ -53,4 +73,26 @@ class CatalogRecords(Protocol):
     def agent_calls(self) -> tuple[AgentCall, ...]: ...
     def daily_dispatches(self, days: int) -> tuple[tuple[str, int], ...]:
         """Newest `days` UTC days with dispatch counts."""
+        ...
+
+    # Tracker outbox: publications are recorded before delivery, delivered in order.
+
+    def record_update(self, entry: OutboxEntry) -> bool:
+        """Record a pending publication; False when its id was recorded before."""
+        ...
+
+    def last_update(self, run: str, kind: str) -> OutboxEntry | None:
+        """The newest publication of this kind about a run, delivered or not."""
+        ...
+
+    def pending_updates(self, project: str) -> tuple[OutboxEntry, ...]:
+        """Undelivered publications of a project, oldest first."""
+        ...
+
+    def settle_update(self, entry: OutboxEntry) -> None:
+        """Store a delivery outcome: status, attempts, next try, error and receipt."""
+        ...
+
+    def updates(self, project: str, limit: int) -> tuple[OutboxEntry, ...]:
+        """The newest publications of a project, for people to inspect."""
         ...

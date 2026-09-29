@@ -9,7 +9,7 @@ from threading import RLock
 from typing import cast
 
 from sdd_core import machine
-from sdd_core.catalog import AgentCall
+from sdd_core.catalog import AgentCall, OutboxEntry
 from sdd_core.codec import digest, result_load, workflow_json
 from sdd_core.graph import validate
 from sdd_core.models import Attempt, Result, Run, Transition, Workflow
@@ -361,6 +361,7 @@ class MemoryCatalog:
         }
         self.plan_documents: dict[tuple[str, str], str] = {}
         self.artifact_documents: dict[tuple[str, str], str] = {}
+        self.outbox: dict[str, OutboxEntry] = {}  # insertion order is delivery order
 
     def projects(self) -> tuple[str, ...]:
         return tuple(v for _, v in sorted(self.documents["projects"].items()))
@@ -428,3 +429,27 @@ class MemoryCatalog:
                     day = datetime.fromtimestamp(at, UTC).date().isoformat()
                     counts[day] = counts.get(day, 0) + 1
         return tuple(sorted(counts.items(), reverse=True)[:days])
+
+    def record_update(self, entry: OutboxEntry) -> bool:
+        if entry.id in self.outbox:
+            return False
+        self.outbox[entry.id] = entry
+        return True
+
+    def last_update(self, run: str, kind: str) -> OutboxEntry | None:
+        found = [e for e in self.outbox.values() if e.run == run and e.kind == kind]
+        return found[-1] if found else None
+
+    def pending_updates(self, project: str) -> tuple[OutboxEntry, ...]:
+        return tuple(
+            e for e in self.outbox.values() if e.project == project and e.status == "pending"
+        )
+
+    def settle_update(self, entry: OutboxEntry) -> None:
+        if entry.id not in self.outbox:
+            raise KeyError(entry.id)
+        self.outbox[entry.id] = entry
+
+    def updates(self, project: str, limit: int) -> tuple[OutboxEntry, ...]:
+        found = [e for e in reversed(self.outbox.values()) if e.project == project]
+        return tuple(found[:limit])

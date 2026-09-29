@@ -7,12 +7,14 @@ and maps HTTP action names to use cases. Every action is recorded in the
 flight log with its outcome, so incidents can be reconstructed afterwards.
 """
 
+import threading
 import time
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict
 from functools import cache, partial
 from pathlib import Path
+from typing import Any, cast
 
 from sdd_core.codec import object_json, text
 from sdd_core.models import Json
@@ -25,6 +27,8 @@ from sdd_factory.journal import FlightLog
 from sdd_factory.model import ticket_places
 from sdd_factory.plans import PlanService
 from sdd_factory.tasks import TaskService
+from sdd_factory.trackers import ProjectSources, installed_trackers
+from sdd_factory.tracking import RunView, TrackerSync
 from sdd_runtime.composition import local_engine
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.versions import consistent, engine, installed
@@ -38,6 +42,8 @@ type Action = Callable[[dict[str, Json]], object]
 
 # Actions that replace the coordinator, its handlers or the queue settings.
 SPURIOUS_BLOCK = "Run is not dispatchable"
+# How often projects with a tracker are mirrored, in seconds.
+TRACKER_EVERY = 30.0
 COORDINATOR_ACTIONS = frozenset({"queue", "budget", "profiles", "connect", "rotation", "wake"})
 # Actions whose `id` names a task (other actions use `id` for projects).
 TASK_ACTIONS = frozenset(
@@ -85,7 +91,13 @@ class WorkspaceService:
         self.tasks = TaskService(
             self.engine, self.catalog, self.flows, self.log, lambda run: self.coordinator.bind(run)
         )
-        self.plans = PlanService(self.engine, self.catalog, self.flows, self.log)
+        # A project's work comes from its plans folder or its tracker, which also
+        # receives the factory's progress through the outbox.
+        self.sources = ProjectSources()
+        self.plans = PlanService(
+            self.engine, self.catalog, self.flows, self.log, self.sources.source
+        )
+        self.mirror = TrackerSync(self.catalog, self.sources.tracker, self.log)
         self.actions: dict[str, Action] = {
             "project": self.catalog.save_project,
             "discover": lambda _: self.catalog.discover(),
@@ -108,6 +120,7 @@ class WorkspaceService:
             "plans-sync": self.plans.sync,
             "plans-rebuild": self.plans.rebuild,
             "interactive-demo": self.tasks.demo,
+            "tracker-sync": lambda doc: self.sync_trackers(text(doc.get("project", ""), "project")),
             "answer": self.tasks.answer,
             "message": self.tasks.message,
             "recover": self.tasks.recover,
@@ -118,6 +131,8 @@ class WorkspaceService:
             self.actions[command + "-many"] = partial(self.tasks.bulk, command)
         found = installed()
         self.versions = {"engine": engine(), "packages": found, "consistent": consistent(found)}
+        # Tracker adapters installed with the application, offered in project settings.
+        self.tracker_kinds = sorted(installed_trackers())
         self._release_spurious_blocks()
         self._finish_admissions()
 
@@ -209,7 +224,44 @@ class WorkspaceService:
 
     def work(self) -> None:
         self.log.record("application_started")
+        mirror = threading.Thread(target=self._mirror_loop, name="tracker-mirror", daemon=True)
+        mirror.start()
         self.queue.work()
+
+    # Trackers ------------------------------------------------------------------
+
+    def _mirror_loop(self) -> None:
+        """Mirror projects into their trackers outside the queue's lock: delivery
+        waits on the network and must never hold up scheduling."""
+        while not self.queue.quit.wait(TRACKER_EVERY):
+            try:
+                self.sync_trackers()
+            except Exception as error:  # a tracker never stops the application
+                self.log.record("tracker_failed", "error", error=f"{type(error).__name__}: {error}")
+
+    def sync_trackers(self, project: str = "") -> dict[str, int]:
+        """Record what changed for projects with a tracker, then deliver in order."""
+        projects = [
+            p
+            for p in self.catalog.projects()
+            if p.get("tracker") and (not project or p["id"] == project)
+        ]
+        if not projects:
+            return {"recorded": 0, "sent": 0}
+        views = [
+            RunView(
+                str(r["id"]),
+                str(r["status"]),
+                str(r["attention"]["code"]),
+                str(r["attention"].get("detail") or r.get("reason") or ""),
+            )
+            for r in cast(list[dict[str, Any]], self.state()["runs"])
+        ]
+        recorded = sent = 0
+        for item in projects:
+            recorded += self.mirror.observe(str(item["id"]), views)
+            sent += self.mirror.deliver(item)
+        return {"recorded": recorded, "sent": sent}
 
     def close(self) -> None:
         self.queue.close()
@@ -283,6 +335,7 @@ class WorkspaceService:
                 for run in reversed(runs)
             ],
             "versions": self.versions,
+            "trackers": list(self.tracker_kinds),
             "totals": {
                 "calls": sum(r.calls for r in runs),
                 "planning_calls": sum(r.planning_calls for r in runs),

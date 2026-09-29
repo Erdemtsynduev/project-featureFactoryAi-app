@@ -5,7 +5,7 @@
 import * as api from "../core/api.js";
 import { byId, h } from "../core/dom.js";
 import { t } from "../core/i18n.js";
-import { currentProject, refresh, selectProject } from "../core/store.js";
+import { currentProject, refresh, selectProject, store } from "../core/store.js";
 import { openDialog } from "../ui/dialog.js";
 import { bindDraft } from "../ui/draft.js";
 import { toast, toastError } from "../ui/toast.js";
@@ -84,6 +84,21 @@ export function openProjectDialog(project = null) {
     placeholder: t("project.plansFolderPlaceholder"),
     spellcheck: "false",
   });
+  // Where work comes from besides plan files: an installed tracker and its settings.
+  const trackerKind = h(
+    "select",
+    { name: "tracker_kind" },
+    h("option", { value: "" }, t("project.trackerNone")),
+    ...(store.state?.trackers || []).map((kind) =>
+      h("option", { value: kind }, kind),
+    ),
+  );
+  const trackerSettings = h("textarea", {
+    name: "tracker_settings",
+    rows: "4",
+    placeholder: t("project.trackerSettingsPlaceholder"),
+    spellcheck: "false",
+  });
   const repositoryChecks = h("textarea", {
     name: "repository_checks",
     rows: "3",
@@ -128,6 +143,13 @@ export function openProjectDialog(project = null) {
       t("project.plansFolderHint"),
       true,
     ),
+    field(t("project.tracker"), trackerKind, t("project.trackerHint"), true),
+    field(
+      t("project.trackerSettings"),
+      trackerSettings,
+      t("project.trackerSettingsHint"),
+      true,
+    ),
     field(
       t("project.repositoryChecks"),
       repositoryChecks,
@@ -158,6 +180,13 @@ export function openProjectDialog(project = null) {
     language.value = project.language || "ru";
     checks.value = joinCommand(project.checks);
     plansFolder.value = project.plans_folder || "";
+    const { kind = "", ...settings } = project.tracker || {};
+    trackerKind.value = kind;
+    trackerSettings.value = Object.entries(settings)
+      .map(([key, value]) =>
+        `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`,
+      )
+      .join("\n");
     repositoryChecks.value = Object.entries(project.repository_checks || {})
       .map(([repo, argv]) => `${repo}: ${joinCommand(argv)}`)
       .join("\n");
@@ -210,6 +239,9 @@ export function openProjectDialog(project = null) {
       } catch {
         throw Error(t("project.checksInvalid"));
       }
+      const tracker = trackerKind.value
+        ? { kind: trackerKind.value, ...trackerFields(trackerSettings.value) }
+        : {};
       const result = await api.post("project", {
         id: id.value.trim(),
         name: name.value.trim(),
@@ -218,6 +250,7 @@ export function openProjectDialog(project = null) {
         checks: parsed,
         repository_checks: perRepository,
         plans_folder: plansFolder.value.trim(),
+        tracker,
         isolation: isolation.checked,
         auto_resolve: autoResolve.checked,
       });
@@ -234,6 +267,24 @@ export function openProjectDialog(project = null) {
   };
   name.focus();
   return dialog;
+}
+
+/** "key: value" lines; a JSON value (an object of state names) is read as JSON. */
+function trackerFields(text) {
+  const fields = {};
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const at = line.indexOf(":");
+    if (at < 1) throw Error(t("project.trackerSettingsInvalid"));
+    const key = line.slice(0, at).trim();
+    const raw = line.slice(at + 1).trim();
+    try {
+      fields[key] = raw.startsWith("{") ? JSON.parse(raw) : raw;
+    } catch {
+      throw Error(t("project.trackerSettingsInvalid"));
+    }
+  }
+  return fields;
 }
 
 export function startProjects() {

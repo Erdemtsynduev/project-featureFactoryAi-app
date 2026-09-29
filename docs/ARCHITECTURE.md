@@ -3,7 +3,7 @@
 ## Dependency direction
 
 `providers -> core <- storage`; `runtime services -> core`; `workflows -> core`;
-`usage -> core`; `factory -> core, runtime, workflows`;
+`usage -> core`; `trackers -> core`; `factory -> core, runtime, workflows`;
 `ui -> factory, core, runtime, providers, workflows, usage`.
 `sdd_runtime.composition` is the local composition root (SQLite storage, Git, local files
 and the handler registry); the CLI and the UI both compose through it, and the UI never

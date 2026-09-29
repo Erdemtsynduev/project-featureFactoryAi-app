@@ -95,7 +95,7 @@ checks, review, diagnosis, repair and reconciliation. Recovery rechecks unfinish
 work before returning to checks and review. It cannot mark a card accepted by itself.
 The legacy autonomous portfolio scheduler is not silently launched or migrated.
 
-[Changelog](CHANGELOG.md) · [UI guide](docs/UI.md) · [Legacy feature comparison](docs/LEGACY-PARITY.md) ·
+[Changelog](CHANGELOG.md) · [UI guide](docs/UI.md) · [Trackers](docs/TRACKERS.md) · [Legacy feature comparison](docs/LEGACY-PARITY.md) ·
 [Operational lessons](docs/OPERATIONS-LESSONS.md).
 
 ## Agent profiles
@@ -188,6 +188,7 @@ verified evidence; a model's success claim alone is insufficient.
 | `sdd-factory` | Application layer: features, specifications, tickets, plans, artifacts |
 | `sdd-ui` | Optional local visual workspace over the factory |
 | `sdd-usage` | Dated model rate cards and API-equivalent cost of measured tokens |
+| `sdd-trackers` | Tracker adapters (Linear): work items in, specification, tickets and states out |
 
 Python module names `sdd_*`, extension groups `sdd.handlers`, `sdd.agents`,
 `sdd.executors`, and `.sdd-engine` remain stable technical contracts.

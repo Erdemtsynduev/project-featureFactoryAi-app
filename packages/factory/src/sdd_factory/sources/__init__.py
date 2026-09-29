@@ -1,12 +1,10 @@
-"""Where features come from: Markdown plans today; trackers or the operator tomorrow."""
+"""Where features come from: numbered Markdown plans, or a tracker (`sdd.trackers`).
 
-from pathlib import Path
-from typing import Protocol
+A project names its source in its settings. The factory reads work items through
+`sdd_core.tracking.WorkSource`; a source that is also a `Tracker` receives the
+factory's progress through the tracker outbox.
+"""
 
-from sdd_factory.sources.markdown import PlanDocument
+from sdd_core.tracking import Tracker, WorkItem, WorkRow, WorkSource
 
-
-class FeatureSource(Protocol):
-    """A source of plan documents: each becomes one feature over its open rows."""
-
-    def documents(self, workspace: Path) -> list[PlanDocument]: ...
+__all__ = ["Tracker", "WorkItem", "WorkRow", "WorkSource"]

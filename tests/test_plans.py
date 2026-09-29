@@ -33,14 +33,14 @@ STEPPED = Workflow(
 
 def test_parse_plan_reads_rows_marks_details_and_rules():
     plan = parse_plan("plans/110_RALLY_PLAN.md", PLAN)
-    assert plan.number == "110" and plan.title == "110 · Rally: большое обновление"
+    assert plan.key == "110" and plan.title == "110 · Rally: большое обновление"
     assert [(r.id, r.mark, r.open) for r in plan.rows] == [
         ("FH-01", "x", False),
         ("FH-02", "~", True),
         ("FH-03", " ", True),
     ]
     assert plan.rows[1].detail == ("Приёмка: метрика повторяемости ниже порога.",)
-    assert "сначала ресерч" in plan.preamble
+    assert "сначала ресерч" in plan.body
     with pytest.raises(ValueError, match="Duplicate row"):
         parse_plan("110_X.md", PLAN + "- [ ] **FH-03** — again\n")
     with pytest.raises(ValueError, match="three-digit"):

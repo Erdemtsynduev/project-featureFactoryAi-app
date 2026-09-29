@@ -17,7 +17,17 @@ def run(args: list[str], cwd: Path = ROOT) -> None:
 clean()
 for path in [
     ROOT / "packages" / name
-    for name in ("core", "storage", "runtime", "providers", "workflows", "usage", "factory", "ui")
+    for name in (
+        "core",
+        "storage",
+        "runtime",
+        "providers",
+        "workflows",
+        "usage",
+        "factory",
+        "trackers",
+        "ui",
+    )
 ] + [ROOT, ROOT / "examples/extension"]:
     run(
         [

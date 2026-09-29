@@ -12,6 +12,7 @@ ALLOWED = {
     "storage": {"core", "storage"},
     "runtime": {"core", "runtime"},
     "providers": {"core", "providers"},
+    "trackers": {"core", "trackers"},
     "workflows": {"core", "workflows"},
 }
 # Composition roots may choose concrete adapters; nothing else may.

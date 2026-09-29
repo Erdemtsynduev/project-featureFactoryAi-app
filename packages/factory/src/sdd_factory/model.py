@@ -48,6 +48,7 @@ class TaskRecord:
     legacy_id: str = ""  # identity in the legacy orchestrator, when imported
     closed: bool = False  # closed by the operator before all its children were done
     origin: str = ""  # the parent a ticket was detached from when that parent closed
+    link: str = ""  # the item's reference in the project's tracker, once mirrored there
 
     @classmethod
     def load(cls, document: dict[str, Json]) -> "TaskRecord":
@@ -68,6 +69,7 @@ class TaskRecord:
             legacy_id=str(document.get("legacy_id", "")),
             closed=document.get("closed") is True,
             origin=str(document.get("origin", "")),
+            link=str(document.get("link", "")),
         )
 
     def document(self) -> dict[str, Json]:

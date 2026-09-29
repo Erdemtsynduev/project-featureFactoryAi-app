@@ -16,6 +16,7 @@ from sdd_core.models import Json
 from sdd_core.ports import Conflict
 
 from sdd_factory.model import TaskRecord
+from sdd_factory.trackers import tracker_settings
 
 ARTIFACT_KINDS = ("specification", "tickets")
 
@@ -90,6 +91,8 @@ class ProjectCatalog:
             "repository_checks": repository_checks,
             # Where the project keeps plan documents that become features; optional.
             "plans_folder": plans_folder,
+            # Where work comes from and where progress is shown, when not Markdown plans.
+            "tracker": tracker_settings(doc.get("tracker")),
             # Tickets run in their own worktree lane; conflicts go to an agent when autonomous.
             "isolation": doc.get("isolation", True) is not False,
             "auto_resolve": doc.get("auto_resolve", True) is not False,

@@ -1,10 +1,10 @@
-"""SQLite implementation of the application metadata port (schema version 3)."""
+"""SQLite implementation of the application metadata port and the tracker outbox."""
 
 import sqlite3
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 
-from sdd_core.catalog import AgentCall
+from sdd_core.catalog import AgentCall, OutboxEntry
 from sdd_core.codec import object_json
 
 type Transaction = Callable[[], AbstractContextManager[sqlite3.Connection]]
@@ -130,3 +130,83 @@ class SQLiteCatalog:
                     (days,),
                 )
             )
+
+    # Tracker outbox ------------------------------------------------------------
+
+    def record_update(self, entry: OutboxEntry) -> bool:
+        with self.transaction() as db:
+            inserted = db.execute(
+                "INSERT OR IGNORE INTO tracker_outbox VALUES(?,?,?,?,?,?,?,?,?,?)",
+                _outbox_row(entry),
+            ).rowcount
+        return inserted == 1
+
+    def last_update(self, run: str, kind: str) -> OutboxEntry | None:
+        with self.transaction() as db:
+            row = db.execute(
+                f"SELECT {OUTBOX_COLUMNS} FROM tracker_outbox WHERE run=? AND kind=? "
+                "ORDER BY rowid DESC LIMIT 1",
+                (run, kind),
+            ).fetchone()
+        return None if row is None else _outbox_entry(row)
+
+    def pending_updates(self, project: str) -> tuple[OutboxEntry, ...]:
+        with self.transaction() as db:
+            rows = db.execute(
+                f"SELECT {OUTBOX_COLUMNS} FROM tracker_outbox "
+                "WHERE project=? AND status='pending' ORDER BY rowid",
+                (project,),
+            ).fetchall()
+        return tuple(_outbox_entry(row) for row in rows)
+
+    def settle_update(self, entry: OutboxEntry) -> None:
+        with self.transaction() as db:
+            changed = db.execute(
+                "UPDATE tracker_outbox SET status=?,attempts=?,next_at=?,error=?,receipt=? "
+                "WHERE id=?",
+                (entry.status, entry.attempts, entry.next_at, entry.error, entry.receipt, entry.id),
+            ).rowcount
+        if changed != 1:
+            raise KeyError(entry.id)
+
+    def updates(self, project: str, limit: int) -> tuple[OutboxEntry, ...]:
+        with self.transaction() as db:
+            rows = db.execute(
+                f"SELECT {OUTBOX_COLUMNS} FROM tracker_outbox WHERE project=? "
+                "ORDER BY rowid DESC LIMIT ?",
+                (project, limit),
+            ).fetchall()
+        return tuple(_outbox_entry(row) for row in rows)
+
+
+OUTBOX_COLUMNS = "id,project,run,kind,document,status,attempts,next_at,error,receipt"
+
+
+def _outbox_row(entry: OutboxEntry) -> tuple[object, ...]:
+    return (
+        entry.id,
+        entry.project,
+        entry.run,
+        entry.kind,
+        entry.document,
+        entry.status,
+        entry.attempts,
+        entry.next_at,
+        entry.error,
+        entry.receipt,
+    )
+
+
+def _outbox_entry(row: sqlite3.Row) -> OutboxEntry:
+    return OutboxEntry(
+        str(row[0]),
+        str(row[1]),
+        str(row[2]),
+        str(row[3]),
+        str(row[4]),
+        str(row[5]),
+        int(row[6]),
+        float(row[7]),
+        str(row[8]),
+        str(row[9]),
+    )

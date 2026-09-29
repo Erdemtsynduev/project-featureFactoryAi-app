@@ -535,3 +535,41 @@ def test_tree_nests_tickets_and_closes_a_partly_done_feature(page, workshop, tmp
     assert service.catalog.task("checkout-api").parent == "checkout"
     assert service.state()["totals"]["calls"] == 0
     assert not errors
+
+
+def test_project_settings_choose_a_tracker_without_storing_a_token(page, workshop, tmp_path):
+    from playwright.sync_api import expect
+
+    url, service = workshop
+    errors = []
+    page.on("pageerror", lambda error: errors.append(error))
+    root = tmp_path / "linear-project"
+    root.mkdir()
+    service.mutate("project", {"id": "lin", "name": "Lin", "workspace": str(root)})
+    page.goto(url)
+    page.wait_for_selector("html[data-ready=true]")
+    page.locator("#project-select").select_option("lin")
+    page.locator("#project-edit").click()
+    page.locator("select[name=tracker_kind]").select_option("linear")
+    settings = page.locator("textarea[name=tracker_settings]")
+    settings.fill("team: ENG\nsource: projects\napi_key: lin_api_secret")
+    page.get_by_role("button", name="Сохранить").click()
+    expect(page.locator(".toast").last).to_contain_text("secret")
+    assert (
+        "tracker" not in service.catalog.project("lin")
+        or not service.catalog.project("lin")["tracker"]
+    )
+    settings.fill('team: ENG\ntoken_env: LINEAR_API_KEY\nstates: {"needs_person": "In Review"}')
+    page.get_by_role("button", name="Сохранить").click()
+    expect(page.locator("dialog[open]")).to_have_count(0)
+    assert service.catalog.project("lin")["tracker"] == {
+        "kind": "linear",
+        "team": "ENG",
+        "token_env": "LINEAR_API_KEY",
+        "states": {"needs_person": "In Review"},
+    }
+    page.locator("#project-edit").click()
+    expect(page.locator("select[name=tracker_kind]")).to_have_value("linear")
+    value = page.locator("textarea[name=tracker_settings]").input_value()
+    assert "team: ENG" in value and '{"needs_person":"In Review"}' in value, value
+    assert not errors

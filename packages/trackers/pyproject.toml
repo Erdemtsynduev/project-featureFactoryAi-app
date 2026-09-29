@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdd-trackers"
+version = "0.3.1"
+license = "MIT"
+license-files = ["LICENSE"]
+description = "Tracker adapters for Feature Factory AI: work items in, progress out"
+requires-python = ">=3.12"
+dependencies = ["sdd-core==0.3.1"]
+
+[project.entry-points."sdd.trackers"]
+linear = "sdd_trackers.linear:LinearTracker"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]

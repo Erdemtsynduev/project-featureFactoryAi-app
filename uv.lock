@@ -15,6 +15,7 @@ members = [
     "sdd-providers",
     "sdd-runtime",
     "sdd-storage",
+    "sdd-trackers",
     "sdd-ui",
     "sdd-usage",
     "sdd-workflows",
@@ -255,6 +256,7 @@ dependencies = [
     { name = "sdd-factory" },
     { name = "sdd-providers" },
     { name = "sdd-runtime", extra = ["local"] },
+    { name = "sdd-trackers" },
     { name = "sdd-ui" },
     { name = "sdd-usage" },
     { name = "sdd-workflows" },
@@ -284,6 +286,7 @@ requires-dist = [
     { name = "sdd-factory", editable = "packages/factory" },
     { name = "sdd-providers", editable = "packages/providers" },
     { name = "sdd-runtime", extras = ["local"], editable = "packages/runtime" },
+    { name = "sdd-trackers", editable = "packages/trackers" },
     { name = "sdd-ui", editable = "packages/ui" },
     { name = "sdd-usage", editable = "packages/usage" },
     { name = "sdd-workflows", editable = "packages/workflows" },
@@ -886,6 +889,17 @@ provides-extras = ["local"]
 name = "sdd-storage"
 version = "0.3.1"
 source = { editable = "packages/storage" }
+dependencies = [
+    { name = "sdd-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "sdd-core", editable = "packages/core" }]
+
+[[package]]
+name = "sdd-trackers"
+version = "0.3.1"
+source = { editable = "packages/trackers" }
 dependencies = [
     { name = "sdd-core" },
 ]

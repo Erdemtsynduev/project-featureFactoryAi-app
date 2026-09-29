@@ -2,10 +2,10 @@
 
 Every feature takes the same path: a specification (a PRD, with questions when a
 decision is missing), a breakdown into tickets (vertical slices), the operator's
-approval, then its tickets run. A plan document from a `FeatureSource` (by default
-numbered Markdown files in the project's plans folder) only supplies a feature's
-scope: its open and partial rows. The specification and the tickets belong to the
-factory.
+approval, then its tickets run. A work item from the project's `WorkSource` (by
+default numbered Markdown files in its plans folder; a tracker such as Linear when
+the project names one) only supplies a feature's scope: its open and partial rows.
+The specification and the tickets belong to the factory.
 
 `sync` creates one paused feature `feature_<NNN>` per plan whose open rows are not
 covered yet; rows added to the file later (research adds rows) become a follow-up
@@ -21,14 +21,14 @@ from pathlib import Path
 
 from sdd_core import machine
 from sdd_core.models import Json, Run
+from sdd_core.tracking import WorkItem, WorkRow, WorkSource
 from sdd_runtime.engine import Engine
 
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import TaskRecord, language_rule
-from sdd_factory.sources import FeatureSource
-from sdd_factory.sources.markdown import MarkdownPlans, PlanDocument, PlanRow, row_run_id
+from sdd_factory.sources.markdown import MarkdownPlans, row_run_id
 
 # Sections of a per-row brief that carry recorded work worth keeping in the feature.
 RECORDED = re.compile(
@@ -36,6 +36,10 @@ RECORDED = re.compile(
     re.M,
 )
 RECORDED_CHARS = 1500
+# Claim of a planning run whose item lives in a tracker, not in a workspace folder: a
+# path nothing writes, so planning never waits for tickets or blocks them.
+TRACKER_SCOPE = ".sdd-tracker-items"
+BODY_CHARS = 6000
 
 
 class PlanService:
@@ -45,10 +49,10 @@ class PlanService:
         catalog: ProjectCatalog,
         flows: FlowLibrary,
         log: FlightLog,
-        sources: Callable[[dict[str, Json]], FeatureSource] | None = None,
+        sources: Callable[[dict[str, Json]], WorkSource] | None = None,
     ) -> None:
-        """`sources(project)` chooses where a project's plans come from; by default the
-        numbered Markdown files in the folder the project names."""
+        """`sources(project)` chooses where a project's work items come from; by default
+        the numbered Markdown files in the folder the project names."""
         self.engine, self.catalog, self.flows, self.log = engine, catalog, flows, log
         self.sources = sources or (
             lambda project: MarkdownPlans(str(project.get("plans_folder", "")))
@@ -74,8 +78,8 @@ class PlanService:
         only = str(doc.get("plan", ""))
         plans = [
             plan
-            for plan in self.sources(project).documents(workspace)
-            if not only or plan.number == only
+            for plan in self.sources(project).items(str(workspace))
+            if not only or plan.key == only
         ]
         if only and not plans:
             raise ValueError(f"No plan {only} in the project's plan source")
@@ -99,13 +103,12 @@ class PlanService:
             scope = [row for row in plan.rows if row.open and row.id not in covered]
             if not scope:
                 continue
-            previous = [key for key, item in features.items() if item.plan == plan.number]
-            identifier = f"feature_{plan.number}" + (f"_{len(previous) + 1}" if previous else "")
+            previous = [key for key, item in features.items() if item.plan == plan.key]
+            identifier = f"feature_{plan.key}" + (f"_{len(previous) + 1}" if previous else "")
             flow = flow or self.flows.ensure("feature", project_id, language)
             queued = self._queued(plan, records, runs)
             recorded = {
-                row.id: recorded_work(contexts.get(row_run_id(plan.number, row), ""))
-                for row in scope
+                row.id: recorded_work(contexts.get(row_run_id(plan.key, row), "")) for row in scope
             }
             self.engine.create(
                 identifier,
@@ -115,7 +118,7 @@ class PlanService:
                 None,
                 time.time(),
                 (),
-                (str(Path(plan.path).parent),),
+                (str(Path(plan.path).parent),) if plan.path else (TRACKER_SCOPE,),
             )
             self.catalog.save_task(
                 identifier,
@@ -124,16 +127,23 @@ class PlanService:
                     title=plan.title[:200],
                     kind="feature",
                     language=language,
-                    plan=plan.number,
+                    plan=plan.key,
                     rows=tuple(row.id for row in scope),
-                    source=plan.path,
+                    source=plan.path or plan.url,
+                    link=plan.link,
                 ),
             )
             created.append(identifier)
         self.catalog.save_plans(
             project_id,
             [
-                {"id": plan.number, "title": plan.title, "path": plan.path, **plan.counts()}
+                {
+                    "id": plan.key,
+                    "title": plan.title,
+                    "path": plan.path,
+                    "url": plan.url,
+                    **plan.counts(),
+                }
                 for plan in plans
             ],
         )
@@ -144,32 +154,28 @@ class PlanService:
 
     @staticmethod
     def _covered(
-        plan: PlanDocument,
+        plan: WorkItem,
         features: dict[str, TaskRecord],
         records: dict[str, TaskRecord],
         runs: dict[str, Run],
     ) -> set[str]:
         """Rows already in a feature's scope or decomposed into queued legacy tickets."""
-        covered = {
-            row for item in features.values() if item.plan == plan.number for row in item.rows
-        }
+        covered = {row for item in features.values() if item.plan == plan.key for row in item.rows}
         parents = {
             item.parent
             for key, item in records.items()
             if key in runs and item.kind == "ticket" and item.legacy_id
         }
-        covered |= {row.id for row in plan.rows if row_run_id(plan.number, row) in parents}
+        covered |= {row.id for row in plan.rows if row_run_id(plan.key, row) in parents}
         return covered
 
     @staticmethod
-    def _queued(
-        plan: PlanDocument, records: dict[str, TaskRecord], runs: dict[str, Run]
-    ) -> list[str]:
+    def _queued(plan: WorkItem, records: dict[str, TaskRecord], runs: dict[str, Run]) -> list[str]:
         return [
             f"{key} — {item.title}"
             for key, item in records.items()
             if key in runs
-            and item.plan == plan.number
+            and item.plan == plan.key
             and item.kind == "ticket"
             and runs[key].status != "accepted"
         ]
@@ -183,7 +189,7 @@ class PlanService:
         kept run depends on stay untouched.
         """
         project_id, project, workspace = self._project(doc)
-        self.sources(project).documents(workspace)  # refuse before changing anything
+        self.sources(project).items(str(workspace))  # refuse before changing anything
         records = self.catalog.tasks()
         with self.engine.store.unit() as unit:
             runs = {run.id: run for run in unit.runs()}
@@ -226,15 +232,23 @@ def recorded_work(context: str) -> str:
 
 
 def feature_brief(
-    plan: PlanDocument, scope: list[PlanRow], queued: list[str], recorded: dict[str, str]
+    plan: WorkItem, scope: list[WorkRow], queued: list[str], recorded: dict[str, str]
 ) -> str:
-    lines = [
-        f"Feature: plan {plan.title}.",
-        f"Source: {plan.path}. Read it: its context, rules (for example research first)"
-        " and every row. Rows marked [x] or [-] are context, not scope.",
-        "",
-        "Scope: these open rows of the plan (id, mark, text):",
-    ]
+    if plan.path:
+        lines = [
+            f"Feature: plan {plan.title}.",
+            f"Source: {plan.path}. Read it: its context, rules (for example research first)"
+            " and every row. Rows marked [x] or [-] are context, not scope.",
+        ]
+    else:
+        # A tracker item is not in the workspace: its description travels in the brief.
+        lines = [
+            f"Feature: {plan.title}.",
+            f"Source: {plan.url or plan.link} (tracker). Its description, rules and findings:",
+            plan.body[:BODY_CHARS],
+            "Rows marked [x] or [-] are context, not scope.",
+        ]
+    lines += ["", "Scope: these open rows of the plan (id, mark, text):"]
     for row in scope:
         mark = "partial - continue the recorded work, do not restart" if row.mark == "~" else "open"
         # Wrapped rows continue on indented lines; evidence notes stay in the file.

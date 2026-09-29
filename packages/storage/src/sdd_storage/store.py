@@ -62,8 +62,17 @@ CREATE TABLE IF NOT EXISTS ui_artifacts(run TEXT NOT NULL REFERENCES runs(id),
     kind TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(run, kind));
 """
 
-VERSION = 4
-MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4)
+# Publications to a project's tracker, recorded before delivery (an outbox).
+MIGRATION_5 = """
+CREATE TABLE IF NOT EXISTS tracker_outbox(id TEXT PRIMARY KEY, project TEXT NOT NULL,
+    run TEXT NOT NULL, kind TEXT NOT NULL, document TEXT NOT NULL, status TEXT NOT NULL,
+    attempts INTEGER NOT NULL, next_at REAL NOT NULL, error TEXT NOT NULL, receipt TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS tracker_outbox_item ON tracker_outbox(run, kind);
+CREATE INDEX IF NOT EXISTS tracker_outbox_pending ON tracker_outbox(project, status);
+"""
+
+VERSION = 5
+MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5)
 
 
 class Store:

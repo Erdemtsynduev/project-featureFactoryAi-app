@@ -13,47 +13,13 @@ re-read, never imported once. Parsing is pure; `MarkdownPlans` reads the folder.
 """
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
+
+from sdd_core.tracking import WorkItem, WorkRow
 
 NAME = re.compile(r"^(\d{3})_(.+)\.md$")
 ROW = re.compile(r"^- \[(.)\] \*\*([A-Za-z]+\d*-\d+)\*\*\s*(?:[—–-]\s*)?(.*)$")
-OPEN_MARKS = (" ", "~")
 PREAMBLE_CHARS = 6000
-
-
-@dataclass(frozen=True)
-class PlanRow:
-    id: str
-    mark: str  # "x" done, "~" partial, " " open, "-" rejected
-    text: str
-    detail: tuple[str, ...] = ()
-
-    @property
-    def open(self) -> bool:
-        return self.mark in OPEN_MARKS
-
-    @property
-    def title(self) -> str:
-        return f"{self.id} — {self.text}" if self.text else self.id
-
-
-@dataclass(frozen=True)
-class PlanDocument:
-    number: str
-    title: str
-    path: str
-    preamble: str
-    rows: tuple[PlanRow, ...]
-
-    def counts(self) -> dict[str, int]:
-        return {
-            "requirements": len(self.rows),
-            "accepted": sum(row.mark == "x" for row in self.rows),
-            "partial": sum(row.mark == "~" for row in self.rows),
-            "open": sum(row.mark == " " for row in self.rows),
-            "rejected": sum(row.mark == "-" for row in self.rows),
-        }
 
 
 def plan_number(name: str) -> str | None:
@@ -61,7 +27,7 @@ def plan_number(name: str) -> str | None:
     return match.group(1) if match else None
 
 
-def parse_plan(path: str, text: str) -> PlanDocument:
+def parse_plan(path: str, text: str) -> WorkItem:
     """Read one plan; `path` is relative to the workspace and names the number."""
     name = path.replace("\\", "/").split("/")[-1]
     number = plan_number(name)
@@ -72,7 +38,7 @@ def parse_plan(path: str, text: str) -> PlanDocument:
     words = NAME.match(name)
     fallback = words.group(2).replace("_PLAN", "").replace("_", " ").capitalize() if words else ""
     title = f"{number} · {heading or fallback}"
-    rows: list[PlanRow] = []
+    rows: list[WorkRow] = []
     preamble: list[str] = []
     seen: set[str] = set()
     current: list[str] | None = None
@@ -84,47 +50,48 @@ def parse_plan(path: str, text: str) -> PlanDocument:
                 raise ValueError(f"Duplicate row {number}:{identifier}")
             seen.add(identifier)
             current = []
-            rows.append(PlanRow(identifier, mark, body.strip()))
+            rows.append(WorkRow(identifier, mark, body.strip()))
         elif current is not None and line.startswith("      "):
             current.append(line.strip())
-            rows[-1] = PlanRow(rows[-1].id, rows[-1].mark, rows[-1].text, tuple(current))
+            rows[-1] = WorkRow(rows[-1].id, rows[-1].mark, rows[-1].text, tuple(current))
         else:
             current = None
             if not rows:
                 preamble.append(line)
-    return PlanDocument(
+    return WorkItem(
         number,
         title,
-        path.replace("\\", "/"),
         "\n".join(preamble).strip()[:PREAMBLE_CHARS],
         tuple(rows),
+        path=path.replace("\\", "/"),
     )
 
 
-def row_run_id(number: str, row: PlanRow) -> str:
+def row_run_id(number: str, row: WorkRow) -> str:
     """The run id the per-row import gave a row, e.g. `110_FH-07`."""
     return f"{number}_{row.id}"
 
 
 class MarkdownPlans:
-    """A `FeatureSource` over a folder of numbered Markdown plans in the workspace."""
+    """A work source over a folder of numbered Markdown plans in the workspace."""
 
     def __init__(self, folder: str) -> None:
         if not folder:
             raise ValueError("The project has no plans folder; set it in the project settings")
         self.folder = folder
 
-    def documents(self, workspace: Path) -> list[PlanDocument]:
+    def items(self, workspace: str) -> list[WorkItem]:
         """Numbered plan files with rows; reviews and notes without rows are not plans."""
-        folder = workspace / self.folder
+        root = Path(workspace)
+        folder = root / self.folder
         if not folder.is_dir():
             raise ValueError(f"The project has no plan folder {self.folder}")
         documents = [
-            parse_plan(path.relative_to(workspace).as_posix(), path.read_text(encoding="utf-8-sig"))
+            parse_plan(path.relative_to(root).as_posix(), path.read_text(encoding="utf-8-sig"))
             for path in sorted(folder.glob("[0-9][0-9][0-9]_*.md"))
         ]
         plans = [document for document in documents if document.rows]
-        numbers = [plan.number for plan in plans]
+        numbers = [plan.key for plan in plans]
         if duplicate := sorted({n for n in numbers if numbers.count(n) > 1}):
             raise ValueError("Several plan files share a number: " + ", ".join(duplicate))
         return plans
