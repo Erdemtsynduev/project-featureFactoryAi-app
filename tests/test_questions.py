@@ -163,6 +163,10 @@ def test_cli_handlers_continue_sessions_and_record_them(tmp_path):
     # Prompts travel on stdin: a long brief must never reach the command line.
     assert argv[argv.index("-p") + 1] == "--output-format"
     assert launch.input.startswith("Continue the same bounded step")
+    assert "--allowedTools" not in argv, "a read-only step runs no commands"
+    working = claude.prepare(attempt_packet(tmp_path, mutates=True)).argv
+    assert working[working.index("--allowedTools") + 1] == "Bash,PowerShell"
+    assert working[working.index("--disallowedTools") + 1] == "Agent,Task"
     codex = CliHandler("codex", sys.executable, "gpt")
     launch = codex.prepare(attempt_packet(tmp_path, "thread-3", mutates=True))
     argv = launch.argv

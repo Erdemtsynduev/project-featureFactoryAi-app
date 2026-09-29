@@ -257,6 +257,11 @@ class CliHandler:
                     else ",Write,Edit,MultiEdit,NotebookEdit,Bash,PowerShell"
                 ),
             ]
+            if packet.step.mutates:
+                # acceptEdits approves edits only; a non-interactive session refuses every
+                # command, so a working step could never run its checks. Codex gets the
+                # same through its workspace-write sandbox with approvals off.
+                argv += ["--allowedTools", "Bash,PowerShell"]
             if self.model:
                 argv += ["--model", self.model]
             if packet.resume:

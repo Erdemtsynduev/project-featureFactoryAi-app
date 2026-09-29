@@ -47,6 +47,11 @@ digest they were created with.
   attempts changed nothing back to its first mutating step with a fresh retry
   budget. Tickets whose launches never started were routed through reconcile and
   diagnose, and a diagnosis of the old launch failure blocked them.
+- Claude may run shell commands on mutating steps (`--allowedTools
+  Bash,PowerShell`). `acceptEdits` approves file edits only, so a non-interactive
+  implement or repair step had every test, check and `git status` refused and
+  could deliver code without running a single check. Read-only steps still deny
+  commands and edits; project hooks keep applying.
 
 ## 0.3.1 — 2026-09-28
 
