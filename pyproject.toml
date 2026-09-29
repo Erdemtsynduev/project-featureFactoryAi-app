@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feature-factory-ai"
-version = "0.3.1"
+version = "0.4.0"
 license = "MIT"
 license-files = ["LICENSE"]
 description = "Feature Factory AI: deterministic, extensible workflow orchestration"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["sdd-runtime[local]==0.3.1", "sdd-providers==0.3.1", "sdd-workflows==0.3.1", "sdd-factory==0.3.1", "sdd-ui==0.3.1", "sdd-usage==0.3.1", "sdd-trackers==0.3.1"]
+dependencies = ["sdd-runtime[local]==0.4.0", "sdd-providers==0.4.0", "sdd-workflows==0.4.0", "sdd-factory==0.4.0", "sdd-ui==0.4.0", "sdd-usage==0.4.0", "sdd-trackers==0.4.0"]
 
 [project.scripts]
 ffai = "sdd_runtime.cli:main"

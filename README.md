@@ -29,14 +29,14 @@ To install the commands globally from locally built wheels (the script clears st
 
 ```text
 uv run --locked python tools/wheels.py
-uv tool install --find-links ./dist feature-factory-ai==0.3.1
+uv tool install --find-links ./dist feature-factory-ai==0.4.0
 ffai-app
 ```
 
 Run `uv tool update-shell` and open a new terminal if the command directory is not
-on PATH. Update with `uv tool install --reinstall --find-links ./dist feature-factory-ai==0.3.1`;
+on PATH. Update with `uv tool install --reinstall --find-links ./dist feature-factory-ai==0.4.0`;
 uninstall with `uv tool uninstall feature-factory-ai`. Alternatively use
-`pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.3.1`.
+`pipx install --pip-args="--find-links /absolute/path/to/dist" feature-factory-ai==0.4.0`.
 The application is not published on PyPI: use local wheels, not an unrelated
 package with a similar name. The legacy `ff` and `sdd` commands are not installed.
 

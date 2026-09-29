@@ -11,7 +11,7 @@ contract (workflow schema, result schema, storage schema, HTTP actions) needs a 
 minor version before 1.0 and a migration; existing tasks stay pinned to the workflow
 digest they were created with.
 
-## Unreleased
+## 0.4.0 — 2026-09-29
 
 - Work is a tree of any depth: a parent (a feature, or a ticket split further) is
   no longer done when its specification is approved. Its state and progress come

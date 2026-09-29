@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sdd-workflows"
-version = "0.3.1"
+version = "0.4.0"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = ["sdd-core==0.3.1"]
+dependencies = ["sdd-core==0.4.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

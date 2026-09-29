@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sdd-runtime"
-version = "0.3.1"
+version = "0.4.0"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = ["sdd-core==0.3.1", "psutil>=7"]
+dependencies = ["sdd-core==0.4.0", "psutil>=7"]
 
 [project.optional-dependencies]
-local = ["sdd-storage==0.3.1"]
+local = ["sdd-storage==0.4.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix="sdd-wheel-check-") as temp:
     venv.create(folder / "venv", with_pip=True)
     python = folder / ("venv/Scripts/python.exe" if os.name == "nt" else "venv/bin/python")
     run(
-        [str(python), "-m", "pip", "install", "--find-links", str(DIST), "sdd-runtime==0.3.1"],
+        [str(python), "-m", "pip", "install", "--find-links", str(DIST), "sdd-runtime==0.4.0"],
         folder,
     )
     run(
@@ -65,8 +65,8 @@ with tempfile.TemporaryDirectory(prefix="sdd-wheel-check-") as temp:
             "install",
             "--find-links",
             str(DIST),
-            "feature-factory-ai==0.3.1",
-            "sdd-example-extension==0.3.1",
+            "feature-factory-ai==0.4.0",
+            "sdd-example-extension==0.4.0",
         ],
         folder,
     )
