@@ -5,7 +5,8 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Protocol
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 import psutil
 
@@ -88,3 +89,38 @@ def Job() -> Containment:
 
         return WindowsJob()
     return ProcessGroups()
+
+
+def start_contained(
+    argv: Sequence[str], jobs: Sequence[Containment], **options: Any
+) -> subprocess.Popen[bytes]:
+    """Start `argv` so that it runs no instruction before every job holds it.
+
+    On Windows the process starts suspended. Otherwise a launcher such as a venv
+    `python.exe` starts the real interpreter before assignment; when the parent's
+    job allows silent breakaway, that child and everything it starts stay outside
+    the job and outlive a confirmed stop.
+    """
+    if sys.platform != "win32":
+        process = subprocess.Popen(argv, start_new_session=True, **options)
+        try:
+            for job in jobs:
+                job.assign(process.pid)
+        except BaseException:
+            process.kill()
+            process.wait(timeout=5)
+            raise
+        return process
+    from sdd_runtime.windows import CREATE_SUSPENDED, resume
+
+    flags = options.pop("creationflags", NO_WINDOW) | CREATE_SUSPENDED
+    process = subprocess.Popen(argv, creationflags=flags, **options)
+    try:
+        for job in jobs:
+            job.assign(process.pid)
+        resume(process.pid)
+    except BaseException:
+        process.kill()
+        process.wait(timeout=5)
+        raise
+    return process

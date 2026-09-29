@@ -7,6 +7,26 @@ import time
 from ctypes import wintypes
 
 if sys.platform == "win32":
+    CREATE_SUSPENDED = 0x4
+
+    def resume(pid: int) -> None:
+        """Resume a process started suspended, once its containment is in place."""
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        ntdll = ctypes.WinDLL("ntdll")
+        ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+        ntdll.NtResumeProcess.restype = ctypes.c_long
+        handle = kernel.OpenProcess(0x0800, False, pid)  # PROCESS_SUSPEND_RESUME
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            status = ntdll.NtResumeProcess(handle)
+            if status < 0:
+                raise OSError(f"NtResumeProcess failed: 0x{status & 0xFFFFFFFF:08X}")
+        finally:
+            kernel.CloseHandle(handle)
 
     class BasicLimits(ctypes.Structure):
         _fields_ = [

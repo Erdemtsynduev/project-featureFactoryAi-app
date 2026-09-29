@@ -15,7 +15,7 @@ from sdd_core.models import Result
 
 from sdd_runtime.files import ENGINE_DIRECTORY, atomic_write, evidence, revision
 from sdd_runtime.lock import Lease
-from sdd_runtime.platform import NO_WINDOW, Containment, Job, group_alive
+from sdd_runtime.platform import Containment, Job, group_alive, start_contained
 
 
 class ProcessExecutionBackend:
@@ -72,15 +72,13 @@ class ProcessExecutionBackend:
             job = Job()
             child: subprocess.Popen[bytes] | None = None
             try:
-                child = subprocess.Popen(
+                child = start_contained(
                     [sys.executable, "-m", "sdd_runtime.host", str(folder)],
+                    [job],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    creationflags=NO_WINDOW,
-                    start_new_session=os.name != "nt",
                 )
-                job.assign(child.pid)
                 atomic_write(
                     folder / "identity.json",
                     canonical(

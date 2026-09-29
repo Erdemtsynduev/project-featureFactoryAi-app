@@ -10,7 +10,7 @@ from pathlib import Path
 import psutil
 from sdd_core.sdk import Packet
 
-from sdd_runtime.platform import NO_WINDOW, Containment, Job, group_alive
+from sdd_runtime.platform import Containment, Job, group_alive, start_contained
 
 # Caps of the aggregate Windows job (see windows.py); reported in the health file.
 RESOURCE_LIMITS = {"cpu_percent": 50, "memory_mb": 16384, "processes": 128}
@@ -35,16 +35,13 @@ class Hosts:
         job = Job()
         process: subprocess.Popen[bytes] | None = None
         try:
-            process = subprocess.Popen(
+            process = start_contained(
                 [sys.executable, "-m", "sdd_runtime.host", str(Path(packet.directory))],
+                [self.resource_job, job],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=NO_WINDOW,
-                start_new_session=os.name != "nt",
             )
-            self.resource_job.assign(process.pid)
-            job.assign(process.pid)
             started(process.pid, psutil.Process(process.pid).create_time())
             if process.stdin is None:
                 raise RuntimeError("Missing host gate")

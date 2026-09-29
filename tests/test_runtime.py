@@ -12,7 +12,7 @@ from sdd_providers.handlers import CommandHandler
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
-from sdd_runtime.platform import NO_WINDOW, Job
+from sdd_runtime.platform import NO_WINDOW, Job, start_contained
 from sdd_storage.store import Store
 
 
@@ -167,6 +167,61 @@ def test_job_kills_descendants(tmp_path):
         job.close()
         parent.wait(timeout=5)
         descendant.wait(timeout=5)
+    finally:
+        job.close()
+        parent.wait(timeout=5)
+
+
+class SlowJob:
+    """A job whose assignment lags, as a loaded coordinator's does."""
+
+    def __init__(self):
+        self.job = Job()
+
+    def assign(self, pid):
+        time.sleep(0.5)
+        self.job.assign(pid)
+
+    def __getattr__(self, name):
+        return getattr(self.job, name)
+
+
+def test_late_assignment_still_contains_launcher_children(tmp_path):
+    # A venv `python.exe` launcher starts the real interpreter at once; assigned too
+    # late, that child and all it starts stayed outside the job and outlived a
+    # confirmed stop, writing into the workspace after the attempt had settled.
+    marker = tmp_path / "late.txt"
+    child_id = tmp_path / "child.txt"
+    script = (
+        "import subprocess,sys,time; from pathlib import Path;"
+        "p=subprocess.Popen([sys.executable,'-c',"
+        '\'import sys,time;time.sleep(3);open(sys.argv[1],"w").write("late")\',sys.argv[2]]);'
+        "Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"
+    )
+    (tmp_path / "launch.json").write_text(
+        canonical(
+            {
+                "argv": [sys.executable, "-c", script, str(child_id), str(marker)],
+                "cwd": str(tmp_path),
+                "environment": {},
+                "nonce": "n",
+            }
+        )
+    )
+    job = SlowJob()
+    parent = start_contained(
+        [sys.executable, "-m", "sdd_runtime.host", str(tmp_path)], [job], stdin=subprocess.PIPE
+    )
+    try:
+        parent.stdin.write(b"GO\n")
+        parent.stdin.close()
+        deadline = time.monotonic() + 10
+        while not child_id.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert child_id.exists()
+        job.stop_and_confirm()
+        time.sleep(4)
+        assert not marker.exists()
     finally:
         job.close()
         parent.wait(timeout=5)

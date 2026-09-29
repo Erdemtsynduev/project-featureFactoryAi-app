@@ -29,7 +29,7 @@ from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import atomic_write, revision
 from sdd_runtime.lock import Lease
-from sdd_runtime.platform import NO_WINDOW, Job
+from sdd_runtime.platform import Job, start_contained
 from sdd_runtime.versions import engine
 from sdd_runtime.watchdog import watch_parent
 
@@ -61,13 +61,7 @@ def supervise(args: argparse.Namespace) -> int:
             job = Job()
             child: subprocess.Popen[bytes] | None = None
             try:
-                child = subprocess.Popen(
-                    command,
-                    stdin=subprocess.PIPE,
-                    creationflags=NO_WINDOW,
-                    start_new_session=os.name != "nt",
-                )
-                job.assign(child.pid)
+                child = start_contained(command, [job], stdin=subprocess.PIPE)
                 atomic_write(
                     record,
                     canonical(

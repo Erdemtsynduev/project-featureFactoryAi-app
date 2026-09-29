@@ -75,6 +75,12 @@ digest they were created with.
   live workspace. Project settings choose the tracker.
 - `install.py` installs `sdd-usage` and `sdd-factory` from the checkout too; before,
   a plain-pip installation looked for them on the package index.
+- Hosts, execution hosts and the supervised coordinator start suspended on Windows
+  and run only once every job holds them (`start_contained`). A venv `python.exe`
+  launcher used to start the real interpreter before assignment; under a parent job
+  that allows silent breakaway, the whole agent tree then stayed outside the
+  attempt's job, outlived a confirmed stop and changed the workspace afterwards,
+  blocking the run with "Workspace changed outside attempt".
 
 ## 0.3.1 — 2026-09-28
 
