@@ -9,6 +9,7 @@ being silently ignored while it runs.
 from dataclasses import dataclass, field, fields, replace
 from functools import lru_cache
 
+from sdd_core.models import TOOLS
 from sdd_core.wire import Json, canonical, object_json
 
 PURPOSES = ("", "planning")
@@ -22,7 +23,9 @@ TEXT_OPTIONS = (
     "cwd",
     "error_pattern",
 )
-PRODUCTS = ("", "specification", "tickets")
+# Options that are lists of text.
+LIST_OPTIONS = ("argv", "tools")
+PRODUCTS = ("", "specification", "tickets", "plan_changes")
 AUTO_ANSWERS = ("", "recommended")
 
 
@@ -49,6 +52,8 @@ class StepOptions:
     title: str = ""
     # Command steps: an explicit executable and arguments, the folder, a failure pattern.
     argv: tuple[str, ...] = ()
+    # Tools the agent may use beyond edits and commands (see `models.TOOLS`).
+    tools: tuple[str, ...] = ()
     cwd: str = "."
     error_pattern: str = ""
     # The named agent profile resolved when the run was created.
@@ -72,11 +77,12 @@ class StepOptions:
         for name in TEXT_OPTIONS:
             if name in raw:
                 values[name] = _text(raw[name], name)
-        if "argv" in raw:
-            argv = raw["argv"]
-            if not isinstance(argv, list):
-                raise ValueError("Step option argv must be a list")
-            values["argv"] = tuple(_text(item, "argv") for item in argv)
+        for name in LIST_OPTIONS:
+            if name in raw:
+                items = raw[name]
+                if not isinstance(items, list):
+                    raise ValueError(f"Step option {name} must be a list")
+                values[name] = tuple(_text(item, name) for item in items)
         if "questions" in raw:
             items = raw["questions"]
             if not isinstance(items, list):
@@ -94,6 +100,10 @@ class StepOptions:
             raise ValueError(f"Unknown step product: {options.produces}")
         if options.auto_answer not in AUTO_ANSWERS:
             raise ValueError(f"Unknown auto answer policy: {options.auto_answer}")
+        if set(options.tools) - set(TOOLS):
+            raise ValueError(
+                f"Unknown step tools: {', '.join(sorted(set(options.tools) - set(TOOLS)))}"
+            )
         return options
 
     @property

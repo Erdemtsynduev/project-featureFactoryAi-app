@@ -13,6 +13,27 @@ digest they were created with.
 
 ## Unreleased
 
+- **A plan lead reviews approved plans.** Ticket T10 was blocked because its
+  acceptance needed licensed recordings from the web, which neither the planner knew
+  nor the agent could reach. Now:
+  - When a ticket's own agent blocks it, and right after a breakdown is approved, a
+    `plan-review` run proposes changes: revise, merge, split, cancel, needs, guidance
+    and retry. A person approves the proposal in "Needs you"; the agent never changes
+    the plan itself. The rules are pure (`sdd_core.plan_changes`). Approved changes
+    apply idempotently (`sdd_factory.reviews`), and `Engine.revise` rewrites a
+    never-started ticket's brief, paths and prerequisites.
+  - Tickets carry typed `needs` (`human`, `asset`, `web`) instead of the `HITL:` goal
+    prefix, which is still read. Tickets that need a person or an asset stay out of
+    bulk starts.
+  - Planners and reviews are told what the ticket agents can do, derived from the
+    ticket flow.
+  - Step option `tools: ["web"]` grants the internet (Claude WebSearch/WebFetch,
+    Codex live search); the project setting **web** applies it to the ticket flow.
+  - A run waiting for a person no longer holds its workspace, so a pending approval
+    or review does not stop other tickets there.
+  - A step product's structured output is declared once in a table
+    (`PRODUCT_OUTPUTS`).
+
 - **Subscriptions are paced by their windows, not by counted calls.** Two tasks
   stopped on a fixed 40-call queue cap while both subscriptions had room; 16 of those
   40 calls never reached a model. Now:

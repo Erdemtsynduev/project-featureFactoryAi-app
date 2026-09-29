@@ -31,6 +31,8 @@ const TONE = {
   revived: "waiting",
   accepted: "done",
   tickets_admitted: "done",
+  plan_review_requested: "attention",
+  plan_revised: "done",
   bulk_resume: "working",
 };
 const SYSTEM = new Set(["question", "blocked", "accepted", "queue_stopped"]);

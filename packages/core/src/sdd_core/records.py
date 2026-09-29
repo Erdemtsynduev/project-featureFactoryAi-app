@@ -73,6 +73,10 @@ class AdmissionRecords(Protocol):
         """(run, prerequisite) of every dependency, in one read."""
         ...
 
+    def set_dependencies(self, identifier: str, prerequisites: tuple[str, ...]) -> None:
+        """Replace a run's prerequisites; the caller has checked they form no cycle."""
+        ...
+
     def active_claims(self) -> tuple[tuple[str, str], ...]: ...
     def unfinished_claims(self, identifier: str) -> tuple[tuple[Run, str], ...]:
         """Other started, unaccepted runs with their claims."""

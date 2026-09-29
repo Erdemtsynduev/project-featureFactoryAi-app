@@ -70,10 +70,17 @@ def _count(raw: dict[str, Json], key: str, default: int | None = None) -> int:
     return integer(value, key)
 
 
+def uses_web(call: Invocation) -> bool:
+    """The step grants its agent the internet (`tools: ["web"]` in its options)."""
+    return "web" in call.packet.step.options.tools
+
+
 class Claude:
     """Claude Code in print mode: one JSON envelope with the structured output."""
 
     READ_ONLY_TOOLS = ",Write,Edit,MultiEdit,NotebookEdit,Bash,PowerShell"
+    COMMAND_TOOLS = "Bash,PowerShell"
+    WEB_TOOLS = "WebSearch,WebFetch"
 
     def argv(self, call: Invocation) -> list[str]:
         mutates = call.packet.step.mutates
@@ -89,11 +96,14 @@ class Claude:
             "--disallowedTools",
             "Agent,Task" + ("" if mutates else self.READ_ONLY_TOOLS),
         ]
+        # acceptEdits approves edits only; a non-interactive session refuses every other
+        # tool, so a working step could never run its checks nor a web step search.
+        # Codex gets the same through its sandbox with approvals off.
+        grants = ((self.COMMAND_TOOLS, mutates), (self.WEB_TOOLS, uses_web(call)))
+        allowed = [tools for tools, granted in grants if granted]
+        if allowed:
+            argv += ["--allowedTools", ",".join(allowed)]
         if mutates:
-            # acceptEdits approves edits only; a non-interactive session refuses every
-            # command, so a working step could never run its checks. Codex gets the
-            # same through its workspace-write sandbox with approvals off.
-            argv += ["--allowedTools", "Bash,PowerShell"]
             # Commands near the deadline are refused by the engine's budget hook.
             argv += ["--settings", claude_settings(call.folder)]
         argv = _model(argv, call.model)
@@ -147,6 +157,9 @@ class Claude:
 class Codex:
     """Codex exec: JSON events on stdout, the structured result in its own file."""
 
+    # Live web search as a config override, valid for `exec` and `exec resume` alike.
+    WEB_CONFIG = ("-c", 'web_search="live"')
+
     def argv(self, call: Invocation) -> list[str]:
         packet = call.packet
         sandbox = "workspace-write" if packet.step.mutates else "read-only"
@@ -155,6 +168,7 @@ class Codex:
             str(call.folder / SCHEMA_FILE),
             "-o",
             str(call.folder / OUTPUT_FILE),
+            *(self.WEB_CONFIG if uses_web(call) else ()),
         ]
         if packet.resume:
             # `exec resume` inherits the working directory and takes the sandbox as config.

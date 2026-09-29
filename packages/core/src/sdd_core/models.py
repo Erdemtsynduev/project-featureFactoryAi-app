@@ -34,6 +34,13 @@ type Cause = Literal[
     "acceptance",
     "workspace_changed",
 ]
+# Tools a step may grant its agent beyond editing and commands.
+type Tool = Literal["web"]
+# What a ticket needs besides an agent run: a person's decision or review, a file the
+# agents cannot make or obtain (a licensed recording, a model), or the internet.
+type TicketNeed = Literal["human", "asset", "web"]
+# Corrections a plan review may propose for an approved ticket breakdown.
+type PlanChangeKind = Literal["revise", "merge", "split", "cancel", "need", "guide"]
 type Command = Literal["stop", "pause", "resume", "auto", "manual", "retry"]
 type EventKind = Literal[
     "accepted",
@@ -49,6 +56,7 @@ type EventKind = Literal[
     "limit",
     "operator_message",
     "paused",
+    "plan_revised",
     "reconciliation_requested",
     "recovery_exhausted",
     "recovery_scheduled",
@@ -76,6 +84,11 @@ STATUS_CHANGES: dict[Status, frozenset[Status]] = {
     "accepted": frozenset({"accepted"}),
 }
 COMMANDS: tuple[Command, ...] = get_args(Command.__value__)
+TOOLS: tuple[Tool, ...] = get_args(Tool.__value__)
+TICKET_NEEDS: tuple[TicketNeed, ...] = get_args(TicketNeed.__value__)
+PLAN_CHANGE_KINDS: tuple[PlanChangeKind, ...] = get_args(PlanChangeKind.__value__)
+# Needs no agent step can meet: such a ticket waits for a person.
+HELD_NEEDS: tuple[TicketNeed, ...] = ("human", "asset")
 # Kinds that launch a handler process and so take an execution slot.
 PROCESS_KINDS: tuple[Kind, ...] = ("agent", "check", "operation")
 # Effect kinds that launch no handler process, so they never lock a pinned manifest.

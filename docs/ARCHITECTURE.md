@@ -153,6 +153,48 @@ Provider adapters currently block on unclassified CLI failures. A trusted adapte
 Reset moments are read from epochs, "in N hours" and absolute local times ("try again at
 Oct 4th, 2026 11:41 PM", "resets 3pm"), bounded to a week.
 
+## Plan reviews: a plan lead proposes, a person decides
+
+An approved breakdown is not frozen. A plan review runs when a ticket's own agent
+returns `blocked`, and right after a breakdown is approved. At most one runs per plan
+at a time, one runs per trigger, and a plan gets at most `MAX_REVIEWS`. The review is a
+workflow (`plan-review`): its read-only agent step `produces: plan_changes` from a brief
+that lists every ticket with its state, blocking reason, needs, dependencies and owned
+paths, plus what the project's ticket agents can do. The capabilities text is derived
+from the ticket flow itself (`templates.capabilities`). A person then decides on the
+proposal in "Needs you". The agent never changes the plan on its own decision.
+
+`sdd_core.plan_changes` holds every rule:
+- Six change kinds: `revise`, `merge`, `split`, `cancel`, `need` and `guide`.
+- Structural changes touch only never-started tickets.
+- Needs and guidance may address any unfinished ticket.
+- The revised plan must stay a valid, acyclic breakdown.
+- Dependents of a removed ticket are rewired: to the merge target, to all split parts,
+  or to the cancelled ticket's own prerequisites.
+
+`sdd_factory.reviews.PlanReviews` applies an approved `Revision` in this order:
+1. create split parts;
+2. `Engine.revise` (brief, owned paths and prerequisites of a never-started run, in one
+   transaction, cycle-checked);
+3. discard removed tickets;
+4. guidance, then an optional retry;
+5. hold tickets that need a person or an asset.
+
+Every command is keyed by review, run and verb, so a repeated apply changes nothing.
+The review's `plan_changes` artifact is written last; `reapply` finishes an interrupted
+apply on start.
+
+Tickets carry typed `needs` (`human`, `asset`, `web`). Held needs (a person, an asset)
+keep a ticket out of bulk starts. Breakdowns written before this read a `HITL` goal prefix
+as `human`. A person deciding (a human step) holds no workspace claim; only a live
+process or a started mutation does.
+
+Agents get the internet only where a step grants it (`tools: ["web"]`):
+- Claude's print mode then allows `WebSearch,WebFetch`.
+- Codex runs with `web_search="live"`.
+- A project enables it for its ticket flow with the `web` setting.
+- Publishing refuses a tool the step's handler does not declare.
+
 ## Subscriptions are paced by their windows
 
 Subscriptions (Claude Pro/Max, a ChatGPT plan for Codex) are not billed per call; they refuse

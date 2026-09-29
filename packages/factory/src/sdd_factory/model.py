@@ -20,7 +20,8 @@ stored as kind "requirement").
 from dataclasses import dataclass, fields, replace
 from typing import Literal
 
-from sdd_core.models import Json
+from sdd_core.models import HELD_NEEDS, Json
+from sdd_core.tickets import needs_of
 
 type Kind = Literal["feature", "ticket", "task"]
 KINDS: tuple[Kind, ...] = ("feature", "ticket", "task")
@@ -49,6 +50,8 @@ class TaskRecord:
     closed: bool = False  # closed by the operator before all its children were done
     origin: str = ""  # the parent a ticket was detached from when that parent closed
     link: str = ""  # the item's reference in the project's tracker, once mirrored there
+    reviews: str = ""  # the feature whose ticket plan this task reviews
+    trigger: str = ""  # why a review runs; one review per trigger (a block, a breakdown)
 
     @classmethod
     def load(cls, document: dict[str, Json]) -> "TaskRecord":
@@ -70,6 +73,8 @@ class TaskRecord:
             closed=document.get("closed") is True,
             origin=str(document.get("origin", "")),
             link=str(document.get("link", "")),
+            reviews=str(document.get("reviews", "")),
+            trigger=str(document.get("trigger", "")),
         )
 
     def document(self) -> dict[str, Json]:
@@ -101,7 +106,8 @@ def ticket_places(breakdown: Json) -> dict[str, dict[str, Json]]:
     `breakdown` is the data of a parent's tickets artifact: the approved drafts with
     the run each became. A ticket's wave is 1 plus the latest wave it waits for, so
     wave 1 can start at once and each later wave follows the one before; `after`
-    names the tickets it waits for, and `hitl` marks a ticket a person must take part in.
+    names the tickets it waits for, `needs` what else it needs and `hitl` marks a
+    ticket a person must act on (a decision or an asset), so it never starts unasked.
     """
     drafts = (
         [item for item in breakdown if isinstance(item, dict)]
@@ -126,10 +132,12 @@ def ticket_places(breakdown: Json) -> dict[str, dict[str, Json]]:
         run = item.get("run")
         if not isinstance(run, str):
             continue
+        wanted = needs_of(item)
         places[run] = {
             "key": key,
             "wave": wave(key, frozenset()),
             "after": list[Json](needs.get(key, [])),
-            "hitl": str(item.get("goal", "")).lstrip().upper().startswith("HITL"),
+            "needs": list[Json](wanted),
+            "hitl": any(need in HELD_NEEDS for need in wanted),
         }
     return places

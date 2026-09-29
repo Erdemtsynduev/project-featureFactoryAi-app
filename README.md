@@ -149,6 +149,12 @@ The full main flow allows four planning calls per task. Subscriptions are paced 
 their own five-hour and weekly windows, which the Usage view shows with what is left;
 an optional queue call cap exists for agents billed per token.
 
+A plan lead reviews an approved ticket plan when a ticket's agent blocks it and right
+after a breakdown is approved. It proposes merging, splitting, revising, cancelling or
+guiding tickets and marking what they need (a person, an asset, the web), and you
+approve the proposal before it changes anything. A project's **web** setting lets its
+ticket agents use the internet.
+
 ## Daily commands
 
 Use the same `--database .state/features.db` before each subcommand.

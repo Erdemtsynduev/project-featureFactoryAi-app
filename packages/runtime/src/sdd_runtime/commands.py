@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sdd_core import machine
 from sdd_core.codec import canonical, run_json
-from sdd_core.graph import validate
+from sdd_core.graph import acyclic, validate
 from sdd_core.models import RECORD_ID, Cause, Run
 from sdd_core.ports import Conflict
 
@@ -89,6 +89,39 @@ class RunCommands:
             if len(context) > workflow.max_input_chars - GUIDANCE_MARGIN:
                 raise ValueError("Message exceeds context budget; use a smaller instruction")
             db.set_context(run_id, context)
+            state = db.apply(run, transition)
+            db.save_command(request_id, request, run_json(state))
+            return state
+
+    def revise(
+        self,
+        run_id: str,
+        context: str,
+        claim: str,
+        dependencies: tuple[str, ...],
+        request_id: str,
+        expected: int,
+        now: float,
+    ) -> Run:
+        """Rewrite a never-started run's brief, owned paths and prerequisites (an approved
+        plan review). Idempotent by request id; a cycle or a started run is refused."""
+        workflow = self.runs.workflow_of(run_id)
+        if len(context) > workflow.max_input_chars:
+            raise ValueError("Context exceeds configured character budget")
+        request = canonical([run_id, "revise", expected, context, claim, sorted(dependencies)])
+        with self.runs.store.unit() as db:
+            done = replayed(db, request_id, request)
+            if done is not None:
+                return done
+            run = db.run(run_id)
+            if run.version != expected:
+                raise Conflict("Stale plan revision; refresh the task")
+            transition = machine.plan_revised(run, now, canonical(sorted(dependencies)))
+            kept = [edge for edge in db.dependency_edges() if edge[0] != run_id]
+            acyclic([*kept, *((run_id, p) for p in dependencies)], "Dependencies form a cycle")
+            db.set_context(run_id, context)
+            db.relocate(run_id, db.location(run_id)[0], claim)
+            db.set_dependencies(run_id, dependencies)
             state = db.apply(run, transition)
             db.save_command(request_id, request, run_json(state))
             return state

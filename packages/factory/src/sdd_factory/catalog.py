@@ -18,13 +18,14 @@ from sdd_core.ports import Conflict
 from sdd_factory.model import TaskRecord
 from sdd_factory.trackers import tracker_settings
 
-ARTIFACT_KINDS = ("specification", "tickets")
+# A feature's documents, and on a plan review the changes it applied.
+ARTIFACT_KINDS = ("specification", "tickets", "plan_changes")
 
 
 @dataclass(frozen=True)
 class Artifact:
     run: str
-    kind: str  # specification | tickets
+    kind: str  # one of ARTIFACT_KINDS
     content: str  # Markdown for people
     data: Json = None  # structured form, when there is one
 
@@ -96,6 +97,8 @@ class ProjectCatalog:
             # Tickets run in their own worktree lane; conflicts go to an agent when autonomous.
             "isolation": doc.get("isolation", True) is not False,
             "auto_resolve": doc.get("auto_resolve", True) is not False,
+            # Ticket agents may use the internet (web search and fetch).
+            "web": doc.get("web", False) is True,
         }
         self.records.save_project(identifier, canonical(result))
         return result

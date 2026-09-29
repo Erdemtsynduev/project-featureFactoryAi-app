@@ -76,6 +76,17 @@ configuration remains supported separately. OpenCode read-only execution is not
 qualified; configuration rejects that policy. Claude/Codex/Cursor read-only
 policies map to their existing adapter controls, not a universal security sandbox.
 
+## Tools a step grants
+
+Agents may edit files and, on working steps, run commands. Anything more is explicit
+per step and recorded in the published, content-addressed workflow:
+`{"tools": ["web"]}` in an agent step's config lets its agent search and fetch web pages
+(Claude: `--allowedTools WebSearch,WebFetch`; Codex: `-c web_search="live"`). Only agent
+steps may declare tools, only known tools are accepted, and publication refuses a
+tool the bound handler's manifest does not list. A project's **web** setting grants the
+web to every agent step of its ticket flow; planners and plan reviews are told which
+steps have it.
+
 ## Create a pinned run
 
 ```text

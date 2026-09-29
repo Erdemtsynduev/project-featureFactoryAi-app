@@ -384,8 +384,8 @@ class TaskService:
         drafts = tickets_of(self.engine.facts(run_id)) if outcome == "approved" else ()
         # Publish the ticket flows and build every brief before the answer, so what
         # can be refused is refused while the feature still awaits approval.
-        definitions = self._ticket_definitions(run_id, drafts)
-        contexts = self._ticket_contexts(run_id, drafts, definitions)
+        definitions = self.ticket_definitions(run_id, drafts)
+        contexts = self.ticket_contexts(run_id, drafts, definitions)
         choices = {
             key: text(value, "choice") for key, value in mapping(doc.get("choices", {})).items()
         }
@@ -412,7 +412,7 @@ class TaskService:
         except ValueError:
             return []
 
-    def _ticket_definitions(self, run_id: str, drafts: tuple[TicketDraft, ...]) -> dict[str, str]:
+    def ticket_definitions(self, run_id: str, drafts: tuple[TicketDraft, ...]) -> dict[str, str]:
         """Each ticket's workflow: the project's ticket template with its owners' checks."""
         if not drafts:
             return {}
@@ -426,7 +426,7 @@ class TaskService:
             for draft in drafts
         }
 
-    def _ticket_contexts(
+    def ticket_contexts(
         self, run_id: str, drafts: tuple[TicketDraft, ...], definitions: dict[str, str]
     ) -> dict[str, str]:
         """Each ticket's brief within its workflow's input budget, room left for memory."""
@@ -469,8 +469,8 @@ class TaskService:
             drafts = tickets_of(breakdown.data)
             if not drafts:
                 continue
-            definitions = self._ticket_definitions(run.id, drafts)
-            contexts = self._ticket_contexts(run.id, drafts, definitions)
+            definitions = self.ticket_definitions(run.id, drafts)
+            contexts = self.ticket_contexts(run.id, drafts, definitions)
             created += self._admit(run, drafts, definitions, contexts)
         return created
 
@@ -481,55 +481,95 @@ class TaskService:
         definitions: dict[str, str],
         contexts: dict[str, str],
     ) -> list[str]:
-        feature = self.catalog.task(parent.id)
+        ids = self.ticket_runs(parent.id, drafts)
+        created = [
+            draft.id
+            for draft in drafts
+            if self.admit_ticket(parent.id, draft, ids, definitions[draft.id], contexts[draft.id])
+        ]
+        self.catalog.save_artifact(
+            Artifact(parent.id, "specification", self.specification(parent.id))
+        )
+        self.save_breakdown(parent.id, drafts, ids)
+        admitted = [ids[identifier] for identifier in created]
+        self.log.record("tickets_admitted", run=parent.id, tickets=list[Json](admitted))
+        return admitted
+
+    def breakdown(self, parent: str) -> list[dict[str, Json]]:
+        """The approved plan's tickets as stored: each draft with the run it became."""
+        stored = self.catalog.artifacts(parent).get("tickets")
+        items = stored.data if stored and isinstance(stored.data, list) else []
+        return [item for item in items if isinstance(item, dict)]
+
+    def ticket_runs(self, parent: str, drafts: tuple[TicketDraft, ...]) -> dict[str, str]:
+        """Each draft's run id: the one the plan admitted it as, else a new child id."""
+        admitted = {
+            str(item.get("id")): str(item.get("run"))
+            for item in self.breakdown(parent)
+            if isinstance(item.get("run"), str)
+        }
+        return {
+            draft.id: admitted.get(draft.id) or self._child_id(parent, draft.id) for draft in drafts
+        }
+
+    def admit_ticket(
+        self,
+        parent: str,
+        draft: TicketDraft,
+        ids: dict[str, str],
+        definition: str,
+        context: str,
+    ) -> bool:
+        """Create one ticket's paused child run; False when it exists (admission is
+        idempotent per ticket)."""
+        child = ids[draft.id]
+        try:
+            self.engine.store.get(child)
+            return False
+        except KeyError:
+            pass
+        feature = self.catalog.task(parent)
         with self.engine.store.unit() as db:
-            root = Path(db.location(parent.id)[0])
-        specification = self.specification(parent.id)
-        ids = {draft.id: self._child_id(parent.id, draft.id) for draft in drafts}
-        created: list[str] = []
-        for draft in drafts:
-            child = ids[draft.id]
-            try:
-                self.engine.store.get(child)
-                continue  # admitted before: approval is idempotent per ticket
-            except KeyError:
-                pass
-            run = self.engine.create(
-                child,
-                definitions[draft.id],
-                root,
-                contexts[draft.id],
-                None,
-                time.time(),
-                tuple(ids[dependency] for dependency in draft.depends_on),
-                ticket_scope(root, draft.paths),
-            )
-            self.catalog.save_task(
-                run.id,
-                TaskRecord(
-                    project=feature.project,
-                    title=draft.title,
-                    kind="ticket",
-                    language=feature.language,
-                    parent=parent.id,
-                    plan=feature.plan,
-                ),
-            )
-            self.bind(run.id)
-            created.append(run.id)
-        title = feature.title or parent.id
-        self.catalog.save_artifact(Artifact(parent.id, "specification", specification))
+            root = Path(db.location(parent)[0])
+        run = self.engine.create(
+            child,
+            definition,
+            root,
+            context,
+            None,
+            time.time(),
+            tuple(ids[dependency] for dependency in draft.depends_on),
+            ticket_scope(root, draft.paths),
+        )
+        self.catalog.save_task(
+            run.id,
+            TaskRecord(
+                project=feature.project,
+                title=draft.title,
+                kind="ticket",
+                language=feature.language,
+                parent=parent,
+                plan=feature.plan,
+            ),
+        )
+        self.bind(run.id)
+        return True
+
+    def save_breakdown(
+        self, parent: str, drafts: tuple[TicketDraft, ...], ids: dict[str, str]
+    ) -> None:
+        """The plan's tickets artifact: its drafts with the runs they are, for people
+        (Markdown, exported) and for the board (waves, needs)."""
+        title = self.catalog.task(parent).title or parent
         self.catalog.save_artifact(
             Artifact(
-                parent.id,
+                parent,
                 "tickets",
                 tickets_markdown(title, drafts, ids),
                 [{**asdict(draft), "run": ids[draft.id]} for draft in drafts],
             )
         )
-        self._export(parent.id)
-        self.log.record("tickets_admitted", run=parent.id, tickets=list[Json](created))
-        return created
+        self._export(parent)
 
     # Artifacts -------------------------------------------------------------------
 

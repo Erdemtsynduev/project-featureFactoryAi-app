@@ -26,6 +26,7 @@ from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import ticket_places
 from sdd_factory.plans import PlanService
+from sdd_factory.reviews import PlanReviews
 from sdd_factory.tasks import TaskService
 from sdd_factory.trackers import ProjectSources, installed_trackers
 from sdd_factory.tracking import RunView, TrackerSync
@@ -85,6 +86,7 @@ class WorkspaceService:
             database.with_suffix(".health.json"),
             self.log,
             self.agents.available,
+            lambda run: self.reviews.blocked(run),
         )
         self.lock = self.queue.lock
         self.flows = FlowLibrary(
@@ -93,6 +95,8 @@ class WorkspaceService:
         self.tasks = TaskService(
             self.engine, self.catalog, self.flows, self.log, lambda run: self.coordinator.bind(run)
         )
+        # A plan lead reviews approved plans; its approved proposals change the tickets.
+        self.reviews = PlanReviews(self.engine, self.catalog, self.flows, self.tasks, self.log)
         # A project's work comes from its plans folder or its tracker, which also
         # receives the factory's progress through the outbox.
         self.sources = ProjectSources()
@@ -123,7 +127,7 @@ class WorkspaceService:
             "plans-rebuild": self.plans.rebuild,
             "interactive-demo": self.tasks.demo,
             "tracker-sync": lambda doc: self.sync_trackers(text(doc.get("project", ""), "project")),
-            "answer": self.tasks.answer,
+            "answer": self.reviews.answer,
             "message": self.tasks.message,
             "recover": self.tasks.recover,
         }
@@ -139,9 +143,12 @@ class WorkspaceService:
         self._finish_admissions()
 
     def _finish_admissions(self) -> None:
-        """Admit the tickets an approval interrupted by a crash or restart left out."""
+        """Finish what a crash or restart cut short: tickets an approval left out,
+        approved plan reviews half applied, and reviews for tickets blocked meanwhile."""
         try:
             created = self.tasks.readmit()
+            self.reviews.reapply()
+            self.reviews.sweep()
         except (ValueError, KeyError, OSError, Conflict) as error:
             self.log.record("readmission_failed", "error", error=f"{type(error).__name__}: {error}")
             return
@@ -398,6 +405,7 @@ class WorkspaceService:
             "metadata": self.catalog.task_metadata().get(identifier, {}),
             "questions": self._questions(identifier),
             "tickets": self.tasks.preview(identifier),
+            "changes": self.reviews.proposal(identifier),
             "documents": self.tasks.documents(identifier),
             "lane": self._lane(identifier),
         }

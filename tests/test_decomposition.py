@@ -92,11 +92,18 @@ def test_approval_creates_ticket_tasks_once_with_dependencies(tmp_path, monkeypa
         runs = {r["id"]: r for r in state["runs"]}
         assert all(runs[c]["paused"] for c in children)
         # The board shows each ticket's number, wave and what it follows.
-        assert runs[children[0]]["ticket"] == {"key": "api", "wave": 1, "after": [], "hitl": False}
+        assert runs[children[0]]["ticket"] == {
+            "key": "api",
+            "wave": 1,
+            "after": [],
+            "needs": [],
+            "hitl": False,
+        }
         assert runs[children[1]]["ticket"] == {
             "key": "ui",
             "wave": 2,
             "after": ["api"],
+            "needs": [],
             "hitl": False,
         }
         assert runs[identifier]["ticket"] is None

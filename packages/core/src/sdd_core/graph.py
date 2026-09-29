@@ -49,6 +49,8 @@ def _check_step(step: Step, steps: Mapping[str, Step]) -> None:
     settings = step.options
     if settings.unknown:
         raise ValueError(f"Unknown step options on {step.id}: {', '.join(settings.unknown)}")
+    if settings.tools and step.kind != "agent":
+        raise ValueError(f"Only an agent step can use tools: {step.id}")
     recovery = settings.recovery_step
     if recovery and (
         recovery not in steps or steps[recovery].kind != "agent" or steps[recovery].mutates
@@ -136,3 +138,12 @@ def dependency_layers(
         layers.append(ready)
         done.update(ready)
     return tuple(layers)
+
+
+def acyclic(edges: Iterable[tuple[str, str]], error: str) -> None:
+    """Refuse (dependent, prerequisite) edges that form a cycle."""
+    graph: dict[str, list[str]] = {}
+    for dependent, prerequisite in edges:
+        graph.setdefault(dependent, []).append(prerequisite)
+        graph.setdefault(prerequisite, [])
+    dependency_layers({node: tuple(needs) for node, needs in graph.items()}, error)

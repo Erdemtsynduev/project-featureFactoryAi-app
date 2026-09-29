@@ -62,6 +62,7 @@ export default {
   "project.isolation":
     "Each ticket works in its own git worktree and merges fast-forward",
   "project.autoResolve": "An agent resolves merge conflicts (otherwise you do)",
+  "project.web": "Ticket agents may use the internet (web search and fetch)",
   "project.saved": "Project “{name}” saved",
 
   "queue.start": "Start queue",
@@ -372,6 +373,21 @@ export default {
   "log.kind.task_created": "Task created",
   "log.kind.answered": "Answer",
   "log.kind.tickets_admitted": "Tickets created",
+  "log.kind.plan_review_requested": "Plan review requested",
+  "log.kind.plan_revised": "Plan changes applied",
+  "planChanges.preview": "The plan lead proposes {count} change(s):",
+  "planChanges.kind.revise": "Revise",
+  "planChanges.kind.merge": "Merge",
+  "planChanges.kind.split": "Split",
+  "planChanges.kind.cancel": "Cancel",
+  "planChanges.kind.need": "Needs",
+  "planChanges.kind.guide": "Guidance",
+  "needs.human": "needs a person",
+  "needs.asset": "needs an asset",
+  "needs.web": "needs the web",
+  "needs.hint.human": "A person decides or reviews inside this ticket; it starts only when you name it.",
+  "needs.hint.asset": "It needs files agents cannot make or obtain (licensed recordings, models); provide them first.",
+  "needs.hint.web": "Its agent needs the internet; allow the web in the project settings.",
   "log.kind.recovery_requested": "Reconcile requested",
   "log.kind.queue_started": "Queue started",
   "log.kind.queue_paused": "Queue paused",
@@ -680,7 +696,7 @@ export default {
   "bulk.fact.blocked":
     "Blocked tasks ({count}) are not touched — each has its own reason; open them.",
   "bulk.fact.hitl":
-    "Tickets that need a person ({count}) do not start with the rest: open each and start it yourself when you are ready to take part.",
+    "Tickets that need a person or an asset ({count}) do not start with the rest: open each and start it yourself once you have decided or provided what it needs.",
   "bulk.startQueue": "Start the queue right away",
   "bulk.resume": "Start",
   "bulk.nothingToPause": "No tasks can be paused",
@@ -743,9 +759,6 @@ export default {
   "ticket.place": "{key} · wave {wave}",
   "ticket.waveHint":
     "Wave {wave}: the ticket starts once every ticket it depends on is accepted. Wave 1 can start at once.",
-  "ticket.hitl": "needs a person",
-  "ticket.hitlHint":
-    "The plan marks this ticket HITL: a person must decide or check inside it. Do not start it with the rest.",
   "ticket.after": "after {keys}",
   "plans.start": "Start plan",
   "plans.pause": "Pause",

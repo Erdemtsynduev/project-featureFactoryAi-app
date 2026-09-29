@@ -97,9 +97,7 @@ export function ticketPlace(run) {
       { class: "ticket-chip", title: t("ticket.waveHint", { wave: place.wave }) },
       t("ticket.place", { key: place.key, wave: place.wave }),
     ),
-    place.hitl
-      ? h("span", { class: "ticket-hitl", title: t("ticket.hitlHint") }, t("ticket.hitl"))
-      : null,
+    ...needChips(place.needs || (place.hitl ? ["human"] : [])),
     waiting.length && run.status !== "accepted"
       ? h(
           "span",
@@ -157,4 +155,11 @@ export function startTicker() {
         time: elapsed(Number(node.dataset.ago)),
       });
   }, 1000);
+}
+
+/** What a ticket needs besides its agent: a person, an asset, the internet. */
+export function needChips(needs) {
+  return (needs || []).map((need) =>
+    h("span", { class: "ticket-hitl", title: t("needs.hint." + need) }, t("needs." + need)),
+  );
 }

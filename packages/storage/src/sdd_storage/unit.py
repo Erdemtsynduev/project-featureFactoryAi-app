@@ -59,6 +59,13 @@ class SQLiteUnit(SQLiteRuntimeRecords):
             for row in self.db.execute("SELECT run,prerequisite FROM dependencies ORDER BY run")
         )
 
+    def set_dependencies(self, identifier: str, prerequisites: tuple[str, ...]) -> None:
+        self.db.execute("DELETE FROM dependencies WHERE run=?", (identifier,))
+        self.db.executemany(
+            "INSERT INTO dependencies VALUES(?,?)",
+            [(identifier, prerequisite) for prerequisite in sorted(set(prerequisites))],
+        )
+
     def relocate(self, identifier: str, workspace: str, claim: str) -> None:
         if (
             self.db.execute(

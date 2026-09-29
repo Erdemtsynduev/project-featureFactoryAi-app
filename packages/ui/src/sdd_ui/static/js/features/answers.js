@@ -11,6 +11,7 @@ import { t } from "../core/i18n.js";
 import { persistentMap } from "../core/storage.js";
 import { refresh } from "../core/store.js";
 import { toast, toastError } from "../ui/toast.js";
+import { needChips } from "./vocabulary.js";
 
 const notes = persistentMap("answer-drafts");
 const picks = persistentMap("choice-drafts");
@@ -82,6 +83,31 @@ function picker(question, index, total, chosen, save, focusNext) {
   return group;
 }
 
+/** Corrections a plan review proposes, each with the reason its lead gave. */
+function changeList(changes) {
+  return h(
+    "ol",
+    { class: "ticket-list" },
+    changes.map((change) =>
+      h(
+        "li",
+        {},
+        h(
+          "div",
+          { class: "ticket-head" },
+          h("strong", {}, t("planChanges.kind." + change.kind)),
+          change.ticket ? h("code", {}, change.ticket) : null,
+          (change.tickets || []).length ? h("code", {}, change.tickets.join(" + ")) : null,
+          ...needChips(change.kind === "need" ? change.needs : []),
+        ),
+        change.reason ? h("p", {}, change.reason) : null,
+        change.text ? h("p", { class: "hint" }, change.text) : null,
+        (change.drafts || []).length ? ticketList(change.drafts) : null,
+      ),
+    ),
+  );
+}
+
 function ticketList(tickets) {
   return h(
     "ol",
@@ -95,6 +121,7 @@ function ticketList(tickets) {
           { class: "ticket-head" },
           h("code", {}, ticket.id),
           h("strong", {}, ticket.title),
+          ...needChips(ticket.needs),
         ),
         ticket.goal ? h("p", {}, ticket.goal) : null,
         ticket.acceptance.length
@@ -135,6 +162,7 @@ export function answerPanel(detail, step, after) {
   const chosen = picks.get(key) || {};
   const save = () => picks.set(key, chosen);
   const tickets = detail.tickets || [];
+  const changes = detail.changes || [];
   const approving =
     tickets.length && step.transitions.some(([o]) => o === "approved");
   const pickers = [];
@@ -233,6 +261,14 @@ export function answerPanel(detail, step, after) {
           { class: "tickets-preview" },
           h("p", {}, t("tickets.preview", { count: tickets.length })),
           ticketList(tickets),
+        )
+      : null,
+    changes.length
+      ? h(
+          "div",
+          { class: "tickets-preview" },
+          h("p", {}, t("planChanges.preview", { count: changes.length })),
+          changeList(changes),
         )
       : null,
     pickers,

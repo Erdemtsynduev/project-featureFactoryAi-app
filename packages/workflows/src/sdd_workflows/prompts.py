@@ -36,13 +36,28 @@ visual evidence, and is verifiable on its own. Never split by technical layer an
 create separate "write tests" tickets. Prefer many thin slices, each small enough for one
 implementation run in a fresh session that sees only its ticket and the PRD. For each
 ticket give a short stable id (T1, T2 ...), a title, the goal (what to build, naming the
-user stories and AC ids it delivers; start it with "HITL:" when a human must review or
-decide inside the ticket), testable acceptance criteria refined from the PRD, `depends_on`
+user stories and AC ids it delivers), testable acceptance criteria refined from the PRD,
+`needs` (what no ticket agent below can do: `human` to decide or review, `asset` for files
+agents cannot make or obtain such as licensed recordings, `web` when the ticket's agent
+needs the internet and the agents below have none), `depends_on`
 with only the ticket ids it is truly blocked by (independent tickets run in parallel)
 and `paths` with the repository folders it owns (for example libraries/terrain,
 framework-rally). Every acceptance criterion of the PRD is covered by some ticket.
 Tickets the brief lists as already queued cover their scope: do not duplicate them.
 Return done with a readable summary table of the tickets in reason. No edits.
+"""
+
+PLAN_REVIEW = """Review this approved ticket plan as its lead. The brief says why the
+review runs (a ticket its agent blocked, or a fresh breakdown), what the ticket agents can
+and cannot do, and every ticket with its state. Propose the smallest set of corrections in
+`plan_changes`: merge never-started tickets that own the same paths or duplicate scope;
+split or revise a never-started ticket too large or unclear for one run; cancel one that
+no longer serves an acceptance criterion; fix `depends_on` through revise; mark `needs`
+the agents cannot meet (a person's decision, an asset, the internet); guide a blocked or
+unfinished ticket with concrete instructions and retry it when that unblocks it. Keep
+every PRD acceptance criterion covered and never rewrite started work. Explain each
+change in its reason. Return done with the proposal summarised in reason, or unchanged
+with an empty list when the plan is sound. No edits.
 """
 
 IMPLEMENT = """Read the specification, tickets, operator guidance, recent results and

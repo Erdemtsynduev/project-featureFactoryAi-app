@@ -337,14 +337,14 @@ def holds_claim(run: Run, workflow: Workflow) -> bool:
 
     A run that has dispatched a mutating step may have left partial changes, so
     overlapping work waits until it is accepted. A run that only read (planning,
-    questions, approvals, checks) holds nothing between its attempts.
+    questions, approvals, checks) holds nothing between its attempts. A live process
+    holds its paths while it runs; a person deciding runs none, so holds nothing.
     """
     if run.status == "accepted":
         return False
+    running = run.active is not None and workflow.step(run.active.step).kind != "human"
     visited = dict(run.visits)
-    return run.active is not None or any(
-        step.mutates and step.id in visited for step in workflow.steps
-    )
+    return running or any(step.mutates and step.id in visited for step in workflow.steps)
 
 
 def unsatisfied(run: Run, workflow: Workflow) -> list[str]:
@@ -647,3 +647,10 @@ def human_result(run: Run, outcome: str, text: str, data: str) -> Result:
     if run.active is None:
         raise ValueError("Not waiting for a human")
     return Result(run.active.id, run.active.generation, outcome, text, run.revision, data=data)
+
+
+def plan_revised(run: Run, now: float, detail: str) -> Transition:
+    """An approved plan review rewrote this never-started ticket's brief or prerequisites."""
+    if not discardable(run):
+        raise ValueError("Only a ticket that never started can be revised")
+    return changed(run, run, now, "plan_revised", detail)

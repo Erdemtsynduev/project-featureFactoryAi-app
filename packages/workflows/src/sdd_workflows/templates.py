@@ -314,7 +314,45 @@ def _merge_steps(first: str, implementer: str, auto_resolve: bool) -> tuple[Step
     return tuple(steps)
 
 
-def feature(analyst: str = "codex") -> Workflow:
+# What no ticket agent can do, whatever tools its steps grant.
+AGENT_LIMITS = (
+    "No agent can buy, license or download gated files, sign in to services, or ask a "
+    "person mid-step; such work needs a person (`human`) or an asset (`asset`)."
+)
+
+
+def capabilities(flow: Workflow) -> str:
+    """What the agents of `flow` can do, derived from its steps (one source of truth)."""
+    lines = []
+    for step in flow.steps:
+        if step.kind != "agent":
+            continue
+        work = "edits files and runs commands" if step.mutates else "reads only"
+        web = "has web access" if "web" in step.options.tools else "has no internet"
+        lines.append(f"- {step.id}: {work}; {web}.")
+    return "\n".join([*lines, AGENT_LIMITS])
+
+
+def with_capabilities(prompt: str, agents: str) -> str:
+    return prompt + ("\nTicket agents:\n" + agents + "\n" if agents else "")
+
+
+def with_tools(flow: Workflow, tools: tuple[str, ...]) -> Workflow:
+    """Grant `tools` to every agent step of `flow` (a project allowing the web)."""
+    if not tools:
+        return flow
+    return replace(
+        flow,
+        steps=tuple(
+            replace(step, config=step.options.changed(tools=tools).render())
+            if step.kind == "agent"
+            else step
+            for step in flow.steps
+        ),
+    )
+
+
+def feature(analyst: str = "codex", agents: str = "") -> Workflow:
     """Turn one feature into an approved specification (PRD) and ticket breakdown.
 
     The agent may ask structured questions; the human approves the result. The
@@ -344,7 +382,7 @@ def feature(analyst: str = "codex") -> Workflow:
                 "tickets",
                 "agent",
                 analyst,
-                prompts.BREAKDOWN,
+                with_capabilities(prompts.BREAKDOWN, agents),
                 (("done", "approve"),),
                 required=True,
                 config='{"produces":"tickets","purpose":"planning"}',
@@ -363,6 +401,44 @@ def feature(analyst: str = "codex") -> Workflow:
         # A feature's brief lists a whole plan's open rows and recorded drafts.
         max_input_chars=60000,
         max_planning_calls=6,
+    )
+
+
+def plan_review(analyst: str = "codex") -> Workflow:
+    """A plan lead's review of an approved breakdown: proposals a person decides on.
+
+    The agent only proposes (`plan_changes`); the application applies an approved
+    proposal, so no plan changes on an agent's own decision. The brief carries the
+    ticket agents' capabilities.
+    """
+    return Workflow(
+        "plan-review",
+        "review",
+        (
+            Step(
+                "review",
+                "agent",
+                analyst,
+                prompts.PLAN_REVIEW,
+                (("done", "decide"), ("unchanged", "accepted")),
+                config='{"produces":"plan_changes","purpose":"planning"}',
+            ),
+            Step(
+                "decide",
+                "human",
+                prompt="Decide on the proposed plan changes. Approved changes are applied "
+                "to the plan's tickets; rejected ones leave it as it is.",
+                transitions=(
+                    ("approved", "accepted"),
+                    ("rejected", "accepted"),
+                    ("rework", "review"),
+                ),
+            ),
+            Step("accepted", "finish"),
+        ),
+        max_calls=4,
+        max_input_chars=60000,
+        max_planning_calls=4,
     )
 
 
@@ -448,6 +524,8 @@ HUMAN_PROMPTS_RU = {
     "interview": "Ответьте на вопросы по спецификации.",
     "answer": "Ответьте на текущий вопрос.",
     "approve": "Подтвердите задачу и критерии приёмки.",
+    "decide": "Решите по предложенным изменениям плана. Одобренные применяются к тикетам "
+    "плана; отклонённые оставляют его как есть.",
 }
 
 

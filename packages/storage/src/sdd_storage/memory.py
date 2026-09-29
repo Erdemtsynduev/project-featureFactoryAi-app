@@ -86,6 +86,12 @@ class MemoryUnit:
             for prerequisite in inputs[3]
         )
 
+    def set_dependencies(self, identifier: str, prerequisites: tuple[str, ...]) -> None:
+        if any(key not in self.state.runs for key in prerequisites):
+            raise ValueError("Invalid dependencies")
+        workspace, context, claim, _ = self.state.inputs[identifier]
+        self.state.inputs[identifier] = workspace, context, claim, tuple(sorted(set(prerequisites)))
+
     def policy(self, workspace: str) -> tuple[str, ...]:
         return self.state.policies.get(workspace, ())
 

@@ -115,6 +115,7 @@ export function openProjectDialog(project = null) {
     name: "auto_resolve",
     checked: true,
   });
+  const web = h("input", { type: "checkbox", name: "web" });
   let idTouched = editing;
   id.addEventListener("input", () => (idTouched = true));
   name.addEventListener("input", () => {
@@ -162,6 +163,7 @@ export function openProjectDialog(project = null) {
       h("legend", {}, t("project.lanes")),
       h("label", {}, isolation, h("span", {}, t("project.isolation"))),
       h("label", {}, autoResolve, h("span", {}, t("project.autoResolve"))),
+      h("label", {}, web, h("span", {}, t("project.web"))),
     ),
   );
   const draftState = h("small", { class: "draft-state" });
@@ -192,6 +194,7 @@ export function openProjectDialog(project = null) {
       .join("\n");
     isolation.checked = project.isolation !== false;
     autoResolve.checked = project.auto_resolve !== false;
+    web.checked = project.web === true;
   } else {
     language.value = window.ffaiPreferences.language;
   }
@@ -253,6 +256,7 @@ export function openProjectDialog(project = null) {
         tracker,
         isolation: isolation.checked,
         auto_resolve: autoResolve.checked,
+        web: web.checked,
       });
       draft.clear();
       dialog.close(true);

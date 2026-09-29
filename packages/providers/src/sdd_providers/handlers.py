@@ -4,11 +4,14 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from sdd_core.codec import canonical, flag, text
 from sdd_core.memory import notes
-from sdd_core.models import Artifact, Json, Result
+from sdd_core.models import PLAN_CHANGE_KINDS, TICKET_NEEDS, Artifact, Json, Result
+from sdd_core.plan_changes import plan_changes_of
 from sdd_core.questions import questions
 from sdd_core.sdk import STDERR_LOG, STDOUT_LOG, Launch, Manifest, Packet
 from sdd_core.tickets import tickets_of
@@ -81,7 +84,19 @@ PREAMBLE = (
 
 TICKETS_INSTRUCTION = (
     "Return the breakdown in `tickets`: each ticket has a short unique id, a title, the "
-    "goal, testable acceptance criteria, ids of tickets it depends on and owned paths.\n"
+    "goal, testable acceptance criteria, ids of tickets it depends on, owned paths and "
+    "`needs`: `human` when a person must decide or review, `asset` when it needs files "
+    "agents cannot make or obtain (licensed recordings, purchased models), `web` when its "
+    "agent needs the internet; [] otherwise.\n"
+)
+PLAN_CHANGES_INSTRUCTION = (
+    "Return proposed corrections in `plan_changes`, [] when the plan is sound. Each has "
+    "`kind` and `reason` (why, for the person approving). `revise`: one draft replacing a "
+    "never-started ticket (same id). `merge`: `tickets` two or more never-started ids, "
+    "one draft keeping one of those ids. `split`: `ticket` never started, two or more "
+    "drafts with new ids. `cancel`: `ticket` never started. `need`: `ticket` and its "
+    "`needs`. `guide`: `ticket`, `text` for its next attempt, `retry` to run it again. "
+    "Unused fields are empty.\n"
 )
 
 STRINGS: dict[str, Json] = {"type": "array", "items": {"type": "string"}}
@@ -101,27 +116,70 @@ QUESTIONS_SCHEMA: dict[str, Json] = {
     },
 }
 
-TICKETS_SCHEMA: dict[str, Json] = {
-    "type": "array",
-    "items": {
+NEEDS: dict[str, Json] = {"type": "array", "items": {"enum": list[Json](TICKET_NEEDS)}}
+
+
+def _strict(properties: dict[str, Json]) -> dict[str, Json]:
+    """An object schema where every property is required, as strict structured output asks."""
+    return {
         "type": "object",
         "additionalProperties": False,
-        "properties": {
-            "id": {"type": "string"},
-            "title": {"type": "string"},
-            "goal": {"type": "string"},
-            "acceptance": STRINGS,
-            "depends_on": STRINGS,
-            "paths": STRINGS,
-        },
-        "required": ["id", "title", "goal", "acceptance", "depends_on", "paths"],
-    },
+        "properties": properties,
+        "required": list(properties),
+    }
+
+
+TICKET: dict[str, Json] = _strict(
+    {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "goal": {"type": "string"},
+        "acceptance": STRINGS,
+        "depends_on": STRINGS,
+        "paths": STRINGS,
+        "needs": NEEDS,
+    }
+)
+TICKETS_SCHEMA: dict[str, Json] = {"type": "array", "items": TICKET}
+PLAN_CHANGES_SCHEMA: dict[str, Json] = {
+    "type": "array",
+    "items": _strict(
+        {
+            "kind": {"enum": list[Json](PLAN_CHANGE_KINDS)},
+            "reason": {"type": "string"},
+            "ticket": {"type": "string"},
+            "tickets": STRINGS,
+            "drafts": TICKETS_SCHEMA,
+            "needs": NEEDS,
+            "text": {"type": "string"},
+            "retry": {"type": "boolean"},
+        }
+    ),
 }
 
 
-def emits_tickets(packet: Packet) -> bool:
-    """A planning step opts into ticket output through `{"produces": "tickets"}`."""
-    return packet.step.options.produces == "tickets"
+@dataclass(frozen=True)
+class ProductOutput:
+    """The extra result field a product step returns, and how it is checked."""
+
+    key: str
+    schema: dict[str, Json]
+    instruction: str
+    check: Callable[[str], object]
+
+
+# One row per product whose result carries structured output beyond the common fields.
+PRODUCT_OUTPUTS: dict[str, ProductOutput] = {
+    "tickets": ProductOutput("tickets", TICKETS_SCHEMA, TICKETS_INSTRUCTION, tickets_of),
+    "plan_changes": ProductOutput(
+        "plan_changes", PLAN_CHANGES_SCHEMA, PLAN_CHANGES_INSTRUCTION, plan_changes_of
+    ),
+}
+
+
+def product_output(packet: Packet) -> ProductOutput | None:
+    """The structured output the step declares through `{"produces": ...}`, if any."""
+    return PRODUCT_OUTPUTS.get(packet.step.options.produces)
 
 
 def result_schema(packet: Packet) -> dict[str, Json]:
@@ -134,18 +192,15 @@ def result_schema(packet: Packet) -> dict[str, Json]:
         "questions": QUESTIONS_SCHEMA,
         "notes": STRINGS,
     }
-    if emits_tickets(packet):
-        properties["tickets"] = TICKETS_SCHEMA
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": properties,
-        "required": list(properties),
-    }
+    output = product_output(packet)
+    if output is not None:
+        properties[output.key] = output.schema
+    return _strict(properties)
 
 
 def instructions(packet: Packet) -> str:
-    return PREAMBLE + (TICKETS_INSTRUCTION if emits_tickets(packet) else "")
+    output = product_output(packet)
+    return PREAMBLE + (output.instruction if output is not None else "")
 
 
 def time_budget(packet: Packet) -> str:
@@ -165,18 +220,15 @@ def time_budget(packet: Packet) -> str:
 
 
 def shared_data(doc: dict[str, Json], packet: Packet) -> dict[str, Json]:
-    """Questions, notes and tickets an agent declared, validated before routing."""
-    data: dict[str, Json] = {}
-    for key in ("questions", "notes", "tickets"):
-        value = doc.get(key)
-        if value:
-            data[key] = value
-    if "tickets" in data and not emits_tickets(packet):
-        del data["tickets"]
+    """Questions, notes and the step's product an agent declared, validated before routing."""
+    output = product_output(packet)
+    keys = ("questions", "notes", *((output.key,) if output is not None else ()))
+    data: dict[str, Json] = {key: doc[key] for key in keys if doc.get(key)}
     facts = canonical(data)
     questions(facts)
     notes(facts)
-    tickets_of(facts)
+    if output is not None:
+        output.check(facts)
     return data
 
 
@@ -205,7 +257,7 @@ class CliHandler:
         self.manifest = Manifest(
             provider,
             "0.1.0",
-            capabilities=("process", "agent", "resume"),
+            capabilities=("process", "agent", "resume", "web"),
             settings=canonical(
                 {
                     "executable": str(path),

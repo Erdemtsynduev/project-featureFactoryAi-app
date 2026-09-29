@@ -22,18 +22,21 @@ from sdd_runtime.profiles import load_profiles
 from sdd_workflows.templates import (
     CheckCommand,
     approved_feature,
+    capabilities,
     command_demo,
     feature,
     interview,
     localized,
     main_flow,
+    plan_review,
     ticket,
     with_checks,
+    with_tools,
 )
 
 from sdd_factory.model import INTENTS
 
-TEMPLATES = (*INTENTS, "approved-feature", "interview", "demo")
+TEMPLATES = (*INTENTS, "approved-feature", "interview", "demo", "plan-review")
 
 
 class FlowLibrary:
@@ -63,17 +66,16 @@ class FlowLibrary:
         if name == "demo":
             flow = command_demo(sys.executable)
         elif name == "ticket":
-            flow = ticket(
-                self._ticket_checks(project, checks, repositories),
-                isolated=project.get("isolation", True) is not False,
-                auto_resolve=project.get("auto_resolve", True) is not False,
-            )
+            flow = self._ticket(project, checks, repositories)
+        elif name == "feature":
+            # The planner learns what the project's ticket agents can and cannot do.
+            flow = feature(agents=capabilities(self._ticket(project, checks, repositories)))
         else:
             flow = {
-                "feature": feature,
                 "approved-feature": approved_feature,
                 "main-flow": main_flow,
                 "interview": interview,
+                "plan-review": plan_review,
             }[name]()
         flow = localized(flow, language)
         return flow if name == "demo" else with_checks(flow, checks)
@@ -94,6 +96,23 @@ class FlowLibrary:
     def check(self, document: Json, publish: bool) -> dict[str, object]:
         flow = workflow_load(canonical(document))
         return {"workflow": asdict(flow), "digest": self._verified(flow, publish)}
+
+    def _ticket(
+        self, project: dict[str, Json], checks: list[str], repositories: tuple[str, ...]
+    ) -> Workflow:
+        """The project's ticket flow; `web: true` lets its agents use the internet."""
+        flow = ticket(
+            self._ticket_checks(project, checks, repositories),
+            isolated=project.get("isolation", True) is not False,
+            auto_resolve=project.get("auto_resolve", True) is not False,
+        )
+        return with_tools(flow, ("web",) if project.get("web") is True else ())
+
+    def agents(self, project_id: str) -> str:
+        """What the project's ticket agents can do, for planning and review briefs."""
+        project = self.project(project_id)
+        checks = [text(x, "check") for x in sequence(project.get("checks", []))]
+        return capabilities(self._ticket(project, checks, ()))
 
     @staticmethod
     def _ticket_checks(
@@ -143,4 +162,9 @@ class FlowLibrary:
                     ) from None
                 if step.kind not in manifest.capabilities:
                     raise ValueError(f"Incompatible handler on {step.id}")
+                missing = sorted(set(step.options.tools) - set(manifest.capabilities))
+                if missing:
+                    raise ValueError(
+                        f"Step {step.id}: agent '{handler_key(step)}' cannot use {', '.join(missing)}"
+                    )
         return self.engine.store.publish(flow) if publish else None

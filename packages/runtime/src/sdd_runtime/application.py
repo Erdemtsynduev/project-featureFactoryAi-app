@@ -111,6 +111,18 @@ class ApplicationEngine:
     def request_recovery(self, run_id: str, expected: int, now: float) -> Run:
         return self.commands.request_recovery(run_id, expected, now)
 
+    def revise(
+        self,
+        run_id: str,
+        context: str,
+        claim: str,
+        dependencies: tuple[str, ...],
+        request_id: str,
+        expected: int,
+        now: float,
+    ) -> Run:
+        return self.commands.revise(run_id, context, claim, dependencies, request_id, expected, now)
+
     def relocate(self, run_id: str, workspace: str, claim: str, now: float) -> Run:
         return self.commands.relocate(run_id, workspace, claim, now)
 

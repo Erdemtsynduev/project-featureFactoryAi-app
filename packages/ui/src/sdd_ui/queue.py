@@ -71,13 +71,16 @@ class QueueController:
         health_path: Path,
         log: FlightLog,
         available: Callable[[str], bool],
+        on_blocked: Callable[[Run], object] = lambda run: None,
     ) -> None:
-        """`available(profile)` says whether a profile or its rotation can work now."""
+        """`available(profile)` says whether a profile or its rotation can work now;
+        `on_blocked(run)` hears of every run that newly became blocked."""
         # Guards the coordinator (its live hosts and handlers) and the queue settings.
         self.lock = threading.RLock()
         self.engine, self.handlers = engine, handlers
         self.store, self.health_path = store, health_path
         self.log, self.available = log, available
+        self.on_blocked = on_blocked
         stored = store.load()
         # Opening the application never starts work, except right after a restart
         # the operator asked for: then the queue continues as it was.
@@ -231,6 +234,13 @@ class QueueController:
         elif run.status in ("blocked", "waiting"):
             level = "warning" if run.status == "waiting" else "error"
             self.log.record(run.status, level, run=run.id, step=run.step, reason=run.reason)
+            if run.status == "blocked":
+                try:
+                    self.on_blocked(run)
+                except Exception as error:  # a listener never stops the queue
+                    self.log.record(
+                        "blocked_listener_failed", "error", run=run.id, error=str(error)
+                    )
 
     def _revive(self, run: Run, now: float) -> None:
         if (
