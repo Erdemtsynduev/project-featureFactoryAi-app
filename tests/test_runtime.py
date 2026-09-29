@@ -116,6 +116,8 @@ def test_host_feeds_a_long_prompt_on_stdin(tmp_path):
         [sys.executable, "-m", "sdd_runtime.host", str(tmp_path)],
         input=b"GO\n",
         timeout=30,
+        # As in production, the host leads its own process group on POSIX.
+        start_new_session=os.name != "nt",
     )
     assert host.returncode == 0
     assert (tmp_path / "stdout.log").read_text(encoding="utf-8") == prompt
