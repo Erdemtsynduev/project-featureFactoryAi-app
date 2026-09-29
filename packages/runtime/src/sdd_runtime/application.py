@@ -257,7 +257,10 @@ class ApplicationEngine:
                 run, now, termination_confirmed=confirmed, reason=reason, observed_revision=revision
             )
             target = StepOptions.parse(workflow.step(run.step).config).recovery_step or None
-            if confirmed and target and transition.state.status == "waiting":
+            # An attempt that left the workspace as it found it has nothing to reconcile:
+            # the same step simply runs again (a launch that never started, a lost host).
+            touched = run.active is not None and revision != run.active.base_revision
+            if confirmed and target and touched and transition.state.status == "waiting":
                 if not isinstance(target, str) or workflow.step(target).mutates:
                     raise ValueError("Recovery requires a read-only step")
                 transition = machine.recover(
@@ -405,14 +408,25 @@ class ApplicationEngine:
             return state
 
     def request_recovery(self, run_id: str, expected: int, now: float) -> Run:
-        """Select the workflow's declared reconciliation path without accepting work."""
+        """Select the workflow's declared reconciliation path without accepting work.
+
+        When no mutating attempt has changed anything yet, there is nothing to
+        reconcile: the run goes back to its first mutating step instead.
+        """
         workflow = self.store.workflow(self.store.get(run_id).workflow_digest)
         observed = self.observe(run_id)
         with self.store.unit() as db:
             run = db.run(run_id)
             if run.version != expected:
                 raise Conflict("Stale recovery request")
-            if run.active or run.status not in ("blocked", "waiting"):
+            if run.active or run.status not in ("blocked", "waiting", "ready"):
+                raise ValueError("Recovery requires an inactive unfinished task")
+            first = _untouched(
+                workflow, db.attempt_bases(run_id), db.step_results(run_id), observed
+            )
+            if first is not None and first != run.step:
+                return db.apply(run, machine.restart(run, first, observed, now))
+            if run.status == "ready":
                 raise ValueError("Recovery requires an inactive blocked or waiting task")
             target = StepOptions.parse(workflow.step(run.step).config).recovery_step or None
             if not isinstance(target, str) or workflow.step(target).mutates:
@@ -431,3 +445,23 @@ class ApplicationEngine:
         with self.store.unit() as db:
             run = db.run(run_id)
             return db.apply(run, machine.block(run, now, reason))
+
+
+def _untouched(
+    workflow: Workflow,
+    attempts: tuple[tuple[str, str], ...],
+    results: tuple[tuple[str, str], ...],
+    observed: str,
+) -> str | None:
+    """The first mutating step, when no mutating attempt has changed the workspace.
+
+    True when no mutating step has a processed result and the workspace is at the
+    revision every mutating attempt started from; else None (reconcile instead).
+    """
+    mutating = {step.id for step in workflow.steps if step.mutates}
+    first = next((step.id for step in workflow.steps if step.mutates), None)
+    if first is None or any(step in mutating for step, _ in results):
+        return None
+    if any(step in mutating and base != observed for step, base in attempts):
+        return None
+    return first

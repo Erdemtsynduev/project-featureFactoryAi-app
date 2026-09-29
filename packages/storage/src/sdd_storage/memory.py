@@ -157,6 +157,13 @@ class MemoryUnit:
             if key in self.state.results and self.effect(key).run_id == run_id
         )[:limit]
 
+    def attempt_bases(self, run_id: str) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (self.state.attempts[key].step, self.state.attempts[key].base_revision)
+            for key, effect in self.state.effects.items()
+            if effect.run_id == run_id and key in self.state.attempts
+        )
+
     def step_results(self, run_id: str) -> tuple[tuple[str, str], ...]:
         return tuple(
             (self.state.attempts[key].step, self.state.results[key][1])

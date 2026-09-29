@@ -86,6 +86,32 @@ def reconcile(run: Run, target: str, revision: str, now: float) -> Transition:
     )
 
 
+def restart(run: Run, target: str, revision: str, now: float) -> Transition:
+    """Send an inactive blocked or waiting run back to its first mutating step, paused.
+
+    The caller has established that no mutating attempt changed the workspace, so
+    there is nothing to reconcile; the infrastructure retry budget starts afresh.
+    """
+    if run.active or run.status not in ("blocked", "waiting", "ready"):
+        raise ValueError("Restart requires an inactive, unfinished task")
+    return changed(
+        replace(
+            run,
+            step=target,
+            revision=revision,
+            status="ready",
+            paused=True,
+            wake_at=None,
+            gates=(),
+            infrastructure_failures=0,
+            reason="Nothing was changed yet: restarted from the first working step",
+        ),
+        now,
+        "restarted",
+        target,
+    )
+
+
 def release_condition(run: Run, now: float) -> Transition:
     """Return a condition attempt persisted by an earlier release to pure routing."""
     if run.active is None:

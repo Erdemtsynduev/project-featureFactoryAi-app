@@ -41,6 +41,12 @@ digest they were created with.
   the attempt ended as "Host exited without durable completion". `Launch.input`
   carries the text; the coordinator refuses an over-long command line before
   launch with a clear reason.
+- Recovery reconciles only what an attempt could have changed. A lost attempt
+  that left the workspace at its base revision retries the same step instead of
+  going to `reconcile`, and **Reconcile and recover** sends a run whose mutating
+  attempts changed nothing back to its first mutating step with a fresh retry
+  budget. Tickets whose launches never started were routed through reconcile and
+  diagnose, and a diagnosis of the old launch failure blocked them.
 
 ## 0.3.1 — 2026-09-28
 

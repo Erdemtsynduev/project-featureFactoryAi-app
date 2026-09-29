@@ -69,9 +69,10 @@ def test_recovery_reconciles_changed_revision_without_bypassing_gates(tmp_path, 
     active = engine.dispatch("one", 7, "implementation")
     with pytest.raises(ValueError, match="inactive"):
         engine.request_recovery("one", active.version, 8)
-    recovered = engine.recover("one", 9, True, "Executor terminated", active.revision)
-    assert recovered.step == "reconcile" and recovered.status == "waiting"
     (root / "partial.txt").write_text("Unfinished edits")
+    recovered = engine.recover("one", 9, True, "Executor terminated", revision(root))
+    assert recovered.step == "reconcile" and recovered.status == "waiting"
+    (root / "partial.txt").write_text("More unfinished edits")
     run = engine.request_recovery("one", recovered.version, 10)
     assert run.paused and run.gates == () and run.revision == revision(root)
     assert run.calls == 3
@@ -86,6 +87,39 @@ def test_recovery_reconciles_changed_revision_without_bypassing_gates(tmp_path, 
         machine.dispatch(replace(checked, step="accepted"), flow, 14, "finish").state.status
         == "blocked"
     )
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_an_attempt_that_changed_nothing_is_retried_or_restarted_not_reconciled(tmp_path, backend):
+    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+    root = tmp_path / "project"
+    root.mkdir()
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine.create("one", store.publish(main_flow()), root, "Requirement", revision(root), 0)
+    engine.command("one", "resume", "resume", 0, 1)
+    for index in range(2):
+        run = engine.dispatch("one", 2 + index * 2, str(index))
+        engine.complete(
+            "one", Result(str(index), run.generation, "done", "Plan", run.revision), 3 + index * 2
+        )
+    active = engine.dispatch("one", 7, "implementation")
+    # The host never started the agent: the workspace is as the attempt found it.
+    lost = engine.recover("one", 8, True, "Host exited without durable completion", active.revision)
+    assert lost.step == active.step and lost.status == "waiting"
+    # Say an earlier build still sent it to reconciliation and the operator asks to recover.
+    stuck = engine.block("one", 9, "Diagnose: nothing to repair in the product")
+    with store.unit() as unit:
+        unit.apply(stuck, machine.reconcile(stuck, "reconcile", stuck.revision, 10))
+    parked = store.get("one")
+    restarted = engine.request_recovery("one", parked.version, 11)
+    assert restarted.step == active.step and restarted.paused
+    assert restarted.infrastructure_failures == 0 and restarted.gates == ()
+    # Once a mutating attempt changed the workspace, recovery reconciles again.
+    engine.command("one", "resume", "again", restarted.version, 12)
+    engine.dispatch("one", 13, "second")
+    (root / "partial.txt").write_text("Unfinished edits")
+    moved = engine.recover("one", 14, True, "Executor terminated", revision(root))
+    assert moved.step == "reconcile"
 
 
 def test_project_registration_language_and_demo_are_isolated(tmp_path):

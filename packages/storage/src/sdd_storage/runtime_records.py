@@ -56,6 +56,17 @@ class SQLiteRuntimeRecords:
             )
         )
 
+    def attempt_bases(self, run_id: str) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (str(row[0]), str(row[1]))
+            for row in self.db.execute(
+                "SELECT json_extract(payload,'$.attempt.step'), "
+                "json_extract(payload,'$.attempt.base_revision') FROM effects "
+                "WHERE run=? AND json_extract(payload,'$.attempt') IS NOT NULL ORDER BY rowid",
+                (run_id,),
+            )
+        )
+
     def step_results(self, run_id: str) -> tuple[tuple[str, str], ...]:
         return tuple(
             (str(row[0]), str(row[1]))
