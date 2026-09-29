@@ -118,6 +118,17 @@ class WorkspaceService:
         found = installed()
         self.versions = {"engine": engine(), "packages": found, "consistent": consistent(found)}
         self._release_spurious_blocks()
+        self._finish_admissions()
+
+    def _finish_admissions(self) -> None:
+        """Admit the tickets an approval interrupted by a crash or restart left out."""
+        try:
+            created = self.tasks.readmit()
+        except (ValueError, KeyError, OSError, Conflict) as error:
+            self.log.record("readmission_failed", "error", error=f"{type(error).__name__}: {error}")
+            return
+        if created:
+            self.log.record("tickets_readmitted", tickets=list[Json](created))
 
     def _release_spurious_blocks(self) -> None:
         """Earlier builds blocked a task paused during its own dispatch with this

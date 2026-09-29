@@ -4,9 +4,11 @@ import json
 import sys
 import time
 
+import pytest
 from sdd_core.codec import canonical
 from sdd_core.machine import WAIT_RETRY_LIMIT
 from sdd_core.models import Result, Step, Workflow
+from sdd_factory.flows import FlowLibrary
 from sdd_factory.model import TaskRecord
 from sdd_ui.queue import REVIVE_AFTER
 from sdd_ui.service import WorkspaceService
@@ -107,6 +109,54 @@ def test_approval_creates_ticket_tasks_once_with_dependencies(tmp_path, monkeypa
         assert service.state()["totals"]["calls"] == 0
     finally:
         service.coordinator.close()
+
+
+def test_interrupted_approval_is_finished_on_restart_with_the_whole_specification(
+    tmp_path, monkeypatch
+):
+    service = WorkspaceService(tmp_path / "ui.db")
+    root = tmp_path / "project"
+    root.mkdir()
+    # The real ticket template's budget: a 44k specification fits whole.
+    flow = Workflow("ticket", "done", (Step("done", "finish"),), max_input_chars=60000)
+    ticket = service.engine.store.publish(flow)
+    monkeypatch.setattr(FlowLibrary, "ensure", lambda *_args, **_kwargs: ticket)
+    specification = "SPEC\n" + "\n".join("requirement " + "y" * 60 for _ in range(600))
+    try:
+        service.mutate("project", {"id": "app", "name": "App", "workspace": str(root)})
+        definition = service.engine.store.publish(planning_flow())
+        run = service.mutate("create", {"id": "big", "project": "app", "definition": definition})
+        service.mutate("resume", {"id": "big", "version": run["version"]})
+        complete(service, "big", specification, "s1")
+        tickets = [{"id": "one", "title": "One"}, {"id": "two", "title": "Two"}]
+        complete(service, "big", "Two slices", "t1", tickets=tickets)
+        waiting = service.engine.dispatch("big", 12, "h1")
+
+        def crash(*_args):
+            raise RuntimeError("process died while admitting tickets")
+
+        monkeypatch.setattr(service.tasks, "_admit", crash)
+        with pytest.raises(RuntimeError):
+            service.mutate(
+                "answer", {"id": "big", "outcome": "approved", "version": waiting.version}
+            )
+        # The coordinator finishes the feature while its tickets are missing.
+        assert service.engine.dispatch("big", 13, "f1").status == "accepted"
+    finally:
+        service.coordinator.close()
+
+    restarted = WorkspaceService(tmp_path / "ui.db")
+    try:
+        with restarted.engine.store.unit() as unit:
+            assert [d.id for d in unit.dependencies("big-two")] == []
+            context = unit.context("big-one")
+        assert specification in context
+        assert restarted.catalog.artifacts("big")["specification"].content == specification
+        readmitted = [e for e in restarted.flight() if e["kind"] == "tickets_readmitted"]
+        assert readmitted[-1]["tickets"] == ["big-one", "big-two"]
+        assert restarted.tasks.readmit() == []
+    finally:
+        restarted.coordinator.close()
 
 
 def test_failed_actions_are_recorded_in_the_flight_log(tmp_path):

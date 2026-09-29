@@ -29,7 +29,8 @@ from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import INTENT_KIND, INTENTS, LANGUAGES, TaskRecord, language_rule
 
-SPECIFICATION_CHARS = 20000
+# Input a ticket's brief leaves free for task memory, handoffs and operator guidance.
+TICKET_MEMORY_CHARS = 8000
 
 CYRILLIC = dict(
     zip(
@@ -356,8 +357,10 @@ class TaskService:
         run_id = text(doc.get("id"), "id")
         outcome = text(doc.get("outcome"), "outcome")
         drafts = tickets_of(self.engine.facts(run_id)) if outcome == "approved" else ()
-        # Publish the ticket flows before the answer, so approval never half-applies.
+        # Publish the ticket flows and build every brief before the answer, so what
+        # can be refused is refused while the feature still awaits approval.
         definitions = self._ticket_definitions(run_id, drafts)
+        contexts = self._ticket_contexts(run_id, drafts, definitions)
         choices = {
             key: text(value, "choice") for key, value in mapping(doc.get("choices", {})).items()
         }
@@ -373,7 +376,7 @@ class TaskService:
             integer(doc.get("version"), "version"),
             time.time(),
         )
-        created = self._admit(run, drafts, definitions) if drafts else []
+        created = self._admit(run, drafts, definitions, contexts) if drafts else []
         self.log.record("answered", run=run_id, outcome=outcome, tickets=len(created))
         return {**asdict(run), "admitted": list[Json](created)}
 
@@ -398,15 +401,60 @@ class TaskService:
             for draft in drafts
         }
 
+    def _ticket_contexts(
+        self, run_id: str, drafts: tuple[TicketDraft, ...], definitions: dict[str, str]
+    ) -> dict[str, str]:
+        """Each ticket's brief within its workflow's input budget, room left for memory."""
+        if not drafts:
+            return {}
+        rule = language_rule(self.catalog.task(run_id).language)
+        specification = self.specification(run_id)
+        contexts: dict[str, str] = {}
+        for draft in drafts:
+            budget = self.engine.store.workflow(definitions[draft.id]).max_input_chars
+            limit = budget - len(rule) - TICKET_MEMORY_CHARS
+            contexts[draft.id] = rule + draft.context(specification, limit)
+        return contexts
+
     def specification(self, run_id: str) -> str:
-        """The latest specification the feature's specification step produced."""
+        """The latest specification the feature's specification step produced, whole."""
         for result in self.engine.outputs(run_id, "specification"):
             if result.outcome == "done":
-                return result.reason[:SPECIFICATION_CHARS]
+                return result.reason
         return ""
 
+    def readmit(self) -> list[str]:
+        """Finish admissions an interrupted approval left undone.
+
+        Approval accepts the feature first and then creates its tickets; the tickets
+        artifact is saved last. An accepted feature with an approved breakdown but no
+        tickets artifact was cut short, so its remaining tickets are admitted now.
+        """
+        with self.engine.store.unit() as db:
+            accepted = [run for run in db.runs() if run.status == "accepted"]
+        created: list[str] = []
+        for run in accepted:
+            if "tickets" in self.catalog.artifacts(run.id):
+                continue
+            breakdown = next(
+                (r for r in self.engine.outputs(run.id, "tickets") if r.outcome == "done"), None
+            )
+            if breakdown is None:
+                continue
+            drafts = tickets_of(breakdown.data)
+            if not drafts:
+                continue
+            definitions = self._ticket_definitions(run.id, drafts)
+            contexts = self._ticket_contexts(run.id, drafts, definitions)
+            created += self._admit(run, drafts, definitions, contexts)
+        return created
+
     def _admit(
-        self, parent: Run, drafts: tuple[TicketDraft, ...], definitions: dict[str, str]
+        self,
+        parent: Run,
+        drafts: tuple[TicketDraft, ...],
+        definitions: dict[str, str],
+        contexts: dict[str, str],
     ) -> list[str]:
         feature = self.catalog.task(parent.id)
         with self.engine.store.unit() as db:
@@ -425,7 +473,7 @@ class TaskService:
                 child,
                 definitions[draft.id],
                 root,
-                language_rule(feature.language) + draft.context(specification),
+                contexts[draft.id],
                 None,
                 time.time(),
                 tuple(ids[dependency] for dependency in draft.depends_on),

@@ -69,6 +69,19 @@ def test_ticket_drafts_are_ordered_and_validated():
             tickets_of(canonical({"tickets": broken}))
 
 
+def test_ticket_context_keeps_the_ticket_and_marks_a_shortened_specification():
+    draft = tickets_of(canonical({"tickets": [{"id": "a", "title": "A", "acceptance": ["AC"]}]}))[0]
+    specification = "\n".join(f"line {n:04d} " + "x" * 40 for n in range(400))
+    assert draft.context(specification, 30000).endswith(specification)
+    shortened = draft.context(specification, 5000)
+    assert len(shortened) <= 5000 and "- AC" in shortened
+    assert f"of {len(specification)} characters" in shortened
+    kept = shortened.split("specification of the parent requirement:\n")[1].split("\n[")[0]
+    assert specification.startswith(kept) and kept.endswith("x" * 40)
+    with pytest.raises(ValueError):
+        draft.context(specification, 5)
+
+
 def test_requirement_breakdown_declares_structured_tickets():
     tickets = feature().step("tickets")
     assert '"produces":"tickets"' in tickets.config

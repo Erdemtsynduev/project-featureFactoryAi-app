@@ -23,6 +23,14 @@ digest they were created with.
 - The board opens on a **tree** of features, tickets and sub-tickets with
   progress, **Доделать** and lane focus chips instead of kind chips; **Канбан**
   and **По планам** show approved parents through their tickets.
+- The approved specification is kept whole: it was cut at 20 000 characters
+  mid-word in the feature's artifact, its `spec.md` and every ticket's brief. A
+  ticket's brief now fits its workflow's input budget, keeps 8 000 characters for
+  task memory, and says when and how much of the specification it shortened.
+- Ticket briefs are built before an approval applies, so an oversized ticket is
+  refused while the feature still awaits approval. An approval interrupted
+  between accepting the feature and admitting its tickets is finished on the next
+  start (`tickets_readmitted` in the flight log).
 
 ## 0.3.1 — 2026-09-28
 

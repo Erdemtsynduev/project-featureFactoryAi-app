@@ -87,8 +87,12 @@ class TicketDraft:
     depends_on: tuple[str, ...] = ()
     paths: tuple[str, ...] = ()
 
-    def context(self, specification: str) -> str:
-        """Everything a fresh ticket agent needs, without the planner's transcript."""
+    def context(self, specification: str, limit: int | None = None) -> str:
+        """Everything a fresh ticket agent needs, without the planner's transcript.
+
+        Within `limit` characters the ticket itself is kept whole; a specification
+        that does not fit is cut at a line and says so, never silently.
+        """
         lines = [f"Ticket {self.id}: {self.title}"]
         if self.goal:
             lines.append("Goal: " + self.goal)
@@ -97,10 +101,29 @@ class TicketDraft:
             lines.extend("- " + item for item in self.acceptance)
         if self.paths:
             lines.append("Owned paths: " + ", ".join(self.paths))
-        if specification:
-            lines.append("Approved specification of the parent requirement:")
-            lines.append(specification)
-        return "\n".join(lines)
+        ticket = "\n".join(lines)
+        if limit is not None and len(ticket) > limit:
+            raise ValueError(f"Ticket {self.id} exceeds its context budget")
+        if not specification:
+            return ticket
+        heading = "\nApproved specification of the parent requirement:\n"
+        room = len(specification) if limit is None else limit - len(ticket) - len(heading)
+        if len(specification) <= room:
+            return ticket + heading + specification
+        # The kept count never has more digits than the total, so this bounds the marker.
+        room -= len(_shortened(len(specification), len(specification)))
+        if room < 200:
+            return ticket + (_shortened(0, len(specification)) if room >= 0 else "")
+        cut = specification[:room]
+        kept = cut.rsplit("\n", 1)[0] if "\n" in cut else cut
+        return ticket + heading + kept + _shortened(len(kept), len(specification))
+
+
+def _shortened(kept: int, total: int) -> str:
+    return (
+        f"\n[Specification shortened to fit the ticket budget: {kept} of {total}"
+        " characters. The acceptance criteria above govern.]"
+    )
 
 
 def tickets_of(data: str) -> tuple[TicketDraft, ...]:
