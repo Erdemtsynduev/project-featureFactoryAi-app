@@ -12,9 +12,9 @@ from sdd_core import machine
 from sdd_core.catalog import AgentCall, OutboxEntry
 from sdd_core.codec import digest, result_load, workflow_json
 from sdd_core.graph import validate
-from sdd_core.models import Attempt, Result, Run, Transition, Workflow
+from sdd_core.models import UNPINNED_KINDS, Attempt, Result, Run, Transition, Workflow
 from sdd_core.ports import Conflict, StaleVersion, UnitOfWork
-from sdd_core.runtime_ports import UNPINNED_KINDS, EffectRecord
+from sdd_core.records import EffectRecord
 
 
 @dataclass
@@ -177,23 +177,6 @@ class MemoryUnit:
     def effects(self, statuses: tuple[str, ...]) -> tuple[EffectRecord, ...]:
         return tuple(record for record in self.state.effects.values() if record.status in statuses)
 
-    def claim_host(self, attempt: str, packet: str, nonce: str) -> None:
-        record = self.effect(attempt)
-        if (
-            record.external
-            or record.status != "pending"
-            or record.host_nonce is not None
-            or record.pid is not None
-        ):
-            raise Conflict("Attempt already claimed")
-        self.state.effects[attempt] = replace(record, host_nonce=nonce)
-
-    def host_started(self, attempt: str, nonce: str, pid: int, created: float) -> None:
-        record = self.effect(attempt)
-        if record.status != "pending" or record.host_nonce != nonce or record.pid is not None:
-            raise Conflict("Dispatch ownership changed before launch")
-        self.state.effects[attempt] = replace(record, status="running", pid=pid, created=created)
-
     def execution(self, attempt: str) -> tuple[str, str] | None:
         return self.state.executions.get(attempt)
 
@@ -237,7 +220,7 @@ class MemoryUnit:
 
     def queue_usage(self) -> tuple[int, int]:
         runs = self.state.runs.values()
-        return sum(r.calls for r in runs), sum(r.planning_calls for r in runs)
+        return sum(r.spend.calls for r in runs), sum(r.spend.planning_calls for r in runs)
 
     def last_transition(self) -> float | None:
         return max((at for _, at, _ in self.state.events), default=None)

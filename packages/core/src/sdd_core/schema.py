@@ -1,17 +1,18 @@
 """JSON Schema exported by the same package that owns the workflow wire format."""
 
-from sdd_core.models import Json
+from sdd_core.graph import MAX_STEPS
+from sdd_core.models import KINDS, STEP_ID, Json
 
 
 def workflow_schema() -> dict[str, Json]:
-    identifier: dict[str, Json] = {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}
+    identifier: dict[str, Json] = {"type": "string", "pattern": f"^{STEP_ID}$"}
     step: dict[str, Json] = {
         "type": "object",
         "additionalProperties": False,
         "required": ["id", "kind"],
         "properties": {
             "id": identifier,
-            "kind": {"enum": ["agent", "check", "human", "condition", "operation", "finish"]},
+            "kind": {"enum": list[Json](KINDS)},
             "handler": {"type": "string"},
             "prompt": {"type": "string"},
             "transitions": {
@@ -48,6 +49,6 @@ def workflow_schema() -> dict[str, Json]:
             "max_calls": {"type": "integer", "minimum": 1},
             "max_input_chars": {"type": "integer", "minimum": 128},
             "max_tokens": {"type": ["integer", "null"], "minimum": 1},
-            "steps": {"type": "array", "minItems": 1, "maxItems": 128, "items": step},
+            "steps": {"type": "array", "minItems": 1, "maxItems": MAX_STEPS, "items": step},
         },
     }

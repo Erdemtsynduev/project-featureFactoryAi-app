@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from sdd_runtime import host
-from sdd_runtime.coordinator import read_exit
+from sdd_runtime.supervisor import read_exit
 
 ECHO = "import sys; data = sys.stdin.read(); print(len(data)); sys.exit(3 if data else 4)"
 

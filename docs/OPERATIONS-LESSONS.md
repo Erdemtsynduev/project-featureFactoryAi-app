@@ -37,6 +37,7 @@ deterministically by the engine.
 | Mutable checkpoint invalidates evidence | Checkpoint is transport data, not acceptance evidence | `test_checkpoint_policy.py`; historical data import outside library scope |
 | Completion before acknowledgement / duplicate or stale reply | Durable receipts, generation/revision checks, transactional application | `test_faults.py`, core/store and recovery tests |
 | Busy child tree outlives coordinator | Gated launch, owned containment, confirmed termination before retry | Process tests and prior 9h47 Windows soak; hostile escape unqualified |
+| Agent tree leaves its job and writes after a confirmed stop (feature_110-T48) | Suspended start, durable lineage ended with the job, alias-free PATH, budget hook before commands | Late-assignment, install-manager breakaway and timed-out-attempt regressions; a descendant born and detached between two ticks is not recorded |
 | Disk full / changed evidence causes false acceptance | Rollback, durable ownership, revision and artifact hash gates | `test_faults.py`; UI cannot set accepted |
 | Human answer races transition | Versioned answer, persisted before next dispatch | Stale-command and human-answer regression |
 | Saved activity mistaken for health | Connection, queue intent, last transition and live errors separated | HTTP lifecycle; rendered-browser usability review pending |

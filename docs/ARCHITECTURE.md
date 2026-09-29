@@ -15,6 +15,30 @@ Transition, Event and Effect. The graph wire schema is exported by `sdd schema`.
 SDK API version 1 is checked before a plugin registers. The registry rejects duplicates.
 Breaking schemas/APIs require a new version and migration; published definitions are immutable.
 
+## The state machine
+
+`sdd_core.machine` holds every rule that changes a run as a pure function
+`(run, input, now, ids) -> Transition(state, events, effects)`. Each rule decides
+the next state and passes it to one builder, which checks it before the version
+advances:
+
+- the status change must be in `models.STATUS_CHANGES` (`accepted` is final);
+- `running` has a live attempt; `ready`, `waiting` and `accepted` have none;
+- a `blocked` run always has a typed `cause` and a readable `reason`, and only a
+  blocked run carries a rule's cause (`stop` may mark any unfinished run).
+
+Behaviour reads `Run.cause` (`call_limit`, `wait_limit`, `uncertain`, `stop`, …),
+never the reason text. Model use lives in `Run.spend`; on the wire it stays flat
+(`calls`, `tokens`, …) because storage queries read those keys. Every document
+leaves and enters through `codec.encode` / `codec.decode`, which read field types,
+defaults and vocabularies from the model declarations.
+
+`ApplicationEngine` is a facade over `RunCommands`, `Scheduler`, `ResultIntake` and
+`HumanAnswers`, which share a `RunContext` (ports, workflow cache, revisions) and one
+optimistic compare-and-swap loop. Pure admission rules are `sdd_core.admission`.
+`tests/test_simulation.py` drives seeded schedules of commands, results, faults and
+restarts through these services and checks the invariants after every step.
+
 ## One writer, durable effects
 
 `Store.apply` atomically writes a CAS-protected run projection, journal entries and outbox effects.
@@ -29,13 +53,28 @@ the workspace claim. An expired heartbeat/deadline never frees an unknown proces
 Dependencies must be accepted; overlapping workspace paths serialize. Independent workspaces
 allow two agent activities and one non-agent operation. Human waiting does not occupy a process slot.
 
-At launch the engine persists an outbox row, materializes immutable attempt files and starts a
-small host waiting on stdin. It assigns aggregate and per-attempt Windows Jobs, persists PID,
-creation time and nonce, then sends GO. Before GO, parent death yields EOF and no payload runs.
-The aggregate job caps CPU at 50%, committed memory at 16 GiB and processes at 128.
+Every attempt takes one path. The engine persists an outbox row; the step's handler prepares a
+launch; `ExecutionDriver.submit` stores the immutable request (a launch `Plan`) before the local
+`Supervisor` starts it; each tick `ExecutionDriver.poll` applies the supervisor's observation.
+Other `ExecutionBackend`s (HTTP, installed executors) use the same driver.
 
-The host records exit code, nonce and completion time. On collection, the coordinator confirms
-the owned job is empty, hashes evidence, writes a receipt, then applies the result transactionally.
+The supervisor starts a small host waiting on stdin inside a `Sandbox`: the host starts suspended
+and runs only once the aggregate and per-attempt Windows Jobs hold it; its PID, creation time
+and nonce are written to `identity.json`, then GO is sent. Before GO, parent death yields EOF
+and no payload runs. The aggregate job caps CPU at 50%, committed memory at 16 GiB and
+processes at 128.
+
+A job is not complete containment: a packaged launcher (the Python install manager's
+`python.exe` alias) lets its interpreter's children break away into no job at all. The sandbox
+therefore also keeps a durable lineage of every descendant by parent links, observed each tick,
+and records escapes in `containment.json`. Ending an attempt ends the job and then every
+remembered descendant; one that will not end leaves the attempt `unknown`, never `terminated`.
+The host's PATH puts the interpreters behind such aliases ahead of them, so escapes stay rare.
+
+The host records exit code, nonce and completion time. The supervisor reports an end only once
+the sandbox is confirmed empty; the coordinator then hashes evidence, writes a receipt and
+applies the result transactionally. A timeout or an operator stop cancels through the driver,
+which names the reason from the run itself.
 Recovery can collect an exit receipt or reapply a saved result without re-executing the task.
 No claim of exactly-once external side effects is made. Missing evidence requires reconciliation.
 An uncertain live PID is retained and blocked, never killed by name or opportunistically retried.
@@ -187,7 +226,7 @@ The persistence transaction is composed of role interfaces in `sdd_core.records`
 (`RunRecords`, `CommandLog`, `AdmissionRecords`, `ResultRecords`, `ExecutionRecords`,
 `PortfolioRecords`, `LaneRecords`); `UnitOfWork` is their union for backends.
 
-The coordinator only orchestrates: `hosts.py` owns host processes and containment,
+The coordinator only orchestrates: `supervisor.py` and `sandbox.py` own processes and containment,
 `packets.py` builds bounded packets and session continuations, `lane_keeper.py`
 opens and removes worktree lanes (recording intent before each repository change).
 A failure of one run during a tick is recorded on that run — blocked, or recovered when

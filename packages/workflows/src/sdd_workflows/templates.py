@@ -4,7 +4,6 @@ from dataclasses import dataclass, replace
 
 from sdd_core.codec import canonical, object_json
 from sdd_core.models import Step, Workflow
-from sdd_core.options import StepOptions
 
 from sdd_workflows import prompts
 
@@ -477,7 +476,7 @@ def with_checks(flow: Workflow, argv: list[str]) -> Workflow:
     unconfigured = {
         s.id
         for s in flow.steps
-        if s.kind == "check" and s.handler == "command" and not StepOptions.parse(s.config).argv
+        if s.kind == "check" and s.handler == "command" and not s.options.argv
     }
     if argv:
         return replace(
@@ -485,7 +484,7 @@ def with_checks(flow: Workflow, argv: list[str]) -> Workflow:
             steps=tuple(
                 replace(
                     step,
-                    config=StepOptions.parse(step.config).changed(argv=tuple(argv)).render(),
+                    config=step.options.changed(argv=tuple(argv)).render(),
                 )
                 if step.id in unconfigured
                 else step

@@ -9,22 +9,23 @@ from sdd_core.context import ContextRecord, assemble
 from sdd_core.models import Result
 from sdd_runtime.files import atomic_write, revision
 from sdd_storage.store import Store
-from test_runtime import runtime, settle
+from test_runtime import hosted, runtime, settle
 from test_storage import setup
 
 
 def test_result_written_before_ack_recovered_without_reexecution(tmp_path):
     coordinator = runtime(tmp_path)
     coordinator.tick()
-    live = next(iter(coordinator.live.values()))
+    live = hosted(coordinator)[0]
     live.process.wait(timeout=10)
-    live.job.close()
-    packet = live.packet
+    packet = coordinator.packets[live.request.id]
     result = coordinator.registry.get("command").collect(
         packet, 0, revision(Path(packet.workspace))
     )
     atomic_write(Path(packet.directory) / "receipt.json", result_json(result))
-    coordinator.live.clear()
+    # The coordinator loses its memory of the host, as a crash would.
+    live.sandbox.close()
+    coordinator.supervisor.live.clear()
     coordinator.restore(time.time())
     state = coordinator.engine.store.get("one")
     assert state.active is None and state.step == "finish"
@@ -36,10 +37,10 @@ def test_result_written_before_ack_recovered_without_reexecution(tmp_path):
 def test_host_completed_before_coordinator_collected(tmp_path):
     coordinator = runtime(tmp_path)
     coordinator.tick()
-    live = next(iter(coordinator.live.values()))
+    live = hosted(coordinator)[0]
     live.process.wait(timeout=10)
-    live.job.close()
-    coordinator.live.clear()
+    live.sandbox.close()
+    coordinator.supervisor.live.clear()
     coordinator.restore(time.time())
     assert settle(coordinator).status == "accepted"
 
@@ -64,10 +65,10 @@ def test_disk_full_rolls_back_result_and_keeps_ownership(tmp_path):
 def test_modified_evidence_cannot_accept(tmp_path):
     coordinator = runtime(tmp_path)
     coordinator.tick()
-    live = next(iter(coordinator.live.values()))
+    live = hosted(coordinator)[0]
     live.process.wait(timeout=10)
-    coordinator.collect(live.packet.attempt.id, time.time())
-    (Path(live.packet.directory) / "stdout.log").write_text("changed")
+    coordinator.collect(time.time())
+    (Path(live.plan.folder) / "stdout.log").write_text("changed")
     coordinator.tick()
     assert coordinator.engine.store.get("one").status != "accepted"
 

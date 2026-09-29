@@ -11,6 +11,54 @@ contract (workflow schema, result schema, storage schema, HTTP actions) needs a 
 minor version before 1.0 and a migration; existing tasks stay pinned to the workflow
 digest they were created with.
 
+## Unreleased
+
+- **One execution path.** The coordinator only schedules: every attempt is
+  submitted through `ExecutionDriver` to the local `Supervisor` (an
+  `ExecutionBackend`) and applied from its observations. The compatibility launch
+  path (`Coordinator.start/collect`, `hosts.py`) and the separate
+  `ProcessExecutionBackend` are gone; `Coordinator.active()` and
+  `Coordinator.collect(now)` replace `live` and per-attempt collection. The storage
+  ports drop `claim_host`/`host_started`; an attempt's host identity lives in its
+  folder (`identity.json`). Attempts started by an earlier release are reconciled
+  once on restore by their recorded host.
+- **Sandboxed processes with proof of the end.** A `Sandbox` pairs the OS
+  container with a durable lineage of every descendant. The Python install
+  manager's `python.exe` alias runs its interpreter in a packaged app's job that
+  lets children break away silently; an agent's Godot and helper processes started
+  that way belonged to no job, outlived a timed-out attempt and blocked the run as
+  "Workspace changed outside attempt". A stop now ends them too, also after a
+  coordinator restart; escapes are recorded in `containment.json`, and an end that
+  cannot be confirmed keeps the attempt `unknown`.
+- Agents get a PATH where the interpreters behind packaged-app aliases come first,
+  so their children stay in the job.
+- Claude working steps enforce the time budget with a PreToolUse hook
+  (`sdd_providers.budget`): background commands are refused in the last quarter,
+  every command in the last tenth, each time asking the agent to return its result.
+- The driver names why an execution ended from the run itself ("Attempt timeout",
+  "Stopped by operator") and settles a synchronous cancel in the same poll.
+- **Core refactor.** See `docs/CORE-REVIEW.md`. Storage and HTTP documents keep
+  their spelling; runs written earlier load unchanged.
+  - Closed vocabularies (kinds, statuses, causes, events, commands, id patterns)
+    are declared once in `sdd_core.models`; one strict `codec.decode`/`encode`
+    pair replaces the hand-written loaders and every `asdict(run)`.
+  - **Typed hold cause.** `Run.cause` decides behaviour (stop requests, call-limit
+    grants, revival after `wait_limit`, the board's `uncertain` state); `reason` is
+    display text only. Older runs derive their cause from their reason on load.
+  - `Run.spend` (`Spend`) groups calls, planning calls, granted calls, tokens and
+    unknown usage; the stored document stays flat.
+  - Every transition is checked against `STATUS_CHANGES` and the status, attempt
+    and cause invariants. `accepted` is final: `stop` on an accepted task is
+    refused and the coordinator no longer blocks one. `resume` withdraws a pending
+    stop request, so "Stop requested" no longer lingers as the visible reason.
+  - `ApplicationEngine` became a facade over `RunCommands`, `Scheduler`,
+    `ResultIntake` and `HumanAnswers`; slot and queue-budget rules
+    (`sdd_core.admission`) and recovery-route rules moved into the core.
+  - `sdd_core.runtime_ports` was removed (`UnitOfWork` lists the record roles);
+    `sdd_core.wire` holds JSON primitives, `sdd_core.tickets` ticket drafts.
+  - `tests/test_simulation.py`: seeded deterministic simulation of commands,
+    results, faults and restarts with invariant checks after every step.
+
 ## 0.4.0 — 2026-09-29
 
 - Work is a tree of any depth: a parent (a feature, or a ticket split further) is

@@ -5,7 +5,6 @@ from dataclasses import replace
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from sdd_core.codec import canonical
 from sdd_core.graph import validate
 from sdd_core.machine import control, dispatch
 from sdd_core.models import Run, Step, Workflow
@@ -13,7 +12,7 @@ from sdd_core.portfolio import Portfolio, Ticket, ordered
 from sdd_runtime.engine import Engine
 from sdd_runtime.execution import ExecutionDriver
 from sdd_runtime.files import revision
-from sdd_runtime.process_execution import ProcessExecutionBackend
+from sdd_runtime.supervisor import Plan, Supervisor
 from sdd_storage.store import Store
 
 
@@ -45,7 +44,9 @@ def test_pause_never_dispatches_in_any_status(status):
         "work",
         (Step("work", "operation", "test", transitions=(("done", "end"),)), Step("end", "finish")),
     )
-    state = control(Run("r", "d", "work", "v", status=status, paused=False), "pause", 0).state
+    held = {"cause": "blocked", "reason": "earlier"} if status == "blocked" else {}
+    run = Run("r", "d", "work", "v", status=status, paused=False, **held)  # type: ignore[arg-type]
+    state = control(run, "pause", 0).state
     with pytest.raises(ValueError):
         dispatch(state, workflow, 1, "attempt")
 
@@ -80,7 +81,7 @@ def test_invalid_graph_matrix(defect):
 def test_real_command_uses_transport_neutral_driver(tmp_path, exit_code):
     workspace = tmp_path / "project with spaces юникод"
     workspace.mkdir()
-    backend = ProcessExecutionBackend(workspace / ".sdd-engine" / "executions")
+    backend = Supervisor()
     engine = Engine(Store(tmp_path / "engine.db"))
     workflow = Workflow(
         "command",
@@ -103,13 +104,13 @@ def test_real_command_uses_transport_neutral_driver(tmp_path, exit_code):
     engine.command("r", "resume", "resume", 0, now)
     engine.dispatch("r", now, "command")
     driver = ExecutionDriver(engine, backend)
-    payload = canonical(
-        {
-            "argv": [sys.executable, "-c", f"print('proof'); raise SystemExit({exit_code})"],
-            "workspace": str(workspace),
-            "gate": True,
-        }
-    )
+    payload = Plan(
+        str(workspace / ".sdd-engine" / "executions" / "command"),
+        str(workspace),
+        (sys.executable, "-c", f"print('proof'); raise SystemExit({exit_code})"),
+        str(workspace),
+        gate=True,
+    ).payload()
     try:
         handle = driver.submit("r", payload)
         assert driver.submit("r", payload) == handle

@@ -9,10 +9,19 @@ being silently ignored while it runs.
 from dataclasses import dataclass, field, fields, replace
 from functools import lru_cache
 
-from sdd_core.codec import canonical, object_json
-from sdd_core.models import Json, Step
+from sdd_core.wire import Json, canonical, object_json
 
 PURPOSES = ("", "planning")
+TEXT_OPTIONS = (
+    "purpose",
+    "produces",
+    "recovery_step",
+    "auto_answer",
+    "auto_outcome",
+    "title",
+    "cwd",
+    "error_pattern",
+)
 PRODUCTS = ("", "specification", "tickets")
 AUTO_ANSWERS = ("", "recommended")
 
@@ -60,10 +69,7 @@ class StepOptions:
             raw.setdefault("produces", "tickets")
         known = {item.name for item in fields(cls)} - {"unknown"}
         values: dict[str, object] = {}
-        for name in ("purpose", "produces", "recovery_step", "auto_answer", "auto_outcome"):
-            if name in raw:
-                values[name] = _text(raw[name], name)
-        for name in ("title", "cwd", "error_pattern"):
+        for name in TEXT_OPTIONS:
             if name in raw:
                 values[name] = _text(raw[name], name)
         if "argv" in raw:
@@ -101,7 +107,7 @@ class StepOptions:
             if item.name == "unknown":
                 continue
             value = getattr(self, item.name)
-            if value == item.default or (item.name == "cwd" and value == "."):
+            if value == item.default:
                 continue
             document[item.name] = list[Json](value) if isinstance(value, tuple) else value
         return canonical(document)
@@ -109,12 +115,12 @@ class StepOptions:
     def changed(self, **changes: object) -> "StepOptions":
         return replace(self, **changes)  # type: ignore[arg-type]
 
+    def auto_answer_outcome(self, transitions: tuple[tuple[str, str], ...]) -> str:
+        """The outcome an automatic answer records: the declared one, else the first route."""
+        return self.auto_outcome or transitions[0][0]
+
 
 @lru_cache(maxsize=4096)
 def _parse(config: str) -> StepOptions:
     # Options are immutable and a config string is content: parse each spelling once.
     return StepOptions._read(config)
-
-
-def options(step: Step) -> StepOptions:
-    return StepOptions.parse(step.config)

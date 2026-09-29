@@ -5,14 +5,14 @@ from sdd_core.models import Result, Step, Workflow
 from sdd_core.ports import Conflict
 from sdd_runtime.engine import Engine
 from sdd_storage.store import Store
-from test_runtime import runtime
+from test_runtime import hosted, runtime
 
 
 def test_stop_kills_only_owned_attempt_and_preserves_pause(tmp_path):
     coordinator = runtime(tmp_path, "import time;time.sleep(20)")
     try:
         coordinator.tick()
-        live = next(iter(coordinator.live.values()))
+        live = hosted(coordinator)[0]
         state = coordinator.engine.store.get("one")
         coordinator.engine.command("one", "stop", "stop", state.version, time.time())
         coordinator.tick()
@@ -44,7 +44,7 @@ def test_human_wait_does_not_expire_or_consume_calls(tmp_path):
     version = engine.store.get("human").version
     engine.answer("human", "answered", "answer", {}, version, 100000)
     state = engine.store.get("human")
-    assert state.calls == 0 and state.step == "finish"
+    assert state.spend.calls == 0 and state.step == "finish"
     with pytest.raises(Conflict):
         engine.answer("human", "answered", "again", {}, version, 100001)
 

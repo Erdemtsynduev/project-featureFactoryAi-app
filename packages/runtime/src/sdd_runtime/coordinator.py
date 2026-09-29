@@ -1,6 +1,12 @@
-"""Single-writer coordinator with gated hosts and durable per-attempt receipts."""
+"""Single-writer scheduler: dispatches runs, submits their launches, applies what ends.
 
-import os
+The coordinator never touches a process. Every attempt goes through one path:
+`Engine.dispatch` persists it, the step's handler prepares a launch plan,
+`ExecutionDriver.submit` records the request before the `Supervisor` starts it,
+and each tick `ExecutionDriver.poll` applies the supervisor's observation. The
+supervisor reports an end only once the attempt's sandbox is confirmed empty.
+"""
+
 import subprocess
 import time
 import uuid
@@ -10,41 +16,31 @@ from functools import partial
 from pathlib import Path
 
 from sdd_core import machine
-from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load
+from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load, text
+from sdd_core.execution import ExecutionRequest
 from sdd_core.models import Result
-from sdd_core.options import StepOptions
 from sdd_core.ports import Conflict
+from sdd_core.records import EffectRecord
 from sdd_core.sdk import Packet, Registry, handler_key
 
 from sdd_runtime.application import ApplicationEngine
-from sdd_runtime.files import atomic_write, attempt_folder, verify_evidence
-from sdd_runtime.hosts import Hosts, Running, health
+from sdd_runtime.execution import ExecutionDriver
+from sdd_runtime.files import atomic_write, verify_evidence
 from sdd_runtime.lane_keeper import LaneKeeper
 from sdd_runtime.packets import build_packet
+from sdd_runtime.supervisor import INPUT_FILE, Plan, Supervisor, health, host_alive
 
-__all__ = ["Coordinator", "Running"]
+__all__ = ["Coordinator"]
 
 # Windows refuses a command line past 32,767 characters; keep a margin for quoting.
 COMMAND_LINE_CHARS = 32000
-# The attempt file the host feeds to the process's stdin.
-INPUT_FILE = "input.txt"
 # How often `contain` re-reads a run that moved while its failure was being recorded.
 CONTAIN_RETRIES = 3
-
-
-def read_exit(path: Path, nonce: str | None) -> tuple[int, float]:
-    """The exit code and completion time the host recorded for this attempt.
-
-    A receipt carrying another host's nonce belongs to an earlier launch.
-    """
-    data = object_json(path.read_text(encoding="utf-8"))
-    if data.get("nonce") != nonce:
-        raise ValueError("Wrong host receipt")
-    return integer(data["exit_code"], "exit_code"), number(data["completed_at"])
+RECEIPT_FILE = "receipt.json"
 
 
 class Coordinator:
-    """Schedules runs and owns their hosts. One failing run never stops the others.
+    """Schedules runs and applies their executions. One failing run never stops the others.
 
     A per-run failure is recorded durably on that run (blocked, or recovered when
     it holds an attempt). Only a failure to record it propagates to the caller.
@@ -55,9 +51,15 @@ class Coordinator:
     ) -> None:
         self.engine, self.registry = engine, registry
         self.health_path = health_path
-        self.live: dict[str, Running] = {}
-        self.hosts = Hosts()
+        self.supervisor = Supervisor(self._request, self._collect)
+        self.driver = ExecutionDriver(engine, self.supervisor)
         self.lanes = LaneKeeper(engine)
+        # Packets of attempts this process submitted; a restart rebuilds them.
+        self.packets: dict[str, Packet] = {}
+
+    def active(self) -> tuple[str, ...]:
+        """Attempts whose processes this coordinator started and still owns."""
+        return self.supervisor.active()
 
     def revision(self, run_id: str) -> str:
         return self.engine.observe(run_id)
@@ -72,11 +74,12 @@ class Coordinator:
             run = self.engine.store.get(run_id)
             try:
                 if run.active is None:
-                    if run.status != "blocked":
+                    # Accepted is final; a blocked run already shows its own reason.
+                    if run.status not in ("blocked", "accepted"):
                         self.engine.block(run_id, now, reason)
                 else:
-                    # A host still tracked here may be alive: ownership stays uncertain.
-                    confirmed = run.active.id not in self.live
+                    # A host still owned here may be alive: ownership stays uncertain.
+                    confirmed = run.active.id not in self.supervisor.active()
                     self.engine.recover(run_id, now, confirmed, reason, run.revision)
                 return
             except Conflict:
@@ -102,7 +105,7 @@ class Coordinator:
                 if step.kind not in ("agent", "check", "operation"):
                     continue
                 manifest = self.registry.get(handler_key(step)).manifest
-                required_profile = StepOptions.parse(step.config).profile_snapshot
+                required_profile = step.options.profile_snapshot
                 if not step.handler and step.profile != "default" and required_profile is None:
                     raise ValueError("Resolve named profiles when creating the run with --config")
                 if (
@@ -118,15 +121,13 @@ class Coordinator:
     def packet(self, run_id: str) -> Packet:
         return build_packet(self.engine.store, self.registry, run_id)
 
-    def start(self, run_id: str) -> None:
-        with self.engine.store.unit() as db:
-            active = db.run(run_id).active
-            if active and db.execution(active.id) is not None:
-                raise Conflict("Attempt belongs to a neutral execution backend")
+    # Submission ----------------------------------------------------------------
+
+    def submit(self, run_id: str) -> None:
+        """Prepare the dispatched attempt's launch and hand it to the supervisor."""
         self.bind(run_id)
         packet = self.packet(run_id)
         folder = Path(packet.directory)
-        nonce = uuid.uuid4().hex
         launch = self.registry.get(handler_key(packet.step)).prepare(packet)
         if not Path(launch.cwd).resolve().is_relative_to(Path(packet.workspace).resolve()):
             raise ValueError("Handler cwd must stay inside the owned workspace")
@@ -135,125 +136,126 @@ class Coordinator:
         if len(subprocess.list2cmdline(launch.argv)) > COMMAND_LINE_CHARS:
             raise ValueError("Command line too long; the handler must pass its prompt on stdin")
         atomic_write(folder / "packet.json", canonical(asdict(packet)))
-        document: dict[str, object] = {
-            "argv": launch.argv,
-            "cwd": launch.cwd,
-            "environment": dict(launch.environment),
-            "nonce": nonce,
-            "parent_pid": os.getpid(),
-        }
         if launch.input:
             atomic_write(folder / INPUT_FILE, launch.input)
-            document["input"] = INPUT_FILE
-        atomic_write(folder / "launch.json", canonical(document))
-        # Until the persisted host identity exists, no GO can be sent.
+        plan = Plan(
+            str(folder),
+            packet.workspace,
+            launch.argv,
+            launch.cwd,
+            tuple(sorted(launch.environment)),
+            INPUT_FILE if launch.input else "",
+        )
+        self.packets[packet.attempt.id] = packet
+        self.driver.submit(run_id, plan.payload())
+
+    def _request(self, attempt: str) -> ExecutionRequest | None:
+        """The durable request the store holds for one of this supervisor's attempts."""
         with self.engine.store.unit() as db:
-            db.claim_host(packet.attempt.id, canonical(asdict(packet)), nonce)
+            row = db.execution(attempt)
+        if row is None or row[0] != self.supervisor.id:
+            return None
+        doc = object_json(row[1])
+        return ExecutionRequest(
+            text(doc["id"], "id"),
+            integer(doc["generation"], "generation"),
+            text(doc["handler"], "handler"),
+            text(doc["payload"], "payload"),
+            number(doc["deadline"]),
+        )
 
-        def started(pid: int, created: float) -> None:
+    def _collect(self, request: ExecutionRequest, plan: Plan, exit_code: int) -> Result:
+        """The handler's result for a quiescent attempt, bound to the owned revision.
+
+        The receipt is written before the result is applied, so a restart reapplies
+        the same result instead of asking the handler (or the model) again.
+        """
+        packet = self.packets.pop(request.id, None)
+        if packet is None:
             with self.engine.store.unit() as db:
-                db.host_started(packet.attempt.id, nonce, pid, created)
-
-        self.live[packet.attempt.id] = self.hosts.spawn(packet, nonce, started)
-
-    def collect(self, identifier: str, now: float) -> None:
-        live = self.live[identifier]
-        packet = live.packet
-        state = self.engine.store.get(packet.run_id)
-        if machine.stop_requested(state):
-            self.hosts.settle(live, wait=True)
-            del self.live[identifier]
-            self.engine.recover(
-                packet.run_id, now, True, "Stopped by operator", self.revision(packet.run_id)
-            )
-            return
-        code = live.process.poll()
-        if code is None and now < packet.attempt.deadline:
-            return
-        if code is None:
-            self.hosts.settle(live, wait=True)
-            del self.live[identifier]
-            self.engine.recover(
-                packet.run_id, now, True, "Attempt timeout", self.revision(packet.run_id)
-            )
-            return
-        self.hosts.settle(live, wait=False)
-        del self.live[identifier]
+                run_id = db.effect(request.id).run_id
+            self.bind(run_id)
+            packet = self.packet(run_id)
         current = self.revision(packet.run_id)
-        exit_path = Path(packet.directory) / "exit.json"
-        if not exit_path.exists():
-            self.engine.recover(
-                packet.run_id, now, True, "Host exited without durable completion", current
-            )
-            return
-        exit_code, completed_at = read_exit(exit_path, live.nonce)
-        result = self._collect_result(packet, exit_code, current)
+        receipt = Path(plan.folder) / RECEIPT_FILE
+        if receipt.exists():
+            result = result_load(receipt.read_text(encoding="utf-8"))
+            if result.revision != current:
+                raise ValueError("Workspace changed after completion")
+        else:
+            result = self._handler_result(packet, exit_code, current)
         verify_evidence(result.artifacts, Path(packet.workspace), current)
-        atomic_write(Path(packet.directory) / "receipt.json", result_json(result))
-        self.engine.complete(packet.run_id, result, completed_at)
+        atomic_write(receipt, result_json(result))
+        return result
 
-    def _collect_result(self, packet: Packet, exit_code: int, current: str) -> Result:
+    def _handler_result(self, packet: Packet, exit_code: int, current: str) -> Result:
         try:
-            result = self.registry.get(handler_key(packet.step)).collect(packet, exit_code, current)
+            return self.registry.get(handler_key(packet.step)).collect(packet, exit_code, current)
         except ValueError as error:
-            # The host is quiescent: bad protocol is a product-independent blocker,
+            # The attempt is quiescent: bad protocol is a product-independent blocker,
             # not a reason to invoke the model again and lose the primary diagnosis.
-            result = Result(
+            return Result(
                 packet.attempt.id,
                 packet.attempt.generation,
                 "blocked",
                 "Provider protocol: " + str(error),
                 current,
             )
-        return result
+
+    # Observation -----------------------------------------------------------------
+
+    def _executions(self, statuses: tuple[str, ...]) -> tuple[EffectRecord, ...]:
+        """Effects submitted to this coordinator's supervisor, in dispatch order."""
+        with self.engine.store.unit() as db:
+            rows = db.effects(statuses)
+            ours = tuple(
+                row
+                for row in rows
+                if row.external and (db.execution(row.id) or ("", ""))[0] == self.supervisor.id
+            )
+        return ours
+
+    def collect(self, now: float) -> None:
+        """Apply every execution that ended; a paused queue still collects."""
+        for row in self._executions(("pending", "running")):
+            self._isolated(row.run_id, now, partial(self.driver.poll, row.run_id, now))
 
     def restore(self, now: float) -> None:
         """Called under the coordinator lease before any new dispatch."""
         with self.engine.store.unit() as db:
             rows = db.effects(("pending", "running", "uncertain"))
+            requests = {row.id: db.execution(row.id) for row in rows}
         for row in rows:
-            if row.external:
-                continue
-            run_id = row.run_id
-            run = self.engine.store.get(run_id)
-            if run.active is None:
-                raise RuntimeError("Active effect without an attempt")
             if row.kind == "human":
                 continue
+            run = self.engine.store.get(row.run_id)
+            if run.active is None:
+                raise RuntimeError("Active effect without an attempt")
             if row.kind == "condition":
                 # Earlier releases dispatched conditions as effects; route them purely now.
-                self.engine.release_condition(run_id, now)
+                self.engine.release_condition(row.run_id, now)
                 continue
-            confirmed = self.hosts.ended(row.pid, row.created)
-            root = Path(str(row.workspace))
-            receipt = attempt_folder(root, run_id, run.active.id) / "receipt.json"
-            current = self.revision(run_id)
-            exit_path = receipt.with_name("exit.json")
-            if confirmed and exit_path.exists():
-                try:
-                    exit_code, completed_at = read_exit(exit_path, row.host_nonce)
-                    if completed_at > run.active.deadline:
-                        raise ValueError("Host receipt is stale")
-                    if receipt.exists():
-                        result = result_load(receipt.read_text(encoding="utf-8"))
-                    else:
-                        self.bind(run_id)
-                        packet = self.packet(run_id)
-                        result = self._collect_result(packet, exit_code, current)
-                        atomic_write(receipt, result_json(result))
-                    if result.revision != current:
-                        raise ValueError("Workspace changed after completion")
-                    verify_evidence(result.artifacts, root, current)
-                    self.engine.complete(run_id, result, completed_at)
-                    continue
-                except (ValueError, OSError, KeyError):
-                    pass
-            self.engine.recover(
-                run_id, now, confirmed, "Coordinator restart reconciliation", current
-            )
+            request = requests[row.id]
+            if request is not None:
+                if request[0] == self.supervisor.id:
+                    self._isolated(row.run_id, now, partial(self.driver.poll, row.run_id, now))
+                continue  # another backend's driver owns it
+            self._restore_unsubmitted(row, now)
+
+    def _restore_unsubmitted(self, row: EffectRecord, now: float) -> None:
+        """An attempt without an execution request: never submitted, or an older host."""
+        if row.pid is None:
+            confirmed, reason = True, "Launch never started"
+        else:
+            # A host launched by a release before the supervisor: prove it is gone.
+            gone = host_alive(int(row.pid), float(row.created or 0)) is False
+            confirmed, reason = gone, "Coordinator restart reconciliation"
+        self.engine.recover(row.run_id, now, confirmed, reason, self.revision(row.run_id))
+
+    # Scheduling ------------------------------------------------------------------
 
     def _advance(self, run_id: str, now: float) -> bool:
-        """Dispatch one runnable run and start its host. True when an attempt began."""
+        """Dispatch one runnable run and submit its attempt. True when an attempt began."""
         run = self.engine.store.get(run_id)
         if not machine.dispatchable(run, now):
             return False
@@ -291,7 +293,7 @@ class Coordinator:
             self.engine.auto_answer(run_id, now)
             return True
         try:
-            self.start(run_id)
+            self.submit(run_id)
         except (ValueError, KeyError, OSError) as error:
             self.engine.recover(
                 run_id, now, True, "Preflight: " + str(error), self.revision(run_id)
@@ -300,9 +302,7 @@ class Coordinator:
 
     def tick(self, now: float | None = None) -> int:
         current_time = time.time() if now is None else now
-        for identifier in tuple(self.live):
-            run_id = self.live[identifier].packet.run_id
-            self._isolated(run_id, current_time, partial(self.collect, identifier, current_time))
+        self.collect(current_time)
         with self.engine.store.unit() as db:
             ids = db.runnable()
             states = db.runs()
@@ -323,11 +323,8 @@ class Coordinator:
         if self.health_path is not None:
             with self.engine.store.unit() as db:
                 event = db.last_transition()
-            atomic_write(self.health_path, canonical(health(tuple(self.live), event, current_time)))
+            atomic_write(self.health_path, canonical(health(self.active(), event, current_time)))
         return dispatched
 
     def close(self) -> None:
-        for live in self.live.values():
-            self.hosts.release(live)
-        self.live.clear()
-        self.hosts.close()
+        self.supervisor.close()

@@ -27,6 +27,7 @@ def kill_group(group: int) -> None:
 
 class Containment(Protocol):
     def assign(self, pid: int) -> None: ...
+    def holds(self, pid: int) -> bool: ...
     def terminate(self) -> None: ...
     def stop_and_confirm(self, timeout: float = 5) -> None: ...
     def close(self) -> None: ...
@@ -47,6 +48,12 @@ class ProcessGroups:
         if process_group(pid) != pid:
             raise RuntimeError("Host must start in its own POSIX session")
         self.groups.add(pid)
+
+    def holds(self, pid: int) -> bool:
+        try:
+            return process_group(pid) in self.groups
+        except ProcessLookupError:
+            return False
 
     def terminate(self) -> None:
         for group in self.groups:

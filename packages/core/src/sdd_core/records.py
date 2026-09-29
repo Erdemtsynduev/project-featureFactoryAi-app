@@ -18,10 +18,6 @@ class StaleVersion(Conflict):
     """Optimistic concurrency: the run changed since it was read; re-read and retry."""
 
 
-# Effect kinds that launch no handler process, so they never lock a pinned manifest.
-UNPINNED_KINDS = ("human", "condition")
-
-
 @dataclass(frozen=True)
 class EffectRecord:
     id: str
@@ -114,8 +110,6 @@ class ExecutionRecords(Protocol):
 
     def effect(self, attempt: str) -> EffectRecord: ...
     def effects(self, statuses: tuple[str, ...]) -> tuple[EffectRecord, ...]: ...
-    def claim_host(self, attempt: str, packet: str, nonce: str) -> None: ...
-    def host_started(self, attempt: str, nonce: str, pid: int, created: float) -> None: ...
     def bind_execution(self, run_id: str, attempt: str, backend: str, document: str) -> None: ...
     def execution(self, attempt: str) -> tuple[str, str] | None: ...
 

@@ -15,7 +15,6 @@ from pathlib import Path
 from sdd_core.codec import canonical, mapping, sequence, text, workflow_load
 from sdd_core.graph import validate
 from sdd_core.models import Json, Workflow
-from sdd_core.options import StepOptions
 from sdd_core.profiles import resolve_profiles
 from sdd_core.sdk import Registry, handler_key
 from sdd_runtime.engine import Engine
@@ -129,7 +128,7 @@ class FlowLibrary:
         handlers = self.handlers()
         for step in flow.steps:
             if step.kind == "check" and step.handler == "command":
-                argv = StepOptions.parse(step.config).argv
+                argv = step.options.argv
                 if not argv or not Path(text(argv[0], "executable")).is_absolute():
                     raise ValueError(
                         "Configure an absolute check executable in the project or step"

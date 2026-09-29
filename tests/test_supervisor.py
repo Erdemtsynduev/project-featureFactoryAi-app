@@ -6,7 +6,7 @@ import time
 import psutil
 import pytest
 from sdd_runtime.platform import NO_WINDOW
-from test_runtime import runtime
+from test_runtime import host_pid, runtime
 
 
 @pytest.mark.parametrize("iteration", range(5))
@@ -23,10 +23,9 @@ def test_supervisor_death_terminates_coordinator_and_worker(tmp_path, iteration)
         deadline = time.monotonic() + 10
         worker = None
         while time.monotonic() < deadline:
-            with coordinator.engine.store.transaction() as db:
-                row = db.execute("SELECT pid FROM effects WHERE status='running'").fetchone()
-            if row:
-                worker = psutil.Process(row[0])
+            pid = host_pid(tmp_path / "workspace")
+            if pid:
+                worker = psutil.Process(pid)
                 break
             assert process.poll() is None, process.stderr.read().decode()
             time.sleep(0.05)

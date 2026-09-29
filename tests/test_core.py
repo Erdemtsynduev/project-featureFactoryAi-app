@@ -12,7 +12,7 @@ from sdd_core.codec import (
 )
 from sdd_core.graph import validate
 from sdd_core.machine import complete, control, dispatch, recover
-from sdd_core.models import Artifact, Result, Run, Step, Usage, Workflow
+from sdd_core.models import Artifact, Result, Run, Spend, Step, Usage, Workflow
 from sdd_workflows.templates import interview, main_flow
 
 
@@ -140,7 +140,7 @@ def test_budget_unknown_blocks_only_when_configured():
         ),
         max_tokens=100,
     )
-    r = replace(ready(f), usage_unknown=True)
+    r = replace(ready(f), spend=Spend(usage_unknown=True))
     assert dispatch(r, f, 0, "one").state.status == "blocked"
     assert dispatch(r, replace(f, max_tokens=None), 0, "one").state.active is not None
 

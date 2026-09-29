@@ -8,22 +8,42 @@ from sdd_core.records import (
     AdmissionRecords,
     CommandLog,
     Conflict,
+    ExecutionRecords,
+    LaneRecords,
+    PortfolioRecords,
     ResultRecords,
+    RunRecords,
     StaleVersion,
 )
-from sdd_core.runtime_ports import RuntimeRecords
 
 __all__ = ["Conflict", "StaleVersion", "StateStore", "UnitOfWork", "Workspace"]
 
 
-class UnitOfWork(RuntimeRecords, CommandLog, AdmissionRecords, ResultRecords, Protocol):
-    """One atomic transaction exposing every record role (see `sdd_core.records`)."""
+class UnitOfWork(
+    RunRecords,
+    CommandLog,
+    AdmissionRecords,
+    ResultRecords,
+    ExecutionRecords,
+    PortfolioRecords,
+    LaneRecords,
+    Protocol,
+):
+    """One atomic transaction exposing every record role (see `sdd_core.records`).
+
+    Consumers name the narrowest role they use; a backend implements them all on one
+    transaction so every role takes part in the same commit.
+    """
 
 
 class StateStore(Protocol):
     def unit(self) -> AbstractContextManager[UnitOfWork]: ...
     def workflow(self, identifier: str) -> Workflow: ...
-    def get(self, identifier: str) -> Run: ...
+    def get(self, identifier: str) -> Run:
+        """A snapshot read outside any transaction, for display and pre-checks; a
+        decision that writes re-reads the run inside its unit of work."""
+        ...
+
     def create(
         self,
         run: Run,

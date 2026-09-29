@@ -5,8 +5,9 @@ import sys
 import pytest
 from sdd_core.codec import canonical, object_json, result_json
 from sdd_core.machine import WAIT_RETRY_LIMIT
-from sdd_core.memory import brief, fit, notes, tickets_of
+from sdd_core.memory import brief, fit, notes
 from sdd_core.models import Attempt, Result, Run, Step
+from sdd_core.tickets import tickets_of
 from sdd_ui.attention import attention
 from sdd_workflows.templates import feature, main_flow, with_checks
 
@@ -119,7 +120,9 @@ def test_attention_names_the_first_thing_to_fix():
     assert reason(ready, agent, pending=("dep",)).code == "dependencies"
     assert reason(ready, agent, queue_running=False).code == "queue_paused"
     assert reason(ready, agent).code == "queued"
-    exhausted = Run("one", "d", "work", "r", status="blocked", reason=WAIT_RETRY_LIMIT)
+    exhausted = Run(
+        "one", "d", "work", "r", status="blocked", reason=WAIT_RETRY_LIMIT, cause="wait_limit"
+    )
     assert reason(exhausted, agent).code == "limits_exhausted"
     active = Run("one", "d", "ask", "r", active=Attempt("a", "ask", 1, 0, 1, "r"))
     assert reason(active, human).code == "answer"

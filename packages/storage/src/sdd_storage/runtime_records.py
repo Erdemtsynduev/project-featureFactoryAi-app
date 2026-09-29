@@ -3,9 +3,9 @@
 import sqlite3
 
 from sdd_core.codec import canonical, digest, run_load
-from sdd_core.models import Run
+from sdd_core.models import UNPINNED_KINDS, Run
 from sdd_core.ports import Conflict
-from sdd_core.runtime_ports import UNPINNED_KINDS, EffectRecord
+from sdd_core.records import EffectRecord
 
 
 class SQLiteRuntimeRecords:
@@ -104,27 +104,6 @@ class SQLiteRuntimeRecords:
             f"SELECT id FROM effects WHERE status IN ({placeholders}) ORDER BY rowid", statuses
         ).fetchall()
         return tuple(self.effect(str(row[0])) for row in ids)
-
-    def claim_host(self, attempt: str, packet: str, nonce: str) -> None:
-        record = self.effect(attempt)
-        if (
-            record.external
-            or record.status != "pending"
-            or record.host_nonce is not None
-            or record.pid is not None
-        ):
-            raise Conflict("Attempt already claimed")
-        self.db.execute(
-            "UPDATE effects SET packet=?,host_nonce=? WHERE id=?", (packet, nonce, attempt)
-        )
-
-    def host_started(self, attempt: str, nonce: str, pid: int, created: float) -> None:
-        cursor = self.db.execute(
-            "UPDATE effects SET status='running',pid=?,created=? WHERE id=? AND status='pending' AND host_nonce=? AND pid IS NULL",
-            (pid, created, attempt, nonce),
-        )
-        if cursor.rowcount != 1:
-            raise Conflict("Dispatch ownership changed before launch")
 
     def execution(self, attempt: str) -> tuple[str, str] | None:
         row = self.db.execute(

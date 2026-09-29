@@ -147,7 +147,7 @@ def test_old_generation_cannot_complete_current_attempt(tmp_path, backend):
     assert driver.engine.store.get("r").active is not None
 
 
-def test_legacy_coordinator_cannot_recover_or_start_remote_attempt(tmp_path, backend):
+def test_coordinator_leaves_another_backends_attempt_alone(tmp_path, backend):
     from sdd_core.sdk import Registry
     from sdd_runtime.coordinator import Coordinator
 
@@ -158,8 +158,9 @@ def test_legacy_coordinator_cannot_recover_or_start_remote_attempt(tmp_path, bac
     try:
         before = driver.engine.store.get("r")
         coordinator.restore(20)
+        coordinator.collect(20)
         assert driver.engine.store.get("r") == before
-        with pytest.raises(ValueError, match="neutral"):
-            coordinator.start("r")
+        with pytest.raises(Conflict):
+            coordinator.driver.submit("r", "payload")
     finally:
         coordinator.close()

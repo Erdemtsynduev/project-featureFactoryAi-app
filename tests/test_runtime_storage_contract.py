@@ -21,6 +21,7 @@ from sdd_runtime.git import GitProject
 from sdd_runtime.workspace import LocalWorkspace
 from sdd_storage.memory import MemoryStore
 from sdd_storage.store import Store
+from test_runtime import finished_execution
 
 
 @pytest.fixture(params=["sqlite", "memory"])
@@ -66,7 +67,7 @@ def test_real_process_acceptance_with_replaced_store(configured, tmp_path):
                 break
             time.sleep(0.05)
         assert state.status == "accepted", state.reason
-        assert state.calls == 0 and health.exists()
+        assert state.spend.calls == 0 and health.exists()
         with engine.store.unit() as unit:
             assert unit.effects(("done",)) and not unit.effects(("running", "pending"))
     finally:
@@ -77,47 +78,33 @@ def test_atomic_ownership_arbitration_and_rollback(configured):
     engine, _, _ = configured
     engine.dispatch("one", 2, "attempt")
     with pytest.raises(RuntimeError), engine.store.unit() as unit:
-        unit.claim_host("attempt", "{}", "discard")
+        unit.bind_execution("one", "attempt", "discard", "{}")
         raise RuntimeError("crash before commit")
     with engine.store.unit() as unit:
-        assert unit.effect("attempt").host_nonce is None
+        assert unit.execution("attempt") is None
 
-    def claim(local):
+    def claim(backend):
         try:
             with engine.store.unit() as unit:
-                if local:
-                    unit.claim_host("attempt", "{}", "nonce")
-                else:
-                    unit.bind_execution("one", "attempt", "external", "{}")
+                unit.bind_execution("one", "attempt", backend, "{}")
             return "claimed"
         except Conflict:
             return "conflict"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        assert sorted(pool.map(claim, (True, False))) == ["claimed", "conflict"]
+        assert sorted(pool.map(claim, ("local", "external"))) == ["claimed", "conflict"]
 
 
-@pytest.mark.parametrize("external_first", [True, False])
-def test_dispatch_ownership_cannot_be_transferred(configured, external_first):
+def test_dispatch_ownership_cannot_be_transferred(configured):
     engine, _, _ = configured
     engine.dispatch("one", 2, "attempt")
     with engine.store.unit() as unit:
-        if external_first:
-            unit.bind_execution("one", "attempt", "backend", "request")
-            unit.bind_execution("one", "attempt", "backend", "request")
-            with pytest.raises(Conflict):
-                unit.claim_host("attempt", "packet", "nonce")
-            with pytest.raises(Conflict):
-                unit.bind_execution("one", "attempt", "other", "request")
-        else:
-            unit.claim_host("attempt", "packet", "nonce")
-            with pytest.raises(Conflict):
-                unit.claim_host("attempt", "packet", "second")
-            with pytest.raises(Conflict):
-                unit.host_started("attempt", "wrong", 10, 3)
-            unit.host_started("attempt", "nonce", 10, 3)
-            with pytest.raises(Conflict):
-                unit.bind_execution("one", "attempt", "backend", "request")
+        unit.bind_execution("one", "attempt", "backend", "request")
+        unit.bind_execution("one", "attempt", "backend", "request")
+        with pytest.raises(Conflict):
+            unit.bind_execution("one", "attempt", "backend", "other request")
+        with pytest.raises(Conflict):
+            unit.bind_execution("one", "attempt", "other", "request")
 
 
 def test_restore_durable_exit_without_relaunch(configured):
@@ -127,19 +114,15 @@ def test_restore_durable_exit_without_relaunch(configured):
     try:
         packet = first.packet("one")
         first.bind("one")
-        with engine.store.unit() as unit:
-            unit.claim_host("attempt", "{}", "nonce")
+        finished_execution(engine, "one", packet, completed_at=3)
         Path(packet.directory, "stdout.log").write_text("passed", encoding="utf-8")
         Path(packet.directory, "stderr.log").write_text("", encoding="utf-8")
-        Path(packet.directory, "exit.json").write_text(
-            canonical({"exit_code": 0, "completed_at": 3, "nonce": "nonce"}), encoding="utf-8"
-        )
     finally:
         first.close()
     reopened = Coordinator(engine, registry)
     try:
         reopened.restore(5)
-        assert not reopened.live
+        assert not reopened.active()
         assert engine.store.get("one").step == "finish"
         reopened.restore(6)
         assert engine.dispatch("one", 7, "finish").status == "accepted"
@@ -202,7 +185,7 @@ def test_external_driver_unknown_then_confirmed_termination(configured):
         coordinator.restore(5)
         assert engine.store.get("one") == before
         with pytest.raises(Conflict):
-            coordinator.start("one")
+            coordinator.submit("one")
     finally:
         coordinator.close()
     driver.poll("one", 5)

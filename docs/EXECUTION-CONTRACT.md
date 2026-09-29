@@ -19,7 +19,7 @@ Completed observations carry a matching Result and finite completion timestamp. 
 timestamp must fall between dispatch and observation and satisfy the attempt deadline.
 Old generations cannot release ownership. Unknown executions retain their claim.
 Started unfinished runs retain their workspace claim between steps. At dispatch
-boundaries the compatibility coordinator orders eligible runs by their last dispatch,
+boundaries the coordinator orders eligible runs by their last dispatch,
 so a repair loop yields a free slot to independent ready work.
 
 `sdd_runtime.execution.ExecutionDriver` records immutable requests alongside the
@@ -28,21 +28,29 @@ outbox before invoking a backend. Call `Engine.dispatch`, then `driver.submit`, 
 resubmit the SAME request; never allocate a replacement attempt. A remote service
 must persist deduplication; the test HTTP server uses memory and is not a production service.
 
-The local command and HTTP adapters implement the same interface. An explicitly
+The local `Supervisor` and the HTTP adapter implement the same interface. An explicitly
 installed `sdd.executors` entry point can add another implementation. The example
 package depends only on core; its executor is intentionally volatile and returns
 unknown after losing its memory.
 
-The existing CLI Coordinator retains its compatibility launch path. It cannot start
-or recover attempts bound to the new execution driver, and the driver refuses a
-host-owned attempt. Switching production applications is outside this change.
+The coordinator has no other launch path: it submits every attempt to its own
+`Supervisor` through the driver and polls only that backend's attempts; an attempt
+bound to another backend is left to that backend's driver. Attempts started by a
+release before the supervisor are reconciled once on restore by their recorded host.
 
 ## Backend capabilities and limits
 
 Windows uses Job Objects. POSIX uses dedicated process groups, flock and a parent
-death watchdog. POSIX process groups are cooperative containment, not a sandbox:
-setsid/double-fork escape, hard resource limits and platform-specific host death
-semantics still require qualification. An unresolved group blocks recovery.
+death watchdog. On both, the sandbox also ends descendants recorded by parent links
+while the attempt ran (a packaged launcher's silent breakaway, `setsid`), including
+after a coordinator restart. POSIX process groups are cooperative containment, not a
+sandbox: a double-fork faster than a tick, hard resource limits and platform-specific
+host death semantics still require qualification.
+
+Claude working steps carry a PreToolUse hook (`sdd_providers.budget`) that refuses
+background commands in the last quarter of the attempt's budget and every command in
+the last tenth, telling the agent to return its result. Other providers get the
+budget in their prompt only. An unresolved group blocks recovery.
 The health projection reports this distinction and does not advertise Windows
 resource limits on POSIX. Linux/macOS CI is configured but not run from this Windows session.
 

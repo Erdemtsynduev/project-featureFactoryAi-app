@@ -14,6 +14,8 @@ from sdd_core.codec import integer, object_json
 from sdd_core.models import Json, Usage
 from sdd_core.sdk import Packet
 
+from sdd_providers.budget import claude_settings
+
 # The attempt files a dialect writes its result into and reads it back from.
 SCHEMA_FILE = "schema.json"
 OUTPUT_FILE = "agent-result.json"
@@ -92,6 +94,8 @@ class Claude:
             # command, so a working step could never run its checks. Codex gets the
             # same through its workspace-write sandbox with approvals off.
             argv += ["--allowedTools", "Bash,PowerShell"]
+            # Commands near the deadline are refused by the engine's budget hook.
+            argv += ["--settings", claude_settings(call.folder)]
         argv = _model(argv, call.model)
         if call.packet.resume:
             argv += ["--resume", call.packet.resume]

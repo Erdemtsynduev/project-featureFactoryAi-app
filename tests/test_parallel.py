@@ -33,7 +33,7 @@ def test_pause_and_restart_with_two_parallel_agent_attempts(tmp_path):
         engine.command(name, "resume", "resume-" + name, 0, time.time())
     coordinator = Coordinator(engine, registry)
     coordinator.tick()
-    assert len(coordinator.live) == 2
+    assert len(coordinator.active()) == 2
     left = engine.store.get("left")
     engine.command("left", "pause", "pause-left", left.version, time.time())
     coordinator.close()
@@ -90,8 +90,8 @@ def test_failed_task_yields_slot_to_independent_ready_task(tmp_path):
     coordinator = Coordinator(engine, registry)
     try:
         coordinator.tick()
-        live = next(iter(coordinator.live.values()))
-        assert live.packet.run_id == "first"
+        live = coordinator.supervisor.live[coordinator.active()[0]]
+        assert coordinator.packets[live.request.id].run_id == "first"
         live.process.wait(timeout=10)
         coordinator.tick()
         assert engine.store.get("first").generation == 1

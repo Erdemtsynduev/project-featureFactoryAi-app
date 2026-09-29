@@ -12,6 +12,7 @@ from pathlib import Path
 
 from sdd_core.codec import (
     canonical,
+    encode,
     integer,
     object_json,
     sequence,
@@ -372,11 +373,11 @@ def main() -> int:
                 coordinator.bind(state.id)
             finally:
                 coordinator.close()
-        print(canonical(asdict(state)))
+        print(canonical(encode(state)))
     elif args.action in ("pause", "resume", "retry", "stop", "auto", "manual"):
         print(
             canonical(
-                asdict(
+                encode(
                     engine.command(
                         args.id,
                         args.action,
@@ -388,11 +389,11 @@ def main() -> int:
             )
         )
     elif args.action == "status":
-        print(json.dumps(asdict(engine.store.get(args.id)), indent=2))
+        print(json.dumps(encode(engine.store.get(args.id)), indent=2))
     elif args.action == "events":
         print(canonical(engine.store.history(args.id)))
     elif args.action == "replay":
-        print(canonical(asdict(engine.store.replay(args.id))))
+        print(canonical(encode(engine.store.replay(args.id))))
     elif args.action == "backup":
         engine.store.backup(args.target)
     elif args.action == "answer":

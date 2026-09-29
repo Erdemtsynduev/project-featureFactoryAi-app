@@ -14,7 +14,6 @@ from pathlib import Path
 
 from sdd_core.catalog import CatalogRecords
 from sdd_core.codec import canonical, flag, integer, object_json
-from sdd_core.machine import WAIT_RETRY_LIMIT
 from sdd_core.models import Json, Run, Workflow
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Registry, handler_key
@@ -137,7 +136,7 @@ class QueueController:
 
     @property
     def busy(self) -> bool:
-        return bool(self.coordinator.live)
+        return bool(self.coordinator.active())
 
     @property
     def alive(self) -> bool:
@@ -145,7 +144,7 @@ class QueueController:
 
     def shutdown(self, keep_running: bool = False) -> None:
         with self.lock:
-            if self.coordinator.live:
+            if self.coordinator.active():
                 raise Conflict("Pause the queue and wait for active executions before closing")
             if keep_running:
                 self.store.save({**self.settings, "restarting": True})
@@ -192,12 +191,7 @@ class QueueController:
                 self.log.record("dispatched", count=dispatched)
         else:
             # Paused queue still collects finished work, so nothing is left dangling.
-            for identifier in tuple(self.coordinator.live):
-                run_id = self.coordinator.live[identifier].packet.run_id
-                try:
-                    self.coordinator.collect(identifier, now)
-                except Exception as error:
-                    self.coordinator.contain(run_id, now, error)
+            self.coordinator.collect(now)
         if now - self.watched >= WATCH_EVERY:
             self.watched = now
             self._watch(now)
@@ -235,7 +229,7 @@ class QueueController:
     def _revive(self, run: Run, now: float) -> None:
         if (
             run.status != "blocked"
-            or run.reason != WAIT_RETRY_LIMIT
+            or run.cause != "wait_limit"
             or run.active is not None
             or self.revivals.get(run.id, 0) >= MAX_REVIVALS
         ):

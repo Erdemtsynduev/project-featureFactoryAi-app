@@ -1,11 +1,15 @@
+import json
 import os
 import subprocess
 import sys
 import time
+from dataclasses import asdict
+from pathlib import Path
 
 import psutil
 import pytest
 from sdd_core.codec import canonical
+from sdd_core.execution import ExecutionRequest
 from sdd_core.models import Step, Workflow
 from sdd_core.sdk import Registry
 from sdd_providers.handlers import CommandHandler
@@ -13,10 +17,11 @@ from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_runtime.platform import NO_WINDOW, Job, start_contained
+from sdd_runtime.supervisor import Plan
 from sdd_storage.store import Store
 
 
-def runtime(tmp_path, code="print('ok')", timeout=30):
+def runtime(tmp_path, code="print('ok')", timeout=30, argv=None):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     engine = Engine(Store(tmp_path / "engine.db"))
@@ -32,7 +37,7 @@ def runtime(tmp_path, code="print('ok')", timeout=30):
                 required=True,
                 gate=True,
                 timeout=timeout,
-                config=canonical({"argv": [sys.executable, "-c", code]}),
+                config=canonical({"argv": argv or [sys.executable, "-c", code]}),
             ),
             Step("finish", "finish"),
         ),
@@ -43,6 +48,42 @@ def runtime(tmp_path, code="print('ok')", timeout=30):
     registry = Registry()
     registry.register(CommandHandler())
     return Coordinator(engine, registry)
+
+
+def host_pid(workspace):
+    """The PID a running attempt's host recorded, once it has."""
+    for identity in workspace.glob(".sdd-engine/*/*/identity.json"):
+        return json.loads(identity.read_text(encoding="utf-8"))["pid"]
+    return None
+
+
+def finished_execution(engine, run_id, packet, completed_at, exit_code=0):
+    """An execution whose host ended while no coordinator watched it: the durable
+    request, the identity of a process that is gone and the host's exit receipt."""
+    workspace = packet.workspace
+    plan = Plan(packet.directory, workspace, (sys.executable,), workspace)
+    attempt = packet.attempt
+    request = ExecutionRequest(
+        attempt.id, attempt.generation, "handler", plan.payload(), attempt.deadline
+    )
+    with engine.store.unit() as unit:
+        unit.bind_execution(run_id, attempt.id, "local", canonical(asdict(request)))
+    ended = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(0.5)"])
+    created = psutil.Process(ended.pid).create_time()
+    ended.wait(timeout=10)
+    folder = Path(packet.directory)
+    (folder / "identity.json").write_text(
+        canonical({"pid": ended.pid, "created": created, "nonce": "nonce"}), encoding="utf-8"
+    )
+    (folder / "exit.json").write_text(
+        canonical({"exit_code": exit_code, "completed_at": completed_at, "nonce": "nonce"}),
+        encoding="utf-8",
+    )
+
+
+def hosted(coordinator):
+    """The executions whose processes the coordinator's supervisor owns now."""
+    return [coordinator.supervisor.live[i] for i in coordinator.active()]
 
 
 def settle(coordinator, seconds=10):
@@ -61,7 +102,7 @@ def test_real_command_acceptance(tmp_path):
     try:
         state = settle(coordinator)
         assert state.status == "accepted", state.reason
-        assert state.calls == 0
+        assert state.spend.calls == 0
     finally:
         coordinator.close()
 
@@ -130,7 +171,7 @@ def test_command_line_past_the_windows_limit_is_refused_before_launch(tmp_path):
         coordinator.tick()
         run = coordinator.engine.store.get("one")
         assert "Command line too long" in run.reason
-        assert not coordinator.live
+        assert not coordinator.active()
     finally:
         coordinator.close()
 
@@ -246,10 +287,8 @@ def test_restart_after_coordinator_killed(tmp_path):
         deadline = time.monotonic() + 10
         pid = None
         while time.monotonic() < deadline:
-            with coordinator.engine.store.transaction() as db:
-                row = db.execute("SELECT pid FROM effects WHERE status='running'").fetchone()
-            if row:
-                pid = row[0]
+            pid = host_pid(tmp_path / "workspace")
+            if pid:
                 break
             if process.poll() is not None:
                 pytest.fail(process.stderr.read().decode())

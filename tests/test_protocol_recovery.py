@@ -1,12 +1,12 @@
 from pathlib import Path
 
-from sdd_core.codec import canonical
 from sdd_core.models import Step, Workflow
 from sdd_core.sdk import Manifest, Registry
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_storage.store import Store
+from test_runtime import finished_execution
 
 
 class BrokenProtocol:
@@ -40,14 +40,10 @@ def test_recovery_preserves_protocol_diagnosis_without_second_call(tmp_path):
     coordinator = Coordinator(engine, registry)
     try:
         packet = coordinator.packet("one")
-        with engine.store.transaction() as db:
-            db.execute("UPDATE effects SET host_nonce='nonce' WHERE id='attempt'")
-        Path(packet.directory, "exit.json").write_text(
-            canonical({"nonce": "nonce", "completed_at": 3, "exit_code": 0})
-        )
+        finished_execution(engine, "one", packet, completed_at=3)
         coordinator.restore(4)
         state = engine.store.get("one")
-        assert state.status == "blocked" and state.calls == 1
+        assert state.status == "blocked" and state.spend.calls == 1
         assert state.reason == "Provider protocol: truncated structured answer"
         assert state.infrastructure_failures == 0
         assert Path(packet.directory, "receipt.json").exists()

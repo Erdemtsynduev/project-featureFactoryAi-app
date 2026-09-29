@@ -173,6 +173,19 @@ if sys.platform == "win32":
             finally:
                 self.kernel.CloseHandle(process)
 
+        def holds(self, pid: int) -> bool:
+            """Whether the job holds `pid`, a descendant here or in a nested job."""
+            limited = self.kernel.OpenProcess(0x1000, False, pid)
+            if not limited:
+                return self.contains(pid)
+            try:
+                member = wintypes.BOOL()
+                if not self.kernel.IsProcessInJob(limited, self.handle, ctypes.byref(member)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                return bool(member.value)
+            finally:
+                self.kernel.CloseHandle(limited)
+
         def contains(self, pid: int) -> bool:
             """Kernel membership, without opening a potentially ACL-restricted child."""
             info = ProcessIds()

@@ -1,228 +1,188 @@
-"""Strict serialization at the boundary; no arbitrary class loading."""
+"""Strict serialization at the boundary; no arbitrary class loading.
 
-import hashlib
-import json
-from dataclasses import asdict
-from typing import cast
+Documents decode through one reader driven by the dataclass declarations in
+`sdd_core.models`: field types, defaults and closed vocabularies are declared
+once, and a field added to a model is read without a second hand-written copy.
+"""
 
-from sdd_core.models import (
-    Artifact,
-    Attempt,
-    Json,
-    Kind,
-    Result,
-    Run,
-    Status,
-    Step,
-    Usage,
-    Workflow,
+from dataclasses import MISSING, Field, fields, is_dataclass, replace
+from functools import cache
+from types import NoneType, UnionType
+from typing import (
+    Any,
+    Literal,
+    TypeAliasType,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
 )
 
+from sdd_core.machine import legacy_cause
+from sdd_core.models import Result, Run, Step, Workflow
+from sdd_core.wire import (
+    Json,
+    canonical,
+    digest,
+    flag,
+    integer,
+    mapping,
+    number,
+    object_json,
+    sequence,
+    text,
+)
 
-def canonical(value: object) -> str:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-    )
-
-
-def digest(value: str) -> str:
-    return hashlib.sha256(value.encode()).hexdigest()
-
-
-def object_json(raw: str) -> dict[str, Json]:
-    value: object = json.loads(raw, parse_constant=lambda v: (_ for _ in ()).throw(ValueError(v)))
-    if not isinstance(value, dict):
-        raise ValueError("Expected JSON object")
-    return cast(dict[str, Json], value)
-
-
-def text(value: Json, field: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{field} must be text")
-    return value
-
-
-def integer(value: Json, field: str) -> int:
-    if type(value) is not int:
-        raise ValueError(f"{field} must be integer")
-    return value
-
-
-def flag(value: Json, field: str) -> bool:
-    if type(value) is not bool:
-        raise ValueError(f"{field} must be boolean")
-    return value
-
-
-def mapping(value: Json) -> dict[str, Json]:
-    if not isinstance(value, dict):
-        raise ValueError("Expected mapping")
-    return value
+__all__ = [
+    "canonical",
+    "decode",
+    "digest",
+    "encode",
+    "flag",
+    "integer",
+    "mapping",
+    "number",
+    "object_json",
+    "result_json",
+    "result_load",
+    "run_json",
+    "run_load",
+    "sequence",
+    "text",
+    "workflow_json",
+    "workflow_load",
+]
 
 
-def sequence(value: Json) -> list[Json]:
-    if not isinstance(value, list):
-        raise ValueError("Expected array")
-    return value
+@cache
+def _hints(cls: type) -> dict[str, Any]:
+    return get_type_hints(cls)
 
 
-def number(value: Json) -> float:
-    if type(value) not in (int, float):
-        raise ValueError("Expected number")
-    return float(cast(int | float, value))
+def _value(hint: Any, raw: Json, name: str, closed: frozenset[type]) -> Any:
+    if isinstance(hint, TypeAliasType):
+        hint = hint.__value__
+    origin = get_origin(hint)
+    if origin in (Union, UnionType):
+        options = get_args(hint)
+        if raw is None and NoneType in options:
+            return None
+        (inner,) = (option for option in options if option is not NoneType)
+        return _value(inner, raw, name, closed)
+    if origin is Literal:
+        if raw not in get_args(hint):
+            raise ValueError(f"Unknown {name}")
+        return raw
+    if origin is tuple:
+        items = sequence(raw)
+        args = get_args(hint)
+        if len(args) == 2 and args[1] is Ellipsis:
+            return tuple(_value(args[0], item, name, closed) for item in items)
+        if len(items) != len(args):
+            raise ValueError(f"{name} must have {len(args)} elements")
+        return tuple(_value(arg, item, name, closed) for arg, item in zip(args, items, strict=True))
+    if origin is dict or hint is dict:
+        return mapping(raw)
+    if is_dataclass(hint) and isinstance(hint, type):
+        return decode(hint, raw, closed)
+    if hint is str:
+        return text(raw, name)
+    if hint is bool:
+        return flag(raw, name)
+    if hint is int:
+        return integer(raw, name)
+    if hint is float:
+        return number(raw)
+    raise TypeError(f"No wire reader for {hint!r}")
+
+
+def _flat(item: Field[Any]) -> bool:
+    return item.metadata.get("wire") == "flat"
+
+
+def _names(cls: type) -> set[str]:
+    """Keys a document of `cls` may carry, flattened values included."""
+    names: set[str] = set()
+    for item in fields(cls):
+        names |= _names(_hints(cls)[item.name]) if _flat(item) else {item.name}
+    return names
+
+
+def decode[T](cls: type[T], raw: Json, closed: frozenset[type] = frozenset()) -> T:
+    """Read a dataclass from JSON: declared types, declared defaults, nothing else.
+
+    Classes in `closed` refuse fields they do not declare; others ignore them, so
+    documents written by a newer release stay readable where that is safe. A field
+    declared with `models.FLAT` metadata reads its value's fields at this level.
+    """
+    document = mapping(raw)
+    kind = cast(type, cls)
+    if cls in closed and document.keys() - _names(kind):
+        raise ValueError(f"Unknown {cls.__name__.lower()} fields")
+    hints = _hints(kind)
+    values: dict[str, Any] = {}
+    for item in fields(kind):
+        name = item.name
+        if _flat(item):
+            values[name] = decode(hints[name], document, closed)
+        elif name in document:
+            values[name] = _value(hints[name], document[name], name, closed)
+        elif item.default is MISSING and item.default_factory is MISSING:
+            raise ValueError(f"{cls.__name__} needs {name}")
+    return cls(**values)
+
+
+def encode(value: object) -> dict[str, Any]:
+    """The wire document of a model: tuples as lists, `FLAT` values merged upward.
+
+    This is the one spelling of a model outside the process: storage, HTTP answers
+    and command responses all use it, so they agree with `decode`.
+    """
+    if not is_dataclass(value) or isinstance(value, type):
+        raise TypeError("Expected a model instance")
+    result: dict[str, Any] = {}
+    for item in fields(value):
+        part = getattr(value, item.name)
+        if _flat(item):
+            result.update(encode(part))
+        else:
+            result[item.name] = _plain(part)
+    return result
+
+
+def _plain(value: object) -> Json:
+    if is_dataclass(value) and not isinstance(value, type):
+        return encode(value)
+    if isinstance(value, tuple | list):
+        return [_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    return cast(Json, value)
 
 
 def workflow_json(workflow: Workflow) -> str:
-    return canonical(asdict(workflow))
+    return canonical(encode(workflow))
 
 
 def workflow_load(raw: str) -> Workflow:
-    doc = object_json(raw)
-    allowed = {
-        "id",
-        "entry",
-        "steps",
-        "schema",
-        "max_calls",
-        "max_input_chars",
-        "max_tokens",
-        "max_planning_calls",
-    }
-    if doc.keys() - allowed:
-        raise ValueError("Unknown workflow fields")
-    steps: list[Step] = []
-    for value in sequence(doc.get("steps")):
-        item = mapping(value)
-        if item.keys() - Step.__dataclass_fields__.keys():
-            raise ValueError("Unknown step fields")
-        edges = tuple(
-            (text(sequence(pair)[0], "outcome"), text(sequence(pair)[1], "target"))
-            for pair in sequence(item.get("transitions", []))
-            if len(sequence(pair)) == 2
-        )
-        if len(edges) != len(sequence(item.get("transitions", []))):
-            raise ValueError("Transition must have two elements")
-        steps.append(
-            Step(
-                id=text(item.get("id"), "id"),
-                kind=cast(Kind, text(item.get("kind"), "kind")),
-                handler=text(item.get("handler", ""), "handler"),
-                prompt=text(item.get("prompt", ""), "prompt"),
-                transitions=edges,
-                required=flag(item.get("required", False), "required"),
-                gate=flag(item.get("gate", False), "gate"),
-                mutates=flag(item.get("mutates", False), "mutates"),
-                max_visits=integer(item.get("max_visits", 3), "max_visits"),
-                timeout=integer(item.get("timeout", 900), "timeout"),
-                profile=text(item.get("profile", "default"), "profile"),
-                config=text(item.get("config", "{}"), "config"),
-                condition_key=text(item.get("condition_key", ""), "condition_key"),
-                condition_value=text(item.get("condition_value", ""), "condition_value"),
-            )
-        )
-    maximum = doc.get("max_tokens")
-    return Workflow(
-        text(doc.get("id"), "id"),
-        text(doc.get("entry"), "entry"),
-        tuple(steps),
-        integer(doc.get("schema", 1), "schema"),
-        integer(doc.get("max_calls", 10), "max_calls"),
-        integer(doc.get("max_input_chars", 24000), "max_input_chars"),
-        None if maximum is None else integer(maximum, "max_tokens"),
-        None
-        if doc.get("max_planning_calls") is None
-        else integer(doc["max_planning_calls"], "max_planning_calls"),
-    )
+    return decode(Workflow, object_json(raw), frozenset({Workflow, Step}))
 
 
 def run_json(run: Run) -> str:
-    return canonical(asdict(run))
+    return canonical(encode(run))
 
 
 def run_load(raw: str) -> Run:
-    d = object_json(raw)
-    active = d["active"]
-    attempt = None
-    if active is not None:
-        a = mapping(active)
-        attempt = Attempt(
-            text(a["id"], "id"),
-            text(a["step"], "step"),
-            integer(a["generation"], "generation"),
-            number(a["started"]),
-            number(a["deadline"]),
-            text(a["base_revision"], "revision"),
-            None if a["previous"] is None else text(a["previous"], "previous"),
-        )
-    return Run(
-        id=text(d["id"], "id"),
-        workflow_digest=text(d["workflow_digest"], "digest"),
-        step=text(d["step"], "step"),
-        revision=text(d["revision"], "revision"),
-        status=cast(Status, text(d["status"], "status")),
-        paused=flag(d["paused"], "paused"),
-        version=integer(d["version"], "version"),
-        generation=integer(d["generation"], "generation"),
-        active=attempt,
-        visits=tuple(
-            (text(sequence(x)[0], "step"), integer(sequence(x)[1], "visits"))
-            for x in sequence(d["visits"])
-        ),
-        completed=tuple(text(x, "step") for x in sequence(d["completed"])),
-        gates=tuple(
-            (text(sequence(x)[0], "step"), text(sequence(x)[1], "revision"))
-            for x in sequence(d["gates"])
-        ),
-        calls=integer(d["calls"], "calls"),
-        planning_calls=integer(d.get("planning_calls", 0), "planning_calls"),
-        auto_answer=flag(d.get("auto_answer", False), "auto_answer"),
-        granted_calls=integer(d.get("granted_calls", 0), "granted_calls"),
-        tokens=integer(d["tokens"], "tokens"),
-        usage_unknown=flag(d["usage_unknown"], "usage_unknown"),
-        infrastructure_failures=integer(d["infrastructure_failures"], "failures"),
-        wake_at=None if d["wake_at"] is None else number(d["wake_at"]),
-        reason=text(d["reason"], "reason"),
-        previous_attempt=None
-        if d["previous_attempt"] is None
-        else text(d["previous_attempt"], "previous"),
-    )
+    """A stored run; one written before `cause` existed gets it from its reason."""
+    stored = object_json(raw)
+    run = decode(Run, stored)
+    return run if "cause" in stored else replace(run, cause=legacy_cause(run))
 
 
 def result_json(result: Result) -> str:
-    return canonical(asdict(result))
+    return canonical(encode(result))
 
 
 def result_load(raw: str) -> Result:
-    d = object_json(raw)
-    if d.keys() - Result.__dataclass_fields__.keys():
-        raise ValueError("Unknown result fields")
-    usage = mapping(d.get("usage", {}))
-
-    def optional_int(key: str) -> int | None:
-        value = usage.get(key)
-        return None if value is None else integer(value, key)
-
-    artifacts = tuple(
-        Artifact(
-            text(a["path"], "path"), text(a["sha256"], "hash"), text(a["revision"], "revision")
-        )
-        for a in (mapping(x) for x in sequence(d.get("artifacts", [])))
-    )
-    return Result(
-        text(d.get("attempt_id"), "attempt_id"),
-        integer(d.get("generation"), "generation"),
-        text(d.get("outcome"), "outcome"),
-        text(d.get("reason"), "reason"),
-        text(d.get("revision"), "revision"),
-        artifacts,
-        Usage(
-            optional_int("input_tokens"),
-            optional_int("output_tokens"),
-            optional_int("cache_read"),
-            optional_int("cache_write"),
-        ),
-        None if d.get("standards") is None else flag(d["standards"], "standards"),
-        None if d.get("specification") is None else flag(d["specification"], "specification"),
-        None if d.get("resume_at") is None else number(d["resume_at"]),
-        text(d.get("data", "{}"), "data"),
-    )
+    return decode(Result, object_json(raw), frozenset({Result}))

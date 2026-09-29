@@ -1,4 +1,4 @@
-"""Durable dispatch adapter for backends that need no local process identity."""
+"""Durable dispatch for every execution backend: submit once, then poll to an end."""
 
 from dataclasses import asdict
 
@@ -10,6 +10,7 @@ from sdd_core.execution import (
     ExecutionRequest,
     validate_observation,
 )
+from sdd_core.models import Run
 from sdd_core.ports import Conflict
 
 from sdd_runtime.application import ApplicationEngine
@@ -57,6 +58,13 @@ class ExecutionDriver:
         handle = ExecutionHandle(self.backend.id, run.active.id, run.active.generation)
         observation = self.backend.reconcile(handle)
         validate_observation(handle, observation)
+        if observation.status == "running" and (
+            now >= run.active.deadline or machine.stop_requested(run)
+        ):
+            self.backend.cancel(handle)
+            # A backend that ends synchronously settles in this same poll.
+            observation = self.backend.reconcile(handle)
+            validate_observation(handle, observation)
         if observation.status == "completed":
             assert observation.result is not None
             assert observation.completed_at is not None
@@ -71,8 +79,15 @@ class ExecutionDriver:
                 run_id,
                 now,
                 observation.status == "terminated",
-                observation.reason or observation.status,
+                ended_reason(run, now, observation.reason or observation.status),
                 observed_revision,
             )
-        elif now >= run.active.deadline or machine.stop_requested(run):
-            self.backend.cancel(handle)
+
+
+def ended_reason(run: Run, now: float, reported: str) -> str:
+    """Why an execution ended, from the run itself: the engine's own stop wins."""
+    if machine.stop_requested(run):
+        return "Stopped by operator"
+    if run.active is not None and now >= run.active.deadline:
+        return "Attempt timeout"
+    return reported

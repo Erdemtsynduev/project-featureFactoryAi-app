@@ -38,7 +38,7 @@ def test_message_persists_once_and_enters_next_packet(tmp_path, backend):
     engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
     engine.create("one", store.publish(flow), root, "Original", revision(root), 0)
     run = engine.message("one", "Ответы на русском", "message", 0, 1)
-    assert run.paused and run.calls == 0
+    assert run.paused and run.spend.calls == 0
     assert engine.message("one", "Ответы на русском", "message", 0, 2) == run
     with pytest.raises(Conflict):
         engine.message("one", "Stale", "other", 0, 2)
@@ -75,7 +75,7 @@ def test_recovery_reconciles_changed_revision_without_bypassing_gates(tmp_path, 
     (root / "partial.txt").write_text("More unfinished edits")
     run = engine.request_recovery("one", recovered.version, 10)
     assert run.paused and run.gates == () and run.revision == revision(root)
-    assert run.calls == 3
+    assert run.spend.calls == 3
     engine.command("one", "resume", "again", run.version, 11)
     current = engine.dispatch("one", 12, "reconciliation")
     checked = engine.complete(
@@ -213,12 +213,12 @@ def test_retry_after_the_call_limit_grants_the_workflow_budget_once_more(tmp_pat
     limited = engine.dispatch("one", 4, "second")
     assert limited.status == "blocked" and limited.reason == machine.CALL_LIMIT
     granted = engine.command("one", "retry", "grant", limited.version, 5)
-    assert granted.status == "ready" and granted.granted_calls == 1
-    assert store.get("one").granted_calls == 1, "the grant survives a reload"
+    assert granted.status == "ready" and granted.spend.granted_calls == 1
+    assert store.get("one").spend.granted_calls == 1, "the grant survives a reload"
     assert engine.dispatch("one", 6, "second").active is not None
 
 
 def test_an_ordinary_retry_grants_no_calls():
     run = replace(Run("one", "digest", "work", "rev"), status="blocked", reason="Other")
     retried = machine.control(run, "retry", 1, call_grant=5).state
-    assert retried.status == "ready" and retried.granted_calls == 0
+    assert retried.status == "ready" and retried.spend.granted_calls == 0

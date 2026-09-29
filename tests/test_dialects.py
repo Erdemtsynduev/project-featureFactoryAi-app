@@ -52,7 +52,9 @@ def test_claude_read_only_steps_deny_edits_and_commands(tmp_path):
 def test_claude_working_steps_may_run_commands_and_resume(tmp_path):
     argv = Claude().argv(call(tmp_path, "opus", mutates=True, resume="s-1"))
     assert argv[argv.index("--disallowedTools") + 1] == "Agent,Task"
-    assert argv[-6:] == ["--allowedTools", "Bash,PowerShell", "--model", "opus", "--resume", "s-1"]
+    assert argv[argv.index("--allowedTools") + 1] == "Bash,PowerShell"
+    assert "sdd_providers.budget" in argv[argv.index("--settings") + 1]
+    assert argv[-4:] == ["--model", "opus", "--resume", "s-1"]
 
 
 def test_codex_fresh_session_names_workspace_sandbox_and_reads_stdin(tmp_path):

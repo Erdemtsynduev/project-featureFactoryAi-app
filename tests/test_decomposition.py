@@ -240,7 +240,7 @@ def test_queue_revives_only_limit_blocks_after_a_rest(tmp_path):
         for name in ("limited", "broken"):
             service.mutate("create", {"id": name, "definition": definition, "workspace": str(root)})
         engine = service.engine
-        engine.block("limited", time.time(), WAIT_RETRY_LIMIT)
+        engine.block("limited", time.time(), WAIT_RETRY_LIMIT, cause="wait_limit")
         engine.block("broken", time.time(), "Provider protocol: bad JSON")
         queue = service.queue
         queue.settings["running"] = True
@@ -252,7 +252,7 @@ def test_queue_revives_only_limit_blocks_after_a_rest(tmp_path):
         assert engine.store.get("broken").status == "blocked"
         assert any(e["kind"] == "revived" for e in service.flight(run="limited"))
         queue.settings["revive"] = False
-        engine.block("limited", time.time(), WAIT_RETRY_LIMIT)
+        engine.block("limited", time.time(), WAIT_RETRY_LIMIT, cause="wait_limit")
         queue._watch(later + REVIVE_AFTER * 2)
         assert engine.store.get("limited").status == "blocked"
     finally:

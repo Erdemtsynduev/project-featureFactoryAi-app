@@ -135,11 +135,11 @@ def main() -> int:
                 while time.monotonic() < local_deadline:
                     coordinator.tick()
                     report["max_observed_parallel"] = max(
-                        report["max_observed_parallel"], len(coordinator.live)
+                        report["max_observed_parallel"], len(coordinator.active())
                     )
-                    if completed % 7 == 6 and not injected and coordinator.live:
-                        live = next(iter(coordinator.live.values()))
-                        live.job.terminate()
+                    if completed % 7 == 6 and not injected and coordinator.active():
+                        live = coordinator.supervisor.live[coordinator.active()[0]]
+                        live.sandbox.container.terminate()
                         live.process.wait(timeout=5)
                         injected = True
                         recovered += 1

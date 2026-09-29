@@ -9,7 +9,7 @@ from dataclasses import replace
 import pytest
 from sdd_core import machine
 from sdd_core.codec import digest, workflow_json
-from sdd_core.models import Artifact, Attempt, Result, Run, Step, Usage, Workflow
+from sdd_core.models import Artifact, Attempt, Result, Run, Spend, Step, Usage, Workflow
 
 
 def flow(**budgets: int) -> Workflow:
@@ -145,10 +145,10 @@ def test_unknown_or_misplaced_commands_are_refused():
 def test_retry_grants_calls_only_after_the_call_limit():
     blocked = machine.block(ready(), 1, "other reason").state
     retried = machine.control(blocked, "retry", 2, call_grant=5)
-    assert retried.events[0].kind == "retry_requested" and retried.state.granted_calls == 0
-    limited = machine.block(ready(), 1, machine.CALL_LIMIT).state
+    assert retried.events[0].kind == "retry_requested" and retried.state.spend.granted_calls == 0
+    limited = machine.block(ready(), 1, machine.CALL_LIMIT, cause="call_limit").state
     granted = machine.control(limited, "retry", 2, call_grant=5)
-    assert granted.events[0].kind == "calls_granted" and granted.state.granted_calls == 5
+    assert granted.events[0].kind == "calls_granted" and granted.state.spend.granted_calls == 5
 
 
 @pytest.mark.parametrize("attempt", ["", "has space", "x" * 97, "semi;colon"])
@@ -172,11 +172,12 @@ def test_time_must_be_a_finite_number(now):
 
 def test_budgets_stop_dispatch_with_a_limit_event():
     workflow = flow(max_calls=1)
-    spent = ready(workflow, calls=1)
+    spent = ready(workflow, spend=Spend(calls=1))
     limited = machine.dispatch(spent, workflow, 1, "a")
-    assert limited.state.reason == machine.CALL_LIMIT and limited.events[0].kind == "limit"
+    assert limited.state.cause == "call_limit" and limited.events[0].kind == "limit"
+    assert limited.state.reason == machine.CALL_LIMIT
     tokens = flow(max_tokens=10)
-    unknown = machine.dispatch(ready(tokens, usage_unknown=True), tokens, 1, "a")
+    unknown = machine.dispatch(ready(tokens, spend=Spend(usage_unknown=True)), tokens, 1, "a")
     assert unknown.state.reason == "Token budget exhausted or unknown"
     visited = machine.dispatch(ready(visits=(("work", 3),)), flow(), 1, "a")
     assert visited.state.reason == "Step visit limit" and not visited.effects
@@ -257,7 +258,7 @@ def test_recover_backs_off_and_clears_gates_when_the_revision_moved():
         run, 2, termination_confirmed=True, reason="lost", observed_revision="moved"
     ).state
     assert lost.status == "waiting" and lost.wake_at == 2 + 2 and lost.gates == ()
-    assert dict(lost.visits)["work"] == 0 and lost.usage_unknown
+    assert dict(lost.visits)["work"] == 0 and lost.spend.usage_unknown
     rerouted = machine.recover(
         run,
         2,

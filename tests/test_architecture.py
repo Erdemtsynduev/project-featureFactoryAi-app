@@ -101,7 +101,8 @@ def test_queue_usage_is_aggregated_by_the_backend(engine):
 
 
 def test_named_transitions_keep_rules_in_core():
-    run = Run("r", "d", "work", "rev", status="blocked", paused=False, version=3)
+    run = Run("r", "d", "work", "rev", status="blocked", paused=False, version=3, cause="blocked")
+    run = replace(run, reason="earlier")
     blocked = machine.block(run, 1, "why").state
     assert (blocked.status, blocked.reason, blocked.version) == ("blocked", "why", 4)
     moved = machine.relocate(replace(run, gates=(("g", "rev"),)), "lane", 1, "/lane").state

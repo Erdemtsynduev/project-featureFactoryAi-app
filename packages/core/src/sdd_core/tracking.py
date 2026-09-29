@@ -12,9 +12,9 @@ so a tracker being down never loses or reorders what people should see.
 """
 
 from dataclasses import dataclass, field
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol
 
-from sdd_core.codec import canonical, digest, integer, mapping, object_json, sequence, text
+from sdd_core.codec import canonical, decode, digest, encode, object_json
 
 OPEN_MARKS = (" ", "~")
 
@@ -113,30 +113,10 @@ class TrackerUpdate:
 
     @property
     def id(self) -> str:
-        return digest(
-            canonical(
-                [
-                    self.kind,
-                    self.run,
-                    self.link,
-                    self.text,
-                    self.state,
-                    [
-                        [
-                            t.run,
-                            t.key,
-                            t.title,
-                            t.goal,
-                            list(t.acceptance),
-                            list(t.depends_on),
-                            t.wave,
-                            t.hitl,
-                        ]
-                        for t in self.tickets
-                    ],
-                ]
-            )
-        )[:32]
+        # The stored document's values in field order; tickets as value lists.
+        document = encode(self)
+        tickets = [list(ticket.values()) for ticket in document.pop("tickets")]
+        return digest(canonical([*document.values(), tickets]))[:32]
 
 
 @dataclass(frozen=True)
@@ -177,55 +157,11 @@ def mirror_state(status: str, attention: str) -> MirrorState:
 
 def update_json(update: TrackerUpdate) -> str:
     """The stored form of a publication; `update_load` reads it back."""
-    return canonical(
-        {
-            "kind": update.kind,
-            "run": update.run,
-            "link": update.link,
-            "text": update.text,
-            "state": update.state,
-            "tickets": [
-                {
-                    "run": t.run,
-                    "key": t.key,
-                    "title": t.title,
-                    "goal": t.goal,
-                    "acceptance": list(t.acceptance),
-                    "depends_on": list(t.depends_on),
-                    "wave": t.wave,
-                    "hitl": t.hitl,
-                }
-                for t in update.tickets
-            ],
-        }
-    )
+    return canonical(encode(update))
 
 
 def update_load(document: str) -> TrackerUpdate:
-    d = object_json(document)
-    kind = text(d.get("kind"), "kind")
-    if kind not in ("specification", "tickets", "state"):
-        raise ValueError(f"Unknown tracker update: {kind}")
-    return TrackerUpdate(
-        cast(UpdateKind, kind),
-        text(d.get("run"), "run"),
-        text(d.get("link"), "link"),
-        text(d.get("text", ""), "text"),
-        text(d.get("state", ""), "state"),
-        tuple(
-            TicketMirror(
-                text(t.get("run"), "run"),
-                text(t.get("key"), "key"),
-                text(t.get("title"), "title"),
-                text(t.get("goal", ""), "goal"),
-                tuple(text(x, "acceptance") for x in sequence(t.get("acceptance", []))),
-                tuple(text(x, "dependency") for x in sequence(t.get("depends_on", []))),
-                integer(t.get("wave", 1), "wave"),
-                t.get("hitl") is True,
-            )
-            for t in (mapping(x) for x in sequence(d.get("tickets", [])))
-        ),
-    )
+    return decode(TrackerUpdate, object_json(document))
 
 
 def receipt_json(receipt: TrackerReceipt) -> str:

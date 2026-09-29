@@ -73,9 +73,9 @@ def main() -> int:
                 report = {
                     "provider": args.provider,
                     "status": state.status,
-                    "calls": state.calls,
-                    "tokens": state.tokens,
-                    "usage_unknown": state.usage_unknown,
+                    "calls": state.spend.calls,
+                    "tokens": state.spend.tokens,
+                    "usage_unknown": state.spend.usage_unknown,
                     "reason": state.reason,
                 }
                 atomic_write(folder / "report.json", canonical(report))

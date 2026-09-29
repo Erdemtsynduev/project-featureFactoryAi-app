@@ -43,7 +43,7 @@ def test_planning_budget_is_distinct_from_implementation():
     state = machine.dispatch(state, flow, 1, "a").state
     state = machine.complete(state, flow, Result("a", 1, "done", "ok", "rev"), 2).state
     state = machine.dispatch(state, flow, 3, "b").state
-    assert state.status == "blocked" and state.calls == state.planning_calls == 1
+    assert state.status == "blocked" and state.spend.calls == state.spend.planning_calls == 1
     assert state.active is None
     assert workflow_load(workflow_json(flow)) == flow
     assert approved_feature().max_planning_calls == 0 and approved_feature().entry == "approve"
@@ -77,7 +77,7 @@ def test_queue_budget_is_shared_and_survives_new_engine(tmp_path, backend):
     assert store.get("one") == before
     restarted = ApplicationEngine(store, GitProject(), LocalWorkspace(), max_queue_calls=1)
     blocked = restarted.dispatch("two", 3, "second")
-    assert blocked.status == "blocked" and blocked.calls == 0
+    assert blocked.status == "blocked" and blocked.spend.calls == 0
 
 
 def test_atomic_replace_retries_only_temporary_permission_failure(tmp_path, monkeypatch):
@@ -256,7 +256,7 @@ def test_human_answer_is_versioned_and_not_automatic(tmp_path):
         service.mutate("resume", {"id": "one", "version": 0})
         service.coordinator.tick()
         run = service.engine.store.get("one")
-        assert run.active and run.calls == 0
+        assert run.active and run.spend.calls == 0
         with pytest.raises(Conflict):
             service.mutate(
                 "answer", {"id": "one", "version": 0, "outcome": "approved", "answer": "Yes"}
@@ -305,13 +305,12 @@ def test_stop_is_collected_while_queue_is_paused(tmp_path):
         service.mutate("resume", {"id": "one", "version": 0})
         service.coordinator.tick()
         run = service.engine.store.get("one")
-        assert run.active and service.coordinator.live
+        assert run.active and service.coordinator.active()
         service.mutate("stop", {"id": "one", "version": run.version})
         assert service.settings["running"] is False
-        for identifier in tuple(service.coordinator.live):
-            service.coordinator.collect(identifier, time.time())
+        service.coordinator.collect(time.time())
         stopped = service.engine.store.get("one")
         assert stopped.paused and stopped.active is None
-        assert not service.coordinator.live
+        assert not service.coordinator.active()
     finally:
         service.coordinator.close()

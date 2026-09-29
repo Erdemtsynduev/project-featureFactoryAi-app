@@ -15,10 +15,10 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
-from sdd_core.codec import flag, integer, mapping, sequence, text
-from sdd_core.memory import TicketDraft, tickets_of
+from sdd_core.codec import encode, flag, integer, mapping, sequence, text
 from sdd_core.models import Json, Run
 from sdd_core.ports import Conflict
+from sdd_core.tickets import TicketDraft, tickets_of
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_workflows.templates import question_example
@@ -154,7 +154,7 @@ class TaskService:
         )
         self.bind(run.id)
         self.log.record("task_created", run=run.id, intent=intent or "definition")
-        return asdict(run)
+        return encode(run)
 
     def demo(self, doc: dict[str, Json]) -> dict[str, object]:
         """A human-only task in a sample folder: shows a question without a model."""
@@ -173,7 +173,7 @@ class TaskService:
         self.engine.command(run.id, "resume", uuid.uuid4().hex, run.version, time.time())
         title = "Пример вопроса команды" if language == "ru" else "Team question example"
         self.catalog.save_task(run.id, TaskRecord(title=title, language=language))
-        return asdict(self.engine.dispatch(run.id, time.time(), uuid.uuid4().hex))
+        return encode(self.engine.dispatch(run.id, time.time(), uuid.uuid4().hex))
 
     def rename(self, doc: dict[str, Json]) -> dict[str, Json]:
         """Correct a task's title after creation."""
@@ -231,7 +231,7 @@ class TaskService:
             time.time(),
         )
         self.log.record("command", run=run.id, command=command, status=run.status)
-        return asdict(run)
+        return encode(run)
 
     def bulk(self, command: str, doc: dict[str, Json]) -> dict[str, object]:
         """Resume or pause many tasks of one project in one operator action.
@@ -356,7 +356,7 @@ class TaskService:
         return [run for run in runs if owner(run) == project_id]
 
     def message(self, doc: dict[str, Json]) -> dict[str, object]:
-        return asdict(
+        return encode(
             self.engine.message(
                 text(doc.get("id"), "id"),
                 text(doc.get("message"), "message"),
@@ -374,7 +374,7 @@ class TaskService:
         guided = self.engine.message(run_id, briefing, uuid.uuid4().hex, version, time.time())
         state = self.engine.request_recovery(run_id, guided.version, time.time())
         self.log.record("recovery_requested", run=run_id, step=state.step)
-        return asdict(state)
+        return encode(state)
 
     # Answers and decomposition ------------------------------------------------
 
@@ -403,7 +403,7 @@ class TaskService:
         )
         created = self._admit(run, drafts, definitions, contexts) if drafts else []
         self.log.record("answered", run=run_id, outcome=outcome, tickets=len(created))
-        return {**asdict(run), "admitted": list[Json](created)}
+        return {**encode(run), "admitted": list[Json](created)}
 
     def preview(self, run_id: str) -> list[dict[str, object]]:
         """Tickets awaiting approval on a feature, for the approval dialog."""

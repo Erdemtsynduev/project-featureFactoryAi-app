@@ -9,9 +9,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from typing import cast
 
-from sdd_core.machine import WAIT_RETRY_LIMIT
 from sdd_core.models import Json, Run, Step, Workflow
-from sdd_core.options import StepOptions
 from sdd_core.sdk import handler_key
 
 
@@ -41,9 +39,9 @@ def attention(
             return Attention("answer", "attention", "answer", step.prompt)
         return Attention("working", "working")
     if run.status == "blocked":
-        if run.reason == WAIT_RETRY_LIMIT:
+        if run.cause == "wait_limit":
             return Attention("limits_exhausted", "blocked", "retry", run.reason)
-        if run.reason.startswith("Process ownership uncertain"):
+        if run.cause == "uncertain":
             return Attention("uncertain", "blocked", "recover", run.reason)
         return Attention("blocked", "blocked", "retry", run.reason)
     if step.kind == "agent":
@@ -142,7 +140,7 @@ def calls_needed(run: Run, workflow: Workflow) -> dict[str, int]:
         for step in workflow.steps:
             if step.kind == "agent" and step.required and step.id not in done:
                 calls += 1
-                planning += StepOptions.parse(step.config).planning
+                planning += step.options.planning
     return {"calls": calls, "planning": planning}
 
 
@@ -163,7 +161,7 @@ def projection(run: Run) -> dict[str, Json]:
         "workflow_digest": run.workflow_digest,
         "version": run.version,
         "reason": run.reason,
-        "calls": run.calls,
+        "calls": run.spend.calls,
         "auto_answer": run.auto_answer,
         "wake_at": run.wake_at,
         "active": active,

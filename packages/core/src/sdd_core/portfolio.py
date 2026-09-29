@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from sdd_core.graph import dependency_layers
 from sdd_core.models import Run
 
 
@@ -28,19 +29,11 @@ def ordered(portfolio: Portfolio) -> tuple[Ticket, ...]:
     covered = {identifier for ticket in portfolio.tickets for identifier in ticket.requirement_ids}
     if not required or covered != required:
         raise ValueError("Ticket coverage must match approved requirements")
-    emitted: list[Ticket] = []
-    while tickets:
-        done = {ticket.id for ticket in emitted}
-        ready = sorted(
-            (ticket for ticket in tickets.values() if set(ticket.depends_on) <= done),
-            key=lambda ticket: ticket.id,
-        )
-        if not ready:
-            raise ValueError("Cyclic or missing ticket dependency")
-        for ticket in ready:
-            emitted.append(ticket)
-            del tickets[ticket.id]
-    return tuple(emitted)
+    layers = dependency_layers(
+        {ticket.id: ticket.depends_on for ticket in portfolio.tickets},
+        "Cyclic or missing ticket dependency",
+    )
+    return tuple(tickets[identifier] for layer in layers for identifier in sorted(layer))
 
 
 def accepted_requirements(portfolio: Portfolio, runs: tuple[Run, ...]) -> tuple[str, ...]:

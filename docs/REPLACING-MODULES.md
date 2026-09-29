@@ -2,9 +2,9 @@
 
 The application services, coordinator, execution driver, portfolio and diagnostic
 archiver use `sdd_core.ports.StateStore` / `UnitOfWork`. They contain no SQL and do
-not import a concrete storage package. `RuntimeRecords` describes process claims,
-execution requests, bindings and scheduler projections within that same unit of
-work. Both are unions of the role interfaces in `sdd_core.records`; a backend must
+not import a concrete storage package. `UnitOfWork` is the union of the role
+interfaces in `sdd_core.records` (runs, commands, admission, results, execution,
+portfolios, lanes); each consumer names the narrowest role it uses, and a backend must
 raise `StaleVersion` when `apply` loses a compare-and-swap and implement
 `queue_usage()`. The SQLite implementation owns SQL, table initialization and schema
 migrations.
@@ -81,7 +81,7 @@ That does not require editing coordinator or application use cases.
 | Workspace paths and evidence | `Workspace` |
 | Revision model | `ProjectAdapter` |
 | Workflow | Immutable `Workflow` / `Step` definitions |
-| Persistence | `StateStore`, transactional `UnitOfWork` including `RuntimeRecords` |
+| Persistence | `StateStore`, transactional `UnitOfWork` (the roles of `sdd_core.records`) |
 | Application metadata (UI) | `CatalogRecords` (`Store.catalog()`, `MemoryCatalog`) |
 
 An external library is wrapped in a small adapter satisfying the appropriate

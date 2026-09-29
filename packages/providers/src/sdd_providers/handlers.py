@@ -7,12 +7,13 @@ import time
 from pathlib import Path
 
 from sdd_core.codec import canonical, flag, text
-from sdd_core.memory import notes, tickets_of
+from sdd_core.memory import notes
 from sdd_core.models import Artifact, Json, Result
-from sdd_core.options import StepOptions
 from sdd_core.questions import questions
 from sdd_core.sdk import Launch, Manifest, Packet
+from sdd_core.tickets import tickets_of
 
+from sdd_providers import budget
 from sdd_providers.dialects import DIALECTS, SCHEMA_FILE, STDOUT_FILE, Invocation, ReportedError
 from sdd_providers.failures import classify
 
@@ -29,7 +30,7 @@ class CommandHandler:
     manifest = Manifest("command", "0.1.0", capabilities=("process", "check", "operation"))
 
     def prepare(self, packet: Packet) -> Launch:
-        settings = StepOptions.parse(packet.step.config)
+        settings = packet.step.options
         argv = settings.argv
         if (
             not argv
@@ -47,7 +48,7 @@ class CommandHandler:
 
     def collect(self, packet: Packet, exit_code: int, revision: str) -> Result:
         logs = [Path(packet.directory) / name for name in ("stdout.log", "stderr.log")]
-        pattern = StepOptions.parse(packet.step.config).error_pattern
+        pattern = packet.step.options.error_pattern
         failed = exit_code != 0 or bool(
             pattern
             and any(
@@ -120,7 +121,7 @@ TICKETS_SCHEMA: dict[str, Json] = {
 
 def emits_tickets(packet: Packet) -> bool:
     """A planning step opts into ticket output through `{"produces": "tickets"}`."""
-    return StepOptions.parse(packet.step.config).produces == "tickets"
+    return packet.step.options.produces == "tickets"
 
 
 def result_schema(packet: Packet) -> dict[str, Json]:
@@ -217,6 +218,7 @@ class CliHandler:
     def prepare(self, packet: Packet) -> Launch:
         schema = result_schema(packet)
         (Path(packet.directory) / SCHEMA_FILE).write_text(json.dumps(schema), encoding="utf-8")
+        budget.write(packet)
         if packet.resume:
             prompt = (
                 "Continue the same bounded step in this session with the new input below, "

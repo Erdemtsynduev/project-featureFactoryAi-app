@@ -16,7 +16,7 @@ from functools import cache, partial
 from pathlib import Path
 from typing import Any, cast
 
-from sdd_core.codec import object_json, text
+from sdd_core.codec import encode, object_json, text
 from sdd_core.models import Json
 from sdd_core.ports import Conflict
 from sdd_core.questions import questions
@@ -337,10 +337,10 @@ class WorkspaceService:
             "versions": self.versions,
             "trackers": list(self.tracker_kinds),
             "totals": {
-                "calls": sum(r.calls for r in runs),
-                "planning_calls": sum(r.planning_calls for r in runs),
-                "tokens": sum(r.tokens for r in runs),
-                "usage_unknown": any(r.usage_unknown for r in runs),
+                "calls": sum(r.spend.calls for r in runs),
+                "planning_calls": sum(r.spend.planning_calls for r in runs),
+                "tokens": sum(r.spend.tokens for r in runs),
+                "usage_unknown": any(r.spend.usage_unknown for r in runs),
                 "accepted": sum(r.status == "accepted" for r in runs),
             },
             "settings": dict(self.queue.settings),
@@ -356,7 +356,7 @@ class WorkspaceService:
             "profiles": [asdict(item) for item in self.agents.handlers.manifests()],
             "intents": self.flows.readiness(),
             "cooldowns": self.agents.resting(),
-            "active_processes": len(self.queue.coordinator.live),
+            "active_processes": len(self.queue.coordinator.active()),
             "projects": self.catalog.projects(),
             "task_metadata": self.catalog.task_metadata(),
             "plans": self.catalog.plans(),
@@ -375,7 +375,7 @@ class WorkspaceService:
             context = unit.context(identifier)
             results = unit.recent_results(identifier, 10)
         return {
-            "run": asdict(run),
+            "run": encode(run),
             "context": context,
             "workflow": asdict(self.engine.store.workflow(run.workflow_digest)),
             "events": self.engine.store.history(identifier, limit=1000),
@@ -392,7 +392,7 @@ class WorkspaceService:
 
     def live(self, identifier: str) -> dict[str, object]:
         run = self.engine.store.get(identifier)
-        hosted = run.active is not None and run.active.id in self.queue.coordinator.live
+        hosted = run.active is not None and run.active.id in self.queue.coordinator.active()
         return live(self.engine, identifier, hosted)
 
     def incident(self, identifier: str) -> dict[str, object]:

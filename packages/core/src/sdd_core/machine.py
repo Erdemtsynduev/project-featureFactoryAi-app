@@ -1,18 +1,45 @@
-"""Deterministic control plane. The IO boundary supplies observations, never decisions."""
+"""Deterministic control plane. The IO boundary supplies observations, never decisions.
+
+Every rule that changes a run is a pure function `(run, input, now, ids) -> Transition`
+here. Each builds the next state and hands it to `changed`, which checks the state
+against the status table and the attempt invariants before the version advances.
+Why a run is held is the typed `Run.cause`; `Run.reason` is the text people read.
+"""
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import astuple, replace
 
-from sdd_core.codec import canonical, object_json
-from sdd_core.models import Attempt, Effect, Event, Json, Result, Run, Step, Transition, Workflow
-from sdd_core.options import StepOptions
+from sdd_core.models import (
+    RECORD_ID,
+    STATUS_CHANGES,
+    Attempt,
+    Cause,
+    Command,
+    Effect,
+    Event,
+    EventKind,
+    Json,
+    Result,
+    Run,
+    Step,
+    Transition,
+    Workflow,
+)
+from sdd_core.wire import canonical, object_json
 
-# Consecutive infrastructure waits ended in a block; the operator (or a revival
-# policy once limits have reset) retries explicitly.
+# Texts people see for the causes the engine sets itself.
 WAIT_RETRY_LIMIT = "Wait retry limit"
 CALL_LIMIT = "Model call limit"
 STOP_REQUESTED = "Stop requested"
+PLANNING_LIMIT = "Planning call limit: approve scope or create a revised workflow"
+TOKEN_LIMIT = "Token budget exhausted or unknown"
+VISIT_LIMIT = "Step visit limit"
+QUEUE_LIMIT = "Queue call budget exhausted"
+UNCERTAIN = "Process ownership uncertain"
+UNSATISFIED = "Unsatisfied gates"
+WORKSPACE_CHANGED = "Workspace changed outside attempt"
 # Automatic infrastructure retries (lost attempts, provider waits) before a block.
 INFRASTRUCTURE_RETRIES = 3
 # A provider wait never sleeps past a week; a lost attempt backs off up to a minute.
@@ -22,7 +49,7 @@ MAX_BACKOFF_SECONDS = 60
 RECONCILABLE = ("blocked", "waiting")
 RESTARTABLE = ("blocked", "waiting", "ready")
 
-_ATTEMPT_ID = re.compile(r"[A-Za-z0-9_-]{1,96}")
+_ATTEMPT_ID = re.compile(RECORD_ID)
 
 
 def valid_time(now: float) -> None:
@@ -30,14 +57,43 @@ def valid_time(now: float) -> None:
         raise ValueError("Time must be finite")
 
 
-def changed(run: Run, now: float, kind: str, detail: str = "") -> Transition:
-    """Build a transition from an already decided state. Core-internal.
+def _consistent(before: Run, after: Run) -> None:
+    """The status change is in the table; status, attempt and cause agree.
+
+    Running has an attempt; ready, waiting and accepted have none; blocked may keep
+    one whose process ownership is uncertain. A blocked run always says why, and only
+    a blocked run carries a rule's cause; a stop request may mark any unfinished run.
+    """
+    if after.status not in STATUS_CHANGES[before.status]:
+        raise ValueError(f"A {before.status} task cannot become {after.status}")
+    if after.status == "running" and after.active is None:
+        raise ValueError("A running task needs its attempt")
+    if after.status in ("ready", "waiting", "accepted") and after.active is not None:
+        raise ValueError(f"A {after.status} task cannot hold a live attempt")
+    if after.cause not in ("", "stop") and after.status != "blocked":
+        raise ValueError(f"Only a blocked task can be held by {after.cause}")
+    if after.status == "blocked" and not (after.cause and after.reason):
+        raise ValueError("A blocked task needs a cause and a reason")
+
+
+def changed(
+    before: Run,
+    after: Run,
+    now: float,
+    kind: EventKind,
+    detail: str = "",
+    effects: tuple[Effect, ...] = (),
+) -> Transition:
+    """The transition from `before` to an already decided `after`. Core-internal.
 
     Callers outside this module use the named transitions below, so every rule
-    that changes a run lives in the pure state machine.
+    that changes a run lives in the pure state machine. Every decided state passes
+    through here: its invariants are checked and its version advances exactly once.
     """
     valid_time(now)
-    return Transition(replace(run, version=run.version + 1), (Event(kind, now, detail),))
+    _consistent(before, after)
+    state = replace(after, version=before.version + 1)
+    return Transition(state, (Event(kind, now, detail),), effects)
 
 
 def _visits(run: Run, step: str, delta: int) -> tuple[tuple[str, int], ...]:
@@ -47,28 +103,66 @@ def _visits(run: Run, step: str, delta: int) -> tuple[tuple[str, int], ...]:
     return tuple(sorted(visits.items()))
 
 
+def _held_by(run: Run, cause: Cause, reason: str) -> Run:
+    return replace(run, status="blocked", cause=cause, reason=reason)
+
+
+def _released(run: Run) -> Run:
+    """Nothing holds the run any more; its reason text goes with its cause."""
+    return replace(run, cause="", reason="")
+
+
 def block(
-    run: Run, now: float, reason: str, *, event: str = "blocked", detail: str | None = None
+    run: Run,
+    now: float,
+    reason: str,
+    *,
+    cause: Cause = "blocked",
+    event: EventKind = "blocked",
+    detail: str | None = None,
 ) -> Transition:
     """Stop scheduling a run until an operator retries it."""
     if not reason:
         raise ValueError("Blocker needs a reason")
+    if cause in ("", "stop"):
+        raise ValueError("A block needs a rule's cause")
     return changed(
-        replace(run, status="blocked", reason=reason),
-        now,
-        event,
-        reason if detail is None else detail,
+        run, _held_by(run, cause, reason), now, event, reason if detail is None else detail
     )
 
 
-def _limit(run: Run, now: float, reason: str) -> Transition:
+def limit(run: Run, now: float, cause: Cause, reason: str) -> Transition:
     """A budget or visit bound stopped the run before it could start its step."""
-    return block(run, now, reason, event="limit", detail="")
+    return block(run, now, reason, cause=cause, event="limit", detail="")
 
 
 def stop_requested(run: Run) -> bool:
     """The operator asked the live attempt to end; the host is settled, not waited on."""
-    return run.paused and run.reason == STOP_REQUESTED
+    return run.paused and run.cause == "stop"
+
+
+def legacy_cause(run: Run) -> Cause:
+    """The cause of a run stored before causes existed, read from its reason text."""
+    if run.reason == STOP_REQUESTED:
+        return "stop"
+    if run.status != "blocked":
+        return ""
+    exact: dict[str, Cause] = {
+        CALL_LIMIT: "call_limit",
+        PLANNING_LIMIT: "planning_limit",
+        TOKEN_LIMIT: "token_limit",
+        VISIT_LIMIT: "visit_limit",
+        QUEUE_LIMIT: "queue_limit",
+        WAIT_RETRY_LIMIT: "wait_limit",
+        WORKSPACE_CHANGED: "workspace_changed",
+    }
+    if run.reason in exact:
+        return exact[run.reason]
+    if run.reason.startswith(UNCERTAIN):
+        return "uncertain"
+    if run.reason.startswith(UNSATISFIED):
+        return "acceptance"
+    return "blocked"
 
 
 def reconcilable(run: Run) -> bool:
@@ -83,30 +177,22 @@ def invalidate(run: Run, revision: str, now: float) -> Transition:
     """The workspace changed outside an attempt: old gates no longer hold."""
     if run.active is not None:
         raise ValueError("Cannot invalidate an active attempt")
-    return changed(
-        replace(
-            run,
-            revision=revision,
-            gates=(),
-            status="blocked",
-            reason="Workspace changed outside attempt",
-        ),
-        now,
-        "revision_changed",
-    )
+    state = replace(run, revision=revision, gates=())
+    held = _held_by(state, "workspace_changed", WORKSPACE_CHANGED)
+    return changed(run, held, now, "revision_changed")
 
 
 def relocate(run: Run, revision: str, now: float, workspace: str) -> Transition:
     """The run moved into its isolated working copy; the new revision is not an outside change."""
     if run.active is not None:
         raise ValueError("Cannot move an active attempt")
-    return changed(replace(run, revision=revision, gates=()), now, "lane_opened", workspace)
+    return changed(run, replace(run, revision=revision, gates=()), now, "lane_opened", workspace)
 
 
 def _rerouted(run: Run, target: str, revision: str, reason: str) -> Run:
     """The run parked at `target`, paused, with nothing pending and no gates."""
     return replace(
-        run,
+        _released(run),
         step=target,
         revision=revision,
         status="ready",
@@ -121,11 +207,8 @@ def reconcile(run: Run, target: str, revision: str, now: float) -> Transition:
     """Route an inactive blocked or waiting run to its read-only recovery step, paused."""
     if not reconcilable(run):
         raise ValueError("Recovery requires an inactive blocked or waiting task")
-    return changed(
-        _rerouted(run, target, revision, "Reconciliation requested; resume when ready"),
-        now,
-        "reconciliation_requested",
-    )
+    state = _rerouted(run, target, revision, "Reconciliation requested; resume when ready")
+    return changed(run, state, now, "reconciliation_requested")
 
 
 def restart(run: Run, target: str, revision: str, now: float) -> Transition:
@@ -139,54 +222,73 @@ def restart(run: Run, target: str, revision: str, now: float) -> Transition:
     state = _rerouted(
         run, target, revision, "Nothing was changed yet: restarted from the first working step"
     )
-    return changed(replace(state, infrastructure_failures=0), now, "restarted", target)
+    return changed(run, replace(state, infrastructure_failures=0), now, "restarted", target)
 
 
 def release_condition(run: Run, now: float) -> Transition:
     """Return a condition attempt persisted by an earlier release to pure routing."""
     if run.active is None:
         raise ValueError("No persisted condition attempt")
-    return changed(
-        replace(run, active=None, status="ready", visits=_visits(run, run.active.step, -1)),
-        now,
-        "condition_released",
+    state = replace(
+        _released(run), active=None, status="ready", visits=_visits(run, run.active.step, -1)
     )
+    return changed(run, state, now, "condition_released")
 
 
 def guidance(run: Run, now: float, message: str) -> Transition:
     """Record operator guidance for the next packet; the run state itself is unchanged."""
     if run.status == "accepted":
         raise ValueError("Accepted tasks cannot receive new execution instructions")
-    return changed(
-        run,
-        now,
-        "operator_message",
-        canonical({"text": message, "after_generation": run.generation}),
-    )
+    detail = canonical({"text": message, "after_generation": run.generation})
+    return changed(run, run, now, "operator_message", detail)
 
 
-def control(run: Run, command: str, now: float, call_grant: int = 0) -> Transition:
+def _retry(run: Run, now: float, call_grant: int) -> Transition:
+    if run.status != "blocked" or run.active is not None:
+        raise ValueError("Unsupported command in this state")
+    retried = replace(_released(run), status="ready", wake_at=None)
+    if run.cause == "call_limit" and call_grant > 0:
+        granted = replace(retried, spend=run.spend.grant(call_grant))
+        return changed(run, granted, now, "calls_granted", str(call_grant))
+    return changed(run, retried, now, "retry_requested")
+
+
+def _stop(run: Run, now: float, _: int) -> Transition:
+    if run.status == "accepted":
+        raise ValueError("An accepted task has nothing to stop")
+    state = replace(run, paused=True, cause="stop", reason=STOP_REQUESTED)
+    return changed(run, state, now, "stop_requested")
+
+
+def _resume(run: Run, now: float, _: int) -> Transition:
+    """Resuming withdraws a pending stop request along with its text. A blocked run
+    keeps its cause until it is retried, so it never reads as blocked for no reason."""
+    state = _released(run) if run.cause == "stop" and run.status != "blocked" else run
+    return changed(run, replace(state, paused=False), now, "resumed")
+
+
+def _setting(kind: EventKind, **changes: bool) -> Callable[[Run, float, int], Transition]:
+    return lambda run, now, _: changed(run, replace(run, **changes), now, kind)  # type: ignore[arg-type]
+
+
+# One entry per operator command; a new command is a new row, not a new branch.
+_COMMANDS: dict[str, Callable[[Run, float, int], Transition]] = {
+    "stop": _stop,
+    "pause": _setting("paused", paused=True),
+    "resume": _resume,
+    "auto": _setting("auto_answer_enabled", auto_answer=True),
+    "manual": _setting("auto_answer_disabled", auto_answer=False),
+    "retry": _retry,
+}
+
+
+def control(run: Run, command: Command | str, now: float, call_grant: int = 0) -> Transition:
     """Apply an operator command. A retry of a run stopped by its model call limit
     grants `call_grant` more calls (the caller passes the workflow's budget)."""
-    if command == "stop":
-        return changed(replace(run, paused=True, reason=STOP_REQUESTED), now, "stop_requested")
-    if command == "pause":
-        return changed(replace(run, paused=True), now, "paused")
-    if command == "resume":
-        return changed(replace(run, paused=False), now, "resumed")
-    if command in ("auto", "manual"):
-        return changed(
-            replace(run, auto_answer=command == "auto"),
-            now,
-            "auto_answer_enabled" if command == "auto" else "auto_answer_disabled",
-        )
-    if command == "retry" and run.status == "blocked" and run.active is None:
-        retried = replace(run, status="ready", reason="", wake_at=None)
-        if run.reason == CALL_LIMIT and call_grant > 0:
-            granted = replace(retried, granted_calls=run.granted_calls + call_grant)
-            return changed(granted, now, "calls_granted", str(call_grant))
-        return changed(retried, now, "retry_requested")
-    raise ValueError("Unsupported command in this state")
+    apply = _COMMANDS.get(command)
+    if apply is None:
+        raise ValueError("Unsupported command in this state")
+    return apply(run, now, call_grant)
 
 
 def evaluate(step: Step, facts: str) -> str:
@@ -224,7 +326,7 @@ def discardable(run: Run) -> bool:
         run.status != "accepted"
         and run.generation == 0
         and run.active is None
-        and run.calls == 0
+        and run.spend.calls == 0
         and not run.completed
     )
 
@@ -255,45 +357,51 @@ def unsatisfied(run: Run, workflow: Workflow) -> list[str]:
 def _finish(run: Run, workflow: Workflow, now: float) -> Transition:
     gaps = unsatisfied(run, workflow)
     if gaps:
-        return block(run, now, f"Unsatisfied gates: {gaps}", event="acceptance_rejected", detail="")
-    return changed(
-        replace(run, status="accepted", wake_at=None, reason=""), now, "accepted", run.revision
-    )
+        return block(
+            run,
+            now,
+            f"{UNSATISFIED}: {gaps}",
+            cause="acceptance",
+            event="acceptance_rejected",
+            detail="",
+        )
+    state = replace(_released(run), status="accepted", wake_at=None)
+    return changed(run, state, now, "accepted", run.revision)
 
 
 def _route(run: Run, step: Step, now: float, facts: str) -> Transition:
     """A condition decides the next step inside dispatch, with no attempt or effect."""
     outcome = evaluate(step, facts)
-    return changed(
-        replace(
-            run,
-            status="ready",
-            step=dict(step.transitions)[outcome],
-            visits=_visits(run, step.id, 1),
-            completed=tuple(sorted({*run.completed, step.id})),
-            wake_at=None,
-            reason="",
-        ),
-        now,
-        "condition_evaluated",
-        outcome,
+    state = replace(
+        _released(run),
+        status="ready",
+        step=dict(step.transitions)[outcome],  # validation guarantees both branches
+        visits=_visits(run, step.id, 1),
+        completed=tuple(sorted({*run.completed, step.id})),
+        wake_at=None,
     )
+    return changed(run, state, now, "condition_evaluated", outcome)
 
 
-def _over_budget(run: Run, workflow: Workflow, step: Step, planning: bool) -> str | None:
+def _over_budget(
+    run: Run, workflow: Workflow, step: Step, planning: bool
+) -> tuple[Cause, str] | None:
     """Why the run's own budgets forbid another model call, if they do."""
+    spend = run.spend
     if (
         planning
         and workflow.max_planning_calls is not None
-        and run.planning_calls >= workflow.max_planning_calls
+        and spend.planning_calls >= workflow.max_planning_calls
     ):
-        return "Planning call limit: approve scope or create a revised workflow"
+        return "planning_limit", PLANNING_LIMIT
     if step.kind != "agent":
         return None
-    if run.calls >= workflow.max_calls + run.granted_calls:
-        return CALL_LIMIT
-    if workflow.max_tokens is not None and (run.usage_unknown or run.tokens >= workflow.max_tokens):
-        return "Token budget exhausted or unknown"
+    if spend.calls >= workflow.max_calls + spend.granted_calls:
+        return "call_limit", CALL_LIMIT
+    if workflow.max_tokens is not None and (
+        spend.usage_unknown or spend.tokens >= workflow.max_tokens
+    ):
+        return "token_limit", TOKEN_LIMIT
     return None
 
 
@@ -312,13 +420,13 @@ def dispatch(
     if step.kind == "finish":
         return _finish(run, workflow, now)
     if dict(run.visits).get(step.id, 0) >= step.max_visits:
-        return _limit(run, now, "Step visit limit")
+        return limit(run, now, "visit_limit", VISIT_LIMIT)
     if step.kind == "condition":
         return _route(run, step, now, facts)
-    planning = step.kind == "agent" and StepOptions.parse(step.config).planning
+    planning = step.kind == "agent" and step.options.planning
     exceeded = _over_budget(run, workflow, step, planning)
     if exceeded is not None:
-        return _limit(run, now, exceeded)
+        return limit(run, now, *exceeded)
     attempt = Attempt(
         attempt_id,
         step.id,
@@ -329,24 +437,20 @@ def dispatch(
         run.previous_attempt,
     )
     state = replace(
-        run,
+        _released(run),
         status="running",
         active=attempt,
         generation=attempt.generation,
         visits=_visits(run, step.id, 1),
         wake_at=None,
-        reason="",
-        calls=run.calls + int(step.kind == "agent"),
-        planning_calls=run.planning_calls + int(planning),
+        spend=run.spend.reserve(step.kind == "agent", planning),
         gates=() if step.mutates else run.gates,
-        version=run.version + 1,
     )
-    return Transition(
-        state, (Event("dispatched", now, attempt_id),), (Effect(attempt_id, step.kind, attempt),)
-    )
+    effect = Effect(attempt_id, step.kind, attempt)
+    return changed(run, state, now, "dispatched", attempt_id, (effect,))
 
 
-def _wait(state: Run, step: Step, result: Result, now: float) -> Transition:
+def _wait(run: Run, state: Run, step: Step, result: Result, now: float) -> Transition:
     """An infrastructure wait: it consumes no product visit, only the retry budget."""
     if (
         not result.reason
@@ -357,13 +461,12 @@ def _wait(state: Run, step: Step, result: Result, now: float) -> Transition:
     failures = state.infrastructure_failures + 1
     state = replace(state, visits=_visits(state, step.id, -1), infrastructure_failures=failures)
     if failures > INFRASTRUCTURE_RETRIES:
-        return block(state, now, WAIT_RETRY_LIMIT, event="waiting_exhausted", detail=result.reason)
-    return changed(
-        replace(state, status="waiting", wake_at=result.resume_at, reason=result.reason),
-        now,
-        "waiting",
-        result.reason,
+        held = _held_by(state, "wait_limit", WAIT_RETRY_LIMIT)
+        return changed(run, held, now, "waiting_exhausted", result.reason)
+    waiting = replace(
+        _released(state), status="waiting", wake_at=result.resume_at, reason=result.reason
     )
+    return changed(run, waiting, now, "waiting", result.reason)
 
 
 def _passed_gate(step: Step, result: Result) -> None:
@@ -390,21 +493,22 @@ def complete(run: Run, workflow: Workflow, result: Result, now: float) -> Transi
         raise ValueError("Read-only step changed the revision")
     if any(v is not None and v < 0 for v in astuple(result.usage)):
         raise ValueError("Negative usage")
-    usage = result.usage
     state = replace(
         run,
         active=None,
         previous_attempt=attempt.id,
         revision=result.revision,
-        tokens=run.tokens + (usage.input_tokens or 0) + (usage.output_tokens or 0),
-        usage_unknown=run.usage_unknown
-        or (step.kind == "agent" and (usage.input_tokens is None or usage.output_tokens is None)),
+        spend=run.spend.measure(result.usage, step.kind == "agent"),
     )
     if result.outcome == "waiting":
-        return _wait(state, step, result, now)
+        return _wait(run, state, step, result, now)
     if result.outcome == "blocked":
-        return block(state, now, result.reason)
-    target = dict(step.transitions).get(result.outcome)
+        if not result.reason:
+            raise ValueError("Blocker needs a reason")
+        return changed(
+            run, _held_by(state, "blocked", result.reason), now, "blocked", result.reason
+        )
+    target = step.target(result.outcome)
     if target is None:
         raise ValueError("Outcome is not declared")
     gates = dict(state.gates)
@@ -416,20 +520,15 @@ def complete(run: Run, workflow: Workflow, result: Result, now: float) -> Transi
             gates[step.id] = result.revision
     if not step.gate or result.outcome == "passed":
         completed.add(step.id)
-    return changed(
-        replace(
-            state,
-            status="ready",
-            step=target,
-            gates=tuple(sorted(gates.items())),
-            completed=tuple(sorted(completed)),
-            infrastructure_failures=0,
-            reason="",
-        ),
-        now,
-        "result_applied",
-        result.outcome,
+    applied = replace(
+        _released(state),
+        status="ready",
+        step=target,
+        gates=tuple(sorted(gates.items())),
+        completed=tuple(sorted(completed)),
+        infrastructure_failures=0,
     )
+    return changed(run, applied, now, "result_applied", result.outcome)
 
 
 def recover(
@@ -447,23 +546,75 @@ def recover(
         raise ValueError("No active attempt")
     if not termination_confirmed:
         return block(
-            run, now, "Process ownership uncertain: " + reason, event="uncertain", detail=""
+            run, now, f"{UNCERTAIN}: {reason}", cause="uncertain", event="uncertain", detail=""
         )
     count = run.infrastructure_failures + 1
     state = replace(
         run,
         active=None,
         previous_attempt=run.active.id,
-        usage_unknown=run.usage_unknown or run.calls > 0,
+        spend=replace(run.spend, usage_unknown=run.spend.usage_unknown or run.spend.calls > 0),
         revision=observed_revision,
         gates=() if observed_revision != run.revision else run.gates,
         infrastructure_failures=count,
         visits=_visits(run, run.step, -1),
-        reason=reason,
     )
     if count > max_retries:
-        return changed(replace(state, status="blocked"), now, "recovery_exhausted", reason)
-    waiting = replace(state, status="waiting", wake_at=now + min(MAX_BACKOFF_SECONDS, 2**count))
+        return changed(
+            run, _held_by(state, "recovery_limit", reason), now, "recovery_exhausted", reason
+        )
+    waiting = replace(
+        _released(state),
+        status="waiting",
+        wake_at=now + min(MAX_BACKOFF_SECONDS, 2**count),
+        reason=reason,
+    )
     if recovery_step is not None:
         waiting = replace(waiting, step=recovery_step, gates=())
-    return changed(waiting, now, "recovery_scheduled", reason)
+    return changed(run, waiting, now, "recovery_scheduled", reason)
+
+
+def recovery_target(workflow: Workflow, step: str) -> str | None:
+    """The read-only step that `step` declares for reconciliation, if it declares one."""
+    target = workflow.step(step).options.recovery_step
+    if not target:
+        return None
+    # `graph.validate` already refuses this; a stored workflow is checked again.
+    if workflow.step(target).mutates:
+        raise ValueError("Recovery requires a read-only step")
+    return target
+
+
+def recovery_route(run: Run, workflow: Workflow, confirmed: bool, revision: str) -> str | None:
+    """Where a lost attempt resumes: its step's recovery step when the attempt is known
+    to have ended after changing the workspace; otherwise (None) the same step reruns."""
+    touched = run.active is not None and revision != run.active.base_revision
+    return recovery_target(workflow, run.step) if confirmed and touched else None
+
+
+def first_untouched(
+    workflow: Workflow,
+    attempts: tuple[tuple[str, str], ...],
+    results: tuple[tuple[str, str], ...],
+    observed: str,
+) -> str | None:
+    """The first mutating step, when no mutating attempt has changed the workspace.
+
+    True when no mutating step has a processed result and the workspace is at the
+    revision every mutating attempt started from; else None (reconcile instead).
+    `attempts` are (step, base revision) pairs; `results` are (step, document) pairs.
+    """
+    mutating = {step.id for step in workflow.steps if step.mutates}
+    first = next((step.id for step in workflow.steps if step.mutates), None)
+    if first is None or any(step in mutating for step, _ in results):
+        return None
+    if any(step in mutating and base != observed for step, base in attempts):
+        return None
+    return first
+
+
+def human_result(run: Run, outcome: str, text: str, data: str) -> Result:
+    """An answer to the run's waiting human step, bound to its attempt and revision."""
+    if run.active is None:
+        raise ValueError("Not waiting for a human")
+    return Result(run.active.id, run.active.generation, outcome, text, run.revision, data=data)
