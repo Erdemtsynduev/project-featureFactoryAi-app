@@ -101,24 +101,18 @@ def start_contained(
     job allows silent breakaway, that child and everything it starts stay outside
     the job and outlive a confirmed stop.
     """
-    if sys.platform != "win32":
-        process = subprocess.Popen(argv, start_new_session=True, **options)
-        try:
-            for job in jobs:
-                job.assign(process.pid)
-        except BaseException:
-            process.kill()
-            process.wait(timeout=5)
-            raise
-        return process
-    from sdd_runtime.windows import CREATE_SUSPENDED, resume
+    if sys.platform == "win32":
+        from sdd_runtime.windows import CREATE_SUSPENDED, resume
 
-    flags = options.pop("creationflags", NO_WINDOW) | CREATE_SUSPENDED
-    process = subprocess.Popen(argv, creationflags=flags, **options)
+        flags = options.pop("creationflags", NO_WINDOW) | CREATE_SUSPENDED
+        process = subprocess.Popen(argv, creationflags=flags, **options)
+    else:
+        process = subprocess.Popen(argv, start_new_session=True, **options)
     try:
         for job in jobs:
             job.assign(process.pid)
-        resume(process.pid)
+        if sys.platform == "win32":
+            resume(process.pid)
     except BaseException:
         process.kill()
         process.wait(timeout=5)
