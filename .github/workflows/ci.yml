@@ -4,6 +4,8 @@ jobs:
   contracts:
     runs-on: '${{ matrix.os }}'
     strategy:
+      # Every platform reports its own result; one failure never hides the others.
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
         python: ['3.12', '3.14']

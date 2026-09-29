@@ -5,6 +5,7 @@ import socket
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
@@ -27,14 +28,25 @@ def info(port: int, **query: str) -> dict[str, object]:
         return dict(json.load(response))
 
 
-def wait_for(port: int, seconds: float = 30) -> dict[str, object]:
+def wait_for(
+    port: int,
+    seconds: float = 30,
+    process: subprocess.Popen[bytes] | None = None,
+    log: Path | None = None,
+) -> dict[str, object]:
+    """The server's info once it answers; a server process that exits fails at once."""
     deadline = time.time() + seconds
     while True:
         try:
             return info(port)
-        except OSError:
+        except OSError as error:
+            output = log.read_text(encoding="utf-8", errors="replace") if log else ""
+            if process is not None and process.poll() is not None:
+                raise AssertionError(
+                    f"Server exited with {process.returncode}:\n{output}"
+                ) from error
             if time.time() > deadline:
-                raise
+                raise AssertionError(f"Server did not answer in {seconds}s:\n{output}") from error
             time.sleep(0.2)
 
 
@@ -84,9 +96,14 @@ def test_restart_relaunches_the_same_server_and_keeps_the_queue_state(tmp_path, 
     assert (tmp_path / "ui.ui.json.adopted").is_file()
 
     # The relaunch command really starts the server again, on the same port.
-    process = REAL_POPEN(spawned[0])
+    # A fresh interpreter imports the whole application: slow CI runners need time.
+    log = tmp_path / "relaunch.log"
+    with log.open("wb") as output:
+        process = REAL_POPEN(
+            spawned[0], stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT
+        )
     try:
-        second = wait_for(port)
+        second = wait_for(port, 90, process, log)
         assert second["database"] == str(database.resolve())
         assert second["started"] != first["started"]
         assert state(port)["settings"]["running"] is True  # a restart is not a pause
