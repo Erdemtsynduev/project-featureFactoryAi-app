@@ -503,6 +503,20 @@ def _refused(result: Result) -> bool:
     return failure in REFUSALS and not (usage.input_tokens or usage.output_tokens)
 
 
+def _blocked(run: Run, state: Run, step: Step, result: Result, now: float) -> Transition:
+    """The step's own handler says it cannot go on; the reason is shown as given."""
+    if not result.reason:
+        raise ValueError("Blocker needs a reason")
+    return changed(run, _held_by(state, "blocked", result.reason), now, "blocked", result.reason)
+
+
+# Outcomes every step may return besides its declared transitions.
+_RESERVED_OUTCOMES: dict[str, Callable[[Run, Run, Step, Result, float], Transition]] = {
+    "waiting": _wait,
+    "blocked": _blocked,
+}
+
+
 def complete(run: Run, workflow: Workflow, result: Result, now: float) -> Transition:
     valid_time(now)
     attempt = run.active
@@ -528,14 +542,9 @@ def complete(run: Run, workflow: Workflow, result: Result, now: float) -> Transi
         revision=result.revision,
         spend=spend.release(attempt) if refused else spend,
     )
-    if result.outcome == "waiting":
-        return _wait(run, state, step, result, now)
-    if result.outcome == "blocked":
-        if not result.reason:
-            raise ValueError("Blocker needs a reason")
-        return changed(
-            run, _held_by(state, "blocked", result.reason), now, "blocked", result.reason
-        )
+    reserved = _RESERVED_OUTCOMES.get(result.outcome)
+    if reserved is not None:
+        return reserved(run, state, step, result, now)
     target = step.target(result.outcome)
     if target is None:
         raise ValueError("Outcome is not declared")

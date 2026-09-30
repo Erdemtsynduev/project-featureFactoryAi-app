@@ -301,3 +301,9 @@ def test_a_revision_of_an_earlier_format_is_re_based_not_an_outside_change():
     assert rebased.status == run.status, "nothing is held"
     with pytest.raises(ValueError, match="earlier format"):
         machine.rebase_revision(rebased, revisions.named("def"), 3)
+
+
+def test_every_reserved_outcome_has_one_rule():
+    from sdd_core.models import RESERVED_OUTCOMES
+
+    assert set(machine._RESERVED_OUTCOMES) == set(RESERVED_OUTCOMES)
