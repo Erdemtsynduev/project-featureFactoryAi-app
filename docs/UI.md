@@ -153,7 +153,11 @@ current rules (one repository per ticket, chains across repositories): never-sta
 features and tickets leave the board, carrying what they recorded (drafts, requirement,
 acceptance) into the new feature; a feature whose tickets left is closed, its started
 tickets keep running as top-level work and its rows are planned again. With `plan` it
-touches one plan. Nothing edits plan files or starts work.
+touches one plan. Nothing edits plan files or starts work. A feature's brief lists the
+plan's queued tickets with their state and its delivered tickets, so neither is
+planned twice. A started per-row requirement of the earlier import whose row a feature
+now plans is marked superseded by that feature (**Заменено**, in the done column) and
+paused; its recorded work is already in the feature's brief.
 
 The specification and the tickets belong to the factory, not to the project: they are
 recorded results in its database, shown in the feature's drawer under **Документы

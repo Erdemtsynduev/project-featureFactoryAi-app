@@ -917,6 +917,7 @@ export default {
   "tree.collapse": "Свернуть",
   "tree.progress": "Готово {done} из {total} дочерних",
   "attention.delivered": "Поставлено: все тикеты готовы ({detail}).",
+  "attention.superseded": "Заменено: эту работу теперь планирует {detail}.",
   "attention.closed": "Закрыто досрочно: готово {detail}, остальное вынесено в отдельные задачи.",
   "attention.children_need": "Тикеты ждут вас: {detail}.",
   "attention.delivering": "Поставка идёт: готово {detail}.",

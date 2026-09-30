@@ -53,6 +53,7 @@ class TaskRecord:
     link: str = ""  # the item's reference in the project's tracker, once mirrored there
     reviews: str = ""  # the feature whose ticket plan this task reviews
     trigger: str = ""  # why a review runs; one review per trigger (a block, a breakdown)
+    superseded: str = ""  # the feature that plans this per-row requirement's row now
 
     @classmethod
     def load(cls, document: dict[str, Json]) -> "TaskRecord":
@@ -76,6 +77,7 @@ class TaskRecord:
             link=str(document.get("link", "")),
             reviews=str(document.get("reviews", "")),
             trigger=str(document.get("trigger", "")),
+            superseded=str(document.get("superseded", "")),
         )
 
     def document(self) -> dict[str, Json]:

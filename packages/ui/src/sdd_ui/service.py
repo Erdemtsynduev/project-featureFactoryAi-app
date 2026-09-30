@@ -334,6 +334,7 @@ class WorkspaceService:
         profiles = {manifest.id for manifest in self.agents.handlers.manifests()}
         available = cache(self.agents.available)
         running = bool(self.queue.settings["running"]) and not self.queue.error
+        records = self.catalog.tasks()
         own = {
             run.id: attention(
                 run,
@@ -342,11 +343,11 @@ class WorkspaceService:
                 pending=pending.get(run.id, ()),
                 has_profile=profiles.__contains__,
                 available=available,
+                superseded=records[run.id].superseded if run.id in records else "",
             )
             for run in runs
         }
         # Work is a tree: a parent's reason and progress come from its children.
-        records = self.catalog.tasks()
         children: dict[str, list[str]] = {}
         for run in runs:
             parent = records[run.id].parent if run.id in records else ""

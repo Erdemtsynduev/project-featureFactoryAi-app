@@ -113,7 +113,7 @@ class PlanService:
             previous = [key for key, item in features.items() if item.plan == plan.key]
             identifier = f"feature_{plan.key}" + (f"_{len(previous) + 1}" if previous else "")
             flow = flow or self.flows.ensure("feature", project_id, language)
-            queued = self._queued(plan, records, runs)
+            queued, delivered = self._tickets(plan, records, runs)
             recorded = {
                 row.id: carried.get(key) or recorded_work(contexts.get(key, ""))
                 for row in scope
@@ -123,7 +123,7 @@ class PlanService:
                 identifier,
                 flow,
                 workspace,
-                language_rule(language) + feature_brief(plan, scope, queued, recorded),
+                language_rule(language) + feature_brief(plan, scope, queued, recorded, delivered),
                 None,
                 time.time(),
                 (),
@@ -143,6 +143,7 @@ class PlanService:
                 ),
             )
             created.append(identifier)
+        superseded = self._supersede(plans)
         self.catalog.save_plans(
             project_id,
             [
@@ -157,9 +158,14 @@ class PlanService:
             ],
         )
         self.log.record(
-            "plans_synced", project=project_id, plan=only, plans=len(plans), created=len(created)
+            "plans_synced",
+            project=project_id,
+            plan=only,
+            plans=len(plans),
+            created=len(created),
+            superseded=list[Json](superseded),
         )
-        return {"plans": len(plans), "created": created}
+        return {"plans": len(plans), "created": created, "superseded": superseded}
 
     @staticmethod
     def _covered(
@@ -179,15 +185,55 @@ class PlanService:
         return covered
 
     @staticmethod
-    def _queued(plan: WorkItem, records: dict[str, TaskRecord], runs: dict[str, Run]) -> list[str]:
-        return [
-            f"{key} — {item.title} ({runs[key].status})"
+    def _tickets(
+        plan: WorkItem, records: dict[str, TaskRecord], runs: dict[str, Run]
+    ) -> tuple[list[str], list[str]]:
+        """The plan's tickets still queued (with their state), and those delivered."""
+        queued: list[str] = []
+        delivered: list[str] = []
+        for key, item in records.items():
+            if key in runs and item.plan == plan.key and item.kind == "ticket":
+                status = runs[key].status
+                if status == "accepted":
+                    delivered.append(f"{key} — {item.title}")
+                else:
+                    queued.append(f"{key} — {item.title} ({status})")
+        return queued, delivered
+
+    def _supersede(self, plans: list[WorkItem]) -> list[str]:
+        """Per-row requirements of the earlier import whose row a feature now plans:
+        the feature carries their recorded work, so they are marked superseded by it and
+        paused instead of writing a second specification."""
+        records = self.catalog.tasks()
+        with self.engine.store.unit() as unit:
+            runs = {run.id: run for run in unit.runs()}
+        planning = {
+            (item.plan, row): key
             for key, item in records.items()
-            if key in runs
-            and item.plan == plan.key
-            and item.kind == "ticket"
-            and runs[key].status != "accepted"
-        ]
+            if key in runs and item.kind == "feature" and item.rows and not item.closed
+            for row in item.rows
+        }
+        superseded: list[str] = []
+        for plan in plans:
+            for row in plan.rows:
+                key = row_run_id(plan.key, row)
+                feature = planning.get((plan.key, row.id))
+                item, run = records.get(key), runs.get(key)
+                if (
+                    feature is None
+                    or item is None
+                    or run is None
+                    or item.kind != "feature"
+                    or item.rows
+                    or item.superseded
+                    or run.status == "accepted"
+                ):
+                    continue
+                self.catalog.update_task(key, item.changed(superseded=feature))
+                if run.active is None and not run.paused and run.status != "blocked":
+                    self.engine.command(key, "pause", f"{key}:superseded", run.version, time.time())
+                superseded.append(key)
+        return superseded
 
     # Rebuilding the board ----------------------------------------------------------
 
@@ -292,7 +338,11 @@ def recorded_work(context: str) -> str:
 
 
 def feature_brief(
-    plan: WorkItem, scope: list[WorkRow], queued: list[str], recorded: dict[str, str]
+    plan: WorkItem,
+    scope: list[WorkRow],
+    queued: list[str],
+    recorded: dict[str, str],
+    delivered: list[str] | None = None,
 ) -> str:
     if plan.path:
         lines = [
@@ -317,6 +367,9 @@ def feature_brief(
     if queued:
         lines += ["", "Already queued tickets of this plan (do not duplicate them):"]
         lines += [f"- {item[:200]}" for item in queued]
+    if delivered:
+        lines += ["", "Delivered tickets of this plan (done; build on them, do not redo them):"]
+        lines += [f"- {item[:200]}" for item in delivered]
     drafts = {key: value for key, value in recorded.items() if value}
     if drafts:
         lines += ["", "Recorded specification drafts and decisions (reuse, do not weaken):"]

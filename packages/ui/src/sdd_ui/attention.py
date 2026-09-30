@@ -30,14 +30,18 @@ def attention(
     pending: tuple[str, ...],
     has_profile: Callable[[str], bool],
     available: Callable[[str], bool],
+    superseded: str = "",
 ) -> Attention:
-    """`pending` lists dependencies that are not accepted yet."""
+    """`pending` lists dependencies that are not accepted yet; `superseded` names
+    the work that took this run's work over."""
     if run.status == "accepted":
         return Attention("accepted", "done")
     if run.active is not None:
         if step.kind == "human":
             return Attention("answer", "attention", "answer", step.prompt)
         return Attention("working", "working")
+    if superseded:
+        return Attention("superseded", "done", detail=superseded)
     if run.status == "blocked":
         if run.cause == "wait_limit":
             return Attention("limits_exhausted", "blocked", "retry", run.reason)

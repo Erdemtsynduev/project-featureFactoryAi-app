@@ -13,6 +13,10 @@ digest they were created with.
 
 ## Unreleased
 
+- **No duplicate planning after a rebuild.** A feature's brief lists the plan's
+  delivered tickets beside its queued ones. A started per-row requirement of the
+  earlier import whose row a feature now plans is superseded by it: paused, shown as
+  **Superseded** in the done column, its recorded work already in the feature.
 - **Rebuilding the board plans again everything that never started.** Never-started
   features and tickets (imported or approved under earlier rules) are removed, and
   what they recorded carries into the new feature; a feature whose tickets were removed

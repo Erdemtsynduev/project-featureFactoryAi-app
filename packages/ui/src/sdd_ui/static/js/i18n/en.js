@@ -872,6 +872,7 @@ export default {
   "tree.collapse": "Collapse",
   "tree.progress": "{done} of {total} children done",
   "attention.delivered": "Delivered: every ticket is done ({detail}).",
+  "attention.superseded": "Superseded: {detail} plans this work now.",
   "attention.closed": "Closed early: {detail} done, the rest became separate work.",
   "attention.children_need": "Tickets need you: {detail}.",
   "attention.delivering": "Delivering: {detail} done.",

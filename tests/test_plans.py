@@ -3,6 +3,7 @@
 import pytest
 from sdd_core.models import Step, Workflow
 from sdd_factory.model import TaskRecord
+from sdd_factory.plans import feature_brief
 from sdd_factory.sources.markdown import parse_plan
 from sdd_factory.tasks import ticket_scope
 from sdd_ui.service import WorkspaceService
@@ -68,6 +69,7 @@ def test_sync_makes_one_feature_per_plan_and_a_follow_up_for_new_rows(tmp_path, 
         assert service.mutate("plans-sync", {"project": "game"}) == {
             "plans": 1,
             "created": ["feature_110"],
+            "superseded": [],
         }
         meta = service.catalog.task_metadata()["feature_110"]
         assert meta["kind"] == "feature" and meta["rows"] == ["FH-02", "FH-03"]
@@ -202,3 +204,37 @@ def test_a_project_without_a_plans_folder_has_no_plans(tmp_path):
             )
     finally:
         service.coordinator.close()
+
+
+def test_a_started_per_row_requirement_is_superseded_by_the_feature_planning_its_row(
+    tmp_path, monkeypatch
+):
+    service, root, flow = game(tmp_path, monkeypatch)
+    try:
+        engine, catalog = service.engine, service.catalog
+        engine.create(
+            "110_FH-03", flow, root, "Recorded decisions: кабина от первого лица.", "r", 1
+        )
+        catalog.save_task(
+            "110_FH-03", TaskRecord.load({"project": "game", "kind": "requirement", "plan": "110"})
+        )
+        engine.command("110_FH-03", "resume", "go", 0, 2)
+        engine.block("110_FH-03", 4, "Workspace changed outside attempt")
+
+        synced = service.mutate("plans-sync", {"project": "game"})
+        assert synced["created"] == ["feature_110"] and synced["superseded"] == ["110_FH-03"]
+        assert catalog.task("feature_110").rows == ("FH-02", "FH-03")
+        with engine.store.unit() as unit:
+            assert "кабина от первого лица" in unit.context("feature_110"), "its work carries over"
+        assert catalog.task("110_FH-03").superseded == "feature_110"
+        (old,) = [r for r in service.state()["runs"] if r["id"] == "110_FH-03"]
+        assert old["attention"]["code"] == "superseded" and old["lane"] == "done"
+        assert service.mutate("plans-sync", {"project": "game"})["superseded"] == []
+    finally:
+        service.coordinator.close()
+
+
+def test_a_feature_brief_names_delivered_tickets_so_they_are_not_redone():
+    plan = parse_plan("plans/110_RALLY_PLAN.md", PLAN)
+    brief = feature_brief(plan, list(plan.rows[1:]), [], {}, ["110-T50 — Брод"])
+    assert "do not redo them" in brief and "110-T50 — Брод" in brief
