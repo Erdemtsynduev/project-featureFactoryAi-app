@@ -135,6 +135,9 @@ def test_attention_names_the_first_thing_to_fix():
     assert reason(ready, agent, pending=("dep",)).code == "dependencies"
     assert reason(ready, agent, queue_running=False).code == "queue_paused"
     assert reason(ready, agent).code == "queued"
+    held = reason(ready, agent, held=lambda: ("other", "third"))
+    assert (held.code, held.tone, held.detail) == ("paths_held", "waiting", "other, third")
+    assert reason(ready, agent, pending=("dep",), held=lambda: ("other",)).code == "dependencies"
     exhausted = Run(
         "one", "d", "work", "r", status="blocked", reason=WAIT_RETRY_LIMIT, cause="wait_limit"
     )

@@ -205,6 +205,7 @@ export default {
   "attention.paused": "На паузе — нажмите «Запустить».",
   "attention.dependencies": "Ждёт приёмки: {detail}",
   "attention.queue_paused": "Готово к запуску — запустите очередь.",
+  "attention.paths_held": "Ждёт папок, занятых незавершённой работой: {detail}",
   "attention.queued": "В очереди, начнётся при свободном слоте.",
 
   "command.resume": "Запустить",

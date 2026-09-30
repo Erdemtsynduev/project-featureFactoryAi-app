@@ -2,7 +2,7 @@
 
 from sdd_core import machine
 from sdd_core.admission import QueueBudget, Slots
-from sdd_core.models import PROCESS_KINDS, Run
+from sdd_core.models import PROCESS_KINDS, Run, Step
 from sdd_core.ports import Conflict
 from sdd_core.records import AdmissionRecords
 
@@ -15,37 +15,61 @@ class Scheduler:
         self.slots = slots
         self.budget = budget
 
-    def _admitted(self, db: AdmissionRecords, run_id: str, kind: str, claim: str) -> bool:
+    def _admitted(self, db: AdmissionRecords, run_id: str, step: Step, claim: str) -> bool:
         if any(dep.status != "accepted" for dep in db.dependencies(run_id)):
             return False
         active = db.active_claims()
-        if not self.slots.free(kind, (running for running, _ in active)):
+        if not self.slots.free(step.kind, (running for running, _ in active)):
+            return False
+        if self._holders(db, run_id, step, claim):
             return False
         workspace = self.runs.workspace
+        return not any(workspace.overlaps(claim, other) for _, other in active)
+
+    def _holders(
+        self, db: AdmissionRecords, run_id: str, step: Step, claim: str
+    ) -> tuple[str, ...]:
+        """Unfinished runs keeping paths that overlap `claim`, when `step` waits for them."""
+        if not machine.waits_for_holders(step):
+            return ()
+        workspace = self.runs.workspace
+        found = []
         for other, held in db.unfinished_claims(run_id):
             if not workspace.overlaps(claim, held):
                 continue
             # Workflows are prefetched outside the transaction; unknown ones hold.
             flow = self.runs.cached_flow(other.workflow_digest)
             if flow is None or machine.holds_claim(other, flow):
-                return False
-        return not any(workspace.overlaps(claim, other) for _, other in active)
+                found.append(other.id)
+        return tuple(found)
 
-    def admissible(self, run_id: str) -> bool:
-        """Could the run take a slot and its paths now? A cheap check the coordinator
-        makes before any expensive observation (lanes, Git revisions)."""
-        store = self.runs.store
-        with store.unit() as db:
+    def _subject(self, run_id: str) -> tuple[Step, str]:
+        """The run's current step and its claim, with every workflow a claim check
+        reads fetched ahead of its transaction."""
+        with self.runs.store.unit() as db:
             run = db.run(run_id)
             claim = db.location(run_id).claim
             others = db.unfinished_claims(run_id)
         for other, _ in others:
             self.runs.flow(other.workflow_digest)
-        kind = self.runs.flow(run.workflow_digest).step(run.step).kind
-        if kind not in PROCESS_KINDS:  # no process: no slot and no paths
+        return self.runs.flow(run.workflow_digest).step(run.step), claim
+
+    def admissible(self, run_id: str) -> bool:
+        """Could the run take a slot and its paths now? A cheap check the coordinator
+        makes before any expensive observation (lanes, Git revisions)."""
+        step, claim = self._subject(run_id)
+        if step.kind not in PROCESS_KINDS:  # no process: no slot and no paths
             return True
-        with store.unit() as db:
-            return self._admitted(db, run_id, kind, claim)
+        with self.runs.store.unit() as db:
+            return self._admitted(db, run_id, step, claim)
+
+    def holders(self, run_id: str) -> tuple[str, ...]:
+        """The unfinished runs whose paths the run's current step waits for."""
+        step, claim = self._subject(run_id)
+        if step.kind not in PROCESS_KINDS:
+            return ()
+        with self.runs.store.unit() as db:
+            return self._holders(db, run_id, step, claim)
 
     def dispatch(self, run_id: str, now: float, attempt_id: str) -> Run:
         return optimistic(
@@ -80,7 +104,7 @@ class Scheduler:
                 if self.budget.exhausted(*db.queue_usage(), step.options.planning):
                     held = machine.limit(run, now, "queue_limit", machine.QUEUE_LIMIT)
                     return db.apply(run, held)
-            if kind != "condition" and not self._admitted(db, run_id, kind, claim):
+            if kind != "condition" and not self._admitted(db, run_id, step, claim):
                 raise Conflict("Waiting for dependency or resource ownership")
             # CAS against the snapshot: the observations above belong to this version.
             return db.apply(run, transition)

@@ -121,6 +121,14 @@ def test_holds_claim_releases_on_acceptance_and_after_read_only_work():
     assert not machine.holds_claim(ready(visits=(("review", 1),)), workflow)
 
 
+def test_only_a_read_only_agent_does_not_wait_for_held_paths():
+    assert not machine.waits_for_holders(Step("plan", "agent", "a"))
+    assert machine.waits_for_holders(Step("work", "agent", "a", mutates=True))
+    # A check or an operation may write whatever its flag says (caches, a merge).
+    assert machine.waits_for_holders(Step("checks", "check", "command"))
+    assert machine.waits_for_holders(Step("merge", "operation", "lane-integrate"))
+
+
 # Refusals.
 
 

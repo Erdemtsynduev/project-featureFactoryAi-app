@@ -19,12 +19,14 @@ from sdd_storage.memory import MemoryStore
 
 SEEDS = range(40)
 STEPS = 300
-MAX_QUEUE_CALLS = 14
+MAX_QUEUE_CALLS = 18
 FLOW = Workflow(
     "simulated",
     "ask",
     (
-        Step("ask", "human", transitions=(("go", "work"),)),
+        Step("ask", "human", transitions=(("go", "plan"),)),
+        # A read-only agent: it may start beside unfinished work that holds its workspace.
+        Step("plan", "agent", "fake", transitions=(("done", "work"),)),
         Step(
             "work", "agent", "fake", transitions=(("done", "review"),), mutates=True, required=True
         ),
@@ -38,8 +40,15 @@ FLOW = Workflow(
         ),
         Step("finish", "finish"),
     ),
-    max_calls=4,
+    max_calls=5,
 )
+
+
+def keeps_changes(run: Run) -> bool:
+    """Holds its workspace for work that writes: not merely a live read-only agent."""
+    reading = run.active is not None and not machine.waits_for_holders(FLOW.step(run.active.step))
+    wrote = any(step.mutates and step.id in dict(run.visits) for step in FLOW.steps)
+    return machine.holds_claim(run, FLOW) and (wrote or not reading)
 
 
 @dataclass
@@ -265,9 +274,9 @@ class Simulation:
             holders = [
                 run.id
                 for run in runs
-                if self.workspaces[run.id] == workspace and machine.holds_claim(run, FLOW)
+                if self.workspaces[run.id] == workspace and keeps_changes(run)
             ]
-            assert len(holders) <= 1, f"{holders} hold {workspace} at once"
+            assert len(holders) <= 1, f"{holders} keep changes in {workspace} at once"
         assert sum(run.spend.calls for run in runs) <= MAX_QUEUE_CALLS, "queue budget exceeded"
 
     def _check_run(self, run: Run) -> None:

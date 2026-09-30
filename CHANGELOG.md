@@ -13,6 +13,13 @@ digest they were created with.
 
 ## Unreleased
 
+- **Planning and reviews no longer wait behind stopped tickets.** A plan review claimed
+  the whole workspace, so any started, unfinished ticket kept it from ever starting
+  while the board said "queued". A read-only agent step now waits only for a live
+  process on its paths, never for unfinished work that holds them, and a review owns
+  no folder. A task that does wait for folders says so and names the work holding
+  them (`paths_held`).
+
 - **A person's answer reaches the next agent whole.** A rework note was cut to 1,600
   characters like an agent's summary, and the handoff listed the newest line first, so a
   short budget dropped the answer first. A person's answer is never shortened, and the

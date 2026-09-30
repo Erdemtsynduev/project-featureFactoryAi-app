@@ -63,13 +63,14 @@ export function attentionText(run) {
     until: a.until ? formatTime(a.until) : "",
   };
   if (a.code === "waiting" && a.until) params.in = relativeTime(a.until);
-  if (a.code === "dependencies") params.detail = waitingFor(run);
+  if (a.code === "dependencies")
+    params.detail = namesOf(run.pending_dependencies || []);
+  if (a.code === "paths_held") params.detail = namesOf(params.detail.split(", "));
   return t("attention." + (a.code || "queued"), params);
 }
 
 /** "ASM-12 — …, ASM-15 — … и ещё 2": titles instead of raw ids. */
-function waitingFor(run) {
-  const ids = run.pending_dependencies || [];
+function namesOf(ids) {
   const names = ids.slice(0, 2).map((id) => {
     const title = titleOf({ id });
     return title.length > 40 ? title.slice(0, 39) + "…" : title;

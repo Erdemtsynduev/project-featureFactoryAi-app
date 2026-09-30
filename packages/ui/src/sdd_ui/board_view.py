@@ -3,7 +3,7 @@
 It only reads; actions go through `WorkspaceService.mutate`.
 """
 
-from functools import cache
+from functools import cache, partial
 from typing import TYPE_CHECKING
 
 from sdd_core.codec import encode, object_json
@@ -62,6 +62,7 @@ class BoardView:
                 has_profile=profiles.__contains__,
                 available=available,
                 superseded=records[run.id].superseded if run.id in records else "",
+                held=partial(self.engine.holders, run.id),
             )
             for run in runs
         }

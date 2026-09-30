@@ -31,9 +31,11 @@ def attention(
     has_profile: Callable[[str], bool],
     available: Callable[[str], bool],
     superseded: str = "",
+    held: Callable[[], tuple[str, ...]] = tuple,
 ) -> Attention:
     """`pending` lists dependencies that are not accepted yet; `superseded` names
-    the work that took this run's work over."""
+    the work that took this run's work over; `held()` names the unfinished runs
+    holding this run's paths, asked only when nothing else explains the wait."""
     if run.status == "accepted":
         return Attention("accepted", "done")
     if run.active is not None:
@@ -62,6 +64,9 @@ def attention(
         return Attention("dependencies", "waiting", "", ", ".join(pending))
     if not queue_running:
         return Attention("queue_paused", "idle", "queue")
+    holders = held()
+    if holders:
+        return Attention("paths_held", "waiting", "", ", ".join(holders))
     return Attention("queued", "working")
 
 

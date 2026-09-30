@@ -322,6 +322,15 @@ def holds_claim(run: Run, workflow: Workflow) -> bool:
     return running or any(step.mutates and step.id in visited for step in workflow.steps)
 
 
+def waits_for_holders(step: Step) -> bool:
+    """Whether a step waits for unfinished work that holds its paths between attempts.
+
+    A read-only agent changes nothing, so the partial changes another run left cannot
+    collide with its own: like every step it waits only for a live process on its paths.
+    """
+    return step.kind != "agent" or step.mutates
+
+
 def unsatisfied(run: Run, workflow: Workflow) -> list[str]:
     """Required steps not yet completed, then gates not passed on the current revision."""
     gates = dict(run.gates)

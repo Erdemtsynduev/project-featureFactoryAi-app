@@ -178,7 +178,8 @@ that moves by itself: an approved parent is represented by its tickets there and
 Columns follow one server-side derivation (`sdd_ui.attention`) that names the first
 thing blocking each task and the action that resolves it: answer, retry, reconcile,
 connect a profile, resume, start the queue — or why it waits (a limit reset, a
-resting profile, dependencies). **Queue** holds paused and waiting tasks,
+resting profile, dependencies, folders that unfinished work still holds, named by
+title). **Queue** holds paused and waiting tasks,
 **In progress** running and queued ones, **Needs you** answers and blockers,
 **Done** accepted ones. Every card shows kind, plan, title, step and runner, the
 reason line and its one-click action; requirements show ticket progress, tickets

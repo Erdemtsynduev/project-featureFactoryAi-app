@@ -424,8 +424,12 @@ full. `/api/state` carries an ETag; an unchanged board is answered with 304.
 The coordinator only considers runs whose prerequisites are accepted (`runnable`) and
 asks `Engine.admissible` (dependencies, slots, claimed paths) before any expensive
 observation, so a full queue does not run Git for every waiting ticket. Read-only runs
-do not hold their claim between attempts (`machine.holds_claim`), and a run the
-operator paused while it was being dispatched is skipped, not blocked.
+do not hold their claim between attempts (`machine.holds_claim`), and a read-only agent
+step does not wait for unfinished work that holds its paths (`machine.waits_for_holders`):
+it waits only for a live process there, so planning and reviews never queue behind
+stopped tickets. `Engine.holders` names the work a waiting step waits for, and the board
+shows it (`paths_held`). A run the operator paused while it was being dispatched is
+skipped, not blocked.
 
 The browser client is a set of ES modules (`static/js`) with keyed dictionaries for
 Russian and English; it holds no workflow or acceptance logic and renders the server's

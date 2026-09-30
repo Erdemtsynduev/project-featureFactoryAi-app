@@ -29,12 +29,9 @@ from sdd_factory.board import replan
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
-from sdd_factory.model import TaskRecord, language_rule, unfinished
+from sdd_factory.model import PLANNING_SCOPE, TaskRecord, language_rule, unfinished
 from sdd_factory.sources.markdown import MarkdownPlans
 
-# Claim of a planning run whose item lives in a tracker, not in a workspace folder: a
-# path nothing writes, so planning never waits for tickets or blocks them.
-TRACKER_SCOPE = ".sdd-tracker-items"
 BODY_CHARS = 6000
 
 
@@ -109,7 +106,8 @@ class PlanService:
                 None,
                 time.time(),
                 (),
-                (str(Path(plan.path).parent),) if plan.path else (TRACKER_SCOPE,),
+                # A tracker item is no workspace folder: its planning owns none.
+                (str(Path(plan.path).parent),) if plan.path else (PLANNING_SCOPE,),
             )
             self.catalog.save_task(
                 identifier,

@@ -163,6 +163,10 @@ class ApplicationEngine:
     def admissible(self, run_id: str) -> bool:
         return self.scheduler.admissible(run_id)
 
+    def holders(self, run_id: str) -> tuple[str, ...]:
+        """Unfinished runs holding the paths the run waits for; empty when none do."""
+        return self.scheduler.holders(run_id)
+
     def dispatch(self, run_id: str, now: float, attempt_id: str) -> Run:
         return self.scheduler.dispatch(run_id, now, attempt_id)
 

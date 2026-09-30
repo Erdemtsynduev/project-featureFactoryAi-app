@@ -2,11 +2,13 @@
 
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from sdd_core.codec import canonical
 from sdd_core.models import Result, Step, Workflow
 from sdd_core.ports import Conflict
+from sdd_factory.model import PLANNING_SCOPE
 from sdd_ui.service import WorkspaceService
 
 ARGV = [sys.executable, "-c", "pass"]
@@ -212,6 +214,74 @@ def test_a_ticket_its_agent_blocks_asks_for_one_review_with_the_reason(service):
     assert brief.count("No licensed engine recordings") == 1, "the reason appears once"
     assert service.reviews.blocked(service.engine.store.get(api)) is None, "one review per block"
     assert service.reviews.sweep() == []
+
+
+def test_a_read_only_agent_starts_beside_unfinished_work_holding_its_paths(tmp_path, any_store):
+    from sdd_runtime.application import ApplicationEngine
+    from sdd_runtime.git import GitProject
+    from sdd_runtime.workspace import LocalWorkspace
+
+    store = any_store
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    root = tmp_path / "work"
+    root.mkdir()
+    end = Step("end", "finish")
+    done = (("done", "end"),)
+    writing = store.publish(
+        Workflow("write", "work", (Step("work", "agent", "a", transitions=done, mutates=True), end))
+    )
+    reading = store.publish(
+        Workflow("read", "plan", (Step("plan", "agent", "a", transitions=done), end))
+    )
+    for identifier, definition in (("stuck", writing), ("next", writing), ("review", reading)):
+        run = engine.create(identifier, definition, root, "", "rev", 0)
+        engine.command(identifier, "resume", "go-" + identifier, run.version, 1)
+    attempt = engine.dispatch("stuck", 2, "w1")
+    engine.complete("stuck", Result("w1", attempt.generation, "blocked", "no assets", "rev"), 3)
+
+    assert engine.holders("next") == ("stuck",) and not engine.admissible("next")
+    with pytest.raises(Conflict):
+        engine.dispatch("next", 4, "w2")
+    assert engine.holders("review") == () and engine.admissible("review")
+    assert engine.dispatch("review", 5, "r1").active is not None
+    # The live reader is a process on these paths: a writer still waits for it to end.
+    engine.command("stuck", "retry", "again", store.get("stuck").version, 6)
+    assert not engine.admissible("stuck")
+
+
+def test_a_review_owns_no_folder_and_held_work_says_what_it_waits_for(service, monkeypatch):
+    # The ticket's work step changes files, so an unfinished ticket keeps its folder.
+    writing = replace(TICKET, steps=(replace(TICKET.step("work"), mutates=True), TICKET.steps[1]))
+    digest = service.engine.store.publish(writing)
+    ensure = service.flows.ensure
+    monkeypatch.setattr(
+        service.flows,
+        "ensure",
+        lambda name, project, language, repositories=(): (
+            digest if name == "ticket" else ensure(name, project, language)
+        ),
+    )
+    feature, _ = approved_plan(service)
+    first = review_of(service, feature)
+    finish(service, first, "r1", outcome="unchanged", tickets=[], plan_changes=[])
+    service.engine.dispatch(first, 12, "f1")
+    engine = service.engine
+    api, ui = f"{feature}-api", f"{feature}-ui"
+    service.mutate("resume", {"id": api, "version": engine.store.get(api).version})
+    blocked = finish(service, api, "w1", outcome="blocked", reason="No recordings")
+    review = service.reviews.blocked(blocked)
+
+    assert review is not None
+    with engine.store.unit() as db:
+        assert Path(db.location(review).claim).name == PLANNING_SCOPE, "a review owns no folder"
+    # Work that does own the ticket's folder waits for it, and the board says for what.
+    other = engine.create("other", digest, engine.root(api), "", None, 21)
+    engine.command(other.id, "resume", "go-other", other.version, 22)
+    assert engine.holders(other.id) == (api,) and not engine.admissible(other.id)
+    service.mutate("queue", {"running": True})
+    codes = {r["id"]: r["attention"] for r in service.state()["runs"]}
+    assert (codes["other"]["code"], codes["other"]["detail"]) == ("paths_held", api)
+    assert codes[ui]["code"] != "paths_held", "a paused ticket names its pause first"
 
 
 def test_a_review_touching_started_work_is_refused_before_the_answer(service):

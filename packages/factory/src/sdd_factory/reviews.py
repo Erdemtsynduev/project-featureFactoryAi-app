@@ -34,7 +34,7 @@ from sdd_factory.board import review_trigger
 from sdd_factory.catalog import Artifact, ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
-from sdd_factory.model import TaskRecord, language_rule
+from sdd_factory.model import PLANNING_SCOPE, TaskRecord, language_rule
 
 # Room a review brief leaves in its workflow's input budget for guidance and memory.
 REVIEW_MARGIN = 4000
@@ -106,7 +106,10 @@ class PlanReviews:
         brief = snapshot.brief(detail, self.flows.agents(feature.project), budget)
         root = self.engine.root(parent)
         identifier = f"{parent[:80]}-review-{len(reviews) + 1}"
-        run = self.engine.create(identifier, definition, root, rule + brief, None, time.time())
+        # A review only reads: it owns no folder, so tickets holding theirs never stop it.
+        run = self.engine.create(
+            identifier, definition, root, rule + brief, None, time.time(), (), (PLANNING_SCOPE,)
+        )
         self.catalog.save_task(
             run.id,
             TaskRecord(

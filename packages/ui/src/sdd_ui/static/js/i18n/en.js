@@ -197,6 +197,7 @@ export default {
   "attention.paused": "Paused — press Start.",
   "attention.dependencies": "Waiting for acceptance of: {detail}",
   "attention.queue_paused": "Ready — start the queue.",
+  "attention.paths_held": "Waiting for folders held by unfinished work: {detail}",
   "attention.queued": "Queued; starts when a slot is free.",
 
   "command.resume": "Start",

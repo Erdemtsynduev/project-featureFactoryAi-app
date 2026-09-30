@@ -33,6 +33,10 @@ INTENT_KIND: dict[str, Kind] = {"feature": "feature", "main-flow": "task", "tick
 
 LANGUAGES = {"ru": "Russian", "en": "English"}
 
+# Claim of a run that only plans and owns no folder of the workspace (a review, a
+# tracker item): a path nothing writes, so it never waits for tickets or holds them up.
+PLANNING_SCOPE = ".sdd-planning"
+
 
 @dataclass(frozen=True)
 class TaskRecord:

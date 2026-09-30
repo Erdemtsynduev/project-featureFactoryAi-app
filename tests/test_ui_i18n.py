@@ -49,6 +49,7 @@ def test_dynamic_key_families_are_complete():
             "paused",
             "dependencies",
             "queue_paused",
+            "paths_held",
             "queued",
             "delivered",
             "closed",
