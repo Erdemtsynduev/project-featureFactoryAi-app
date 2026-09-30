@@ -148,9 +148,12 @@ already decomposed into tickets are not in scope again; those tickets are listed
 the feature's brief. **Обновить планы из файлов** (`plans-sync`) creates a feature per
 plan that has uncovered open rows, and a follow-up feature `feature_<NNN>_<n>` for rows
 added later (research adds rows). **Пересоздать доску из планов** (`plans-rebuild`)
-backs the database up, removes never-started runs of the earlier per-row import
-(carrying their recorded specification drafts into the features) and syncs. Nothing
-edits plan files or starts work.
+backs the database up and plans again everything that never started, under the
+current rules (one repository per ticket, chains across repositories): never-started
+features and tickets leave the board, carrying what they recorded (drafts, requirement,
+acceptance) into the new feature; a feature whose tickets left is closed, its started
+tickets keep running as top-level work and its rows are planned again. With `plan` it
+touches one plan. Nothing edits plan files or starts work.
 
 The specification and the tickets belong to the factory, not to the project: they are
 recorded results in its database, shown in the feature's drawer under **Документы

@@ -17,6 +17,7 @@ replacement: `TaskRecord.load` reads every earlier spelling (a feature was once
 stored as kind "requirement").
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from typing import Literal
 
@@ -141,3 +142,22 @@ def ticket_places(breakdown: Json) -> dict[str, dict[str, Json]]:
             "hitl": any(need in HELD_NEEDS for need in wanted),
         }
     return places
+
+
+def unfinished(
+    identifier: str, records: Mapping[str, TaskRecord], status: Mapping[str, str]
+) -> list[str]:
+    """Children of `identifier` not delivered yet: a child is delivered when its run is
+    accepted and so is everything below it, unless that part was closed."""
+    below: dict[str, list[str]] = {}
+    for key, item in records.items():
+        below.setdefault(item.parent, []).append(key)
+
+    def finished(key: str, seen: frozenset[str]) -> bool:
+        if status.get(key) != "accepted" or key in seen:
+            return status.get(key) == "accepted"
+        return records[key].closed or all(
+            finished(child, seen | {key}) for child in below.get(key, ())
+        )
+
+    return [key for key in below.get(identifier, ()) if not finished(key, frozenset())]

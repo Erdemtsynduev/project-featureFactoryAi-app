@@ -92,7 +92,7 @@ def test_sync_makes_one_feature_per_plan_and_a_follow_up_for_new_rows(tmp_path, 
         service.coordinator.close()
 
 
-def test_rebuild_replaces_per_row_requirements_and_carries_their_drafts(tmp_path, monkeypatch):
+def test_rebuild_plans_never_started_work_again_and_carries_what_it_recorded(tmp_path, monkeypatch):
     service, root, flow = game(tmp_path, monkeypatch)
     try:
         engine, catalog = service.engine, service.catalog
@@ -107,21 +107,30 @@ def test_rebuild_replaces_per_row_requirements_and_carries_their_drafts(tmp_path
         legacy("110_FH-02", "requirement", "Recorded acceptance draft:\nСтыки не видны с 5 м.")
         legacy("110_FH-03", "requirement")
         legacy("110_FH-09", "requirement")
-        legacy("110_FH-03_1", "ticket", legacy_id="110:FH-03.1", parent="110_FH-03")
+        legacy(
+            "110_FH-03_1",
+            "ticket",
+            "Legacy ticket.\nRequirement: FH-03 — кабина.\nAcceptance (frozen): руль виден.",
+            legacy_id="110:FH-03.1",
+            parent="110_FH-03",
+        )
         engine.command("110_FH-09", "resume", "go", 0, 2)
         engine.dispatch("110_FH-09", 3, "started")  # started work survives
 
         rebuilt = service.mutate("plans-rebuild", {"project": "game"})
-        assert rebuilt["removed"] == 2 and rebuilt["created"] == ["feature_110"]
+        assert rebuilt["removed"] == 3 and rebuilt["created"] == ["feature_110"]
         assert (tmp_path / rebuilt["backup"]).is_file()
         runs = {r["id"] for r in service.state()["runs"]}
-        assert {"110_FH-09", "110_FH-03_1", "feature_110"} <= runs
-        assert not {"110_FH-02", "110_FH-03"} & runs
-        # FH-03 is already decomposed into a queued legacy ticket: only FH-02 is new scope.
-        assert catalog.task_metadata()["feature_110"]["rows"] == ["FH-02"]
+        assert {"110_FH-09", "feature_110"} <= runs
+        assert not {"110_FH-02", "110_FH-03", "110_FH-03_1"} & runs
+        # The imported ticket is planned again; its requirement and acceptance carry over.
+        assert catalog.task_metadata()["feature_110"]["rows"] == ["FH-02", "FH-03"]
         with engine.store.unit() as unit:
             brief = unit.context("feature_110")
-        assert "Стыки не видны с 5 м." in brief and "110_FH-03_1" in brief
+        assert "Стыки не видны с 5 м." in brief and "руль виден" in brief
+        # A never-started feature is itself planned again, under the current plan title.
+        again = service.mutate("plans-rebuild", {"project": "game"})
+        assert again["removed"] == 1 and again["created"] == ["feature_110"]
     finally:
         service.coordinator.close()
 

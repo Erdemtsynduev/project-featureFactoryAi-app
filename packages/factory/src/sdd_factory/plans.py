@@ -9,9 +9,11 @@ The specification and the tickets belong to the factory.
 
 `sync` creates one paused feature `feature_<NNN>` per plan whose open rows are not
 covered yet; rows added to the file later (research adds rows) become a follow-up
-feature `feature_<NNN>_<n>`. `rebuild` backs the database up, removes never-started
-runs of the earlier per-row import and syncs. Nothing here edits plan files or
-starts work.
+feature `feature_<NNN>_<n>`. `rebuild` backs the database up and plans again
+everything that never started: never-started features and tickets are removed, a
+feature whose tickets were removed is closed, and each plan's rows that no kept work
+covers become one fresh feature, planned under the current rules. Nothing here edits
+plan files or starts work.
 """
 
 import re
@@ -27,12 +29,13 @@ from sdd_runtime.engine import Engine
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
-from sdd_factory.model import TaskRecord, language_rule
+from sdd_factory.model import TaskRecord, language_rule, unfinished
 from sdd_factory.sources.markdown import MarkdownPlans, row_run_id
 
 # Sections of a per-row brief that carry recorded work worth keeping in the feature.
 RECORDED = re.compile(
-    r"^(Recorded acceptance draft|Constraints|Verification|Out of scope|Recorded decisions):",
+    r"^(Recorded acceptance draft|Constraints|Verification|Out of scope|Recorded decisions"
+    r"|Requirement):",
     re.M,
 )
 RECORDED_CHARS = 1500
@@ -69,10 +72,13 @@ class PlanService:
 
     def sync(self, doc: dict[str, Json]) -> dict[str, object]:
         """One feature per plan for open rows that no feature or queued ticket covers yet."""
-        return self._sync(doc, {})
+        return self._sync(doc, {}, frozenset())
 
-    def _sync(self, doc: dict[str, Json], carried: dict[str, str]) -> dict[str, object]:
-        """`carried` holds briefs of per-row requirements removed just before."""
+    def _sync(
+        self, doc: dict[str, Json], carried: dict[str, str], reopened: frozenset[str]
+    ) -> dict[str, object]:
+        """`carried` holds recorded work of removed runs by the row run they belong to;
+        the rows of `reopened` features are planned again."""
         project_id, project, workspace = self._project(doc)
         language = str(project.get("language", "ru"))
         only = str(doc.get("plan", ""))
@@ -86,7 +92,7 @@ class PlanService:
         records = self.catalog.tasks()
         with self.engine.store.unit() as unit:
             runs = {run.id: run for run in unit.runs()}
-            contexts = carried | {
+            contexts = {
                 key: unit.context(key)
                 for key, item in records.items()
                 if key in runs and item.kind == "feature" and not item.rows
@@ -99,7 +105,8 @@ class PlanService:
         flow = ""
         created: list[Json] = []
         for plan in plans:
-            covered = self._covered(plan, features, records, runs)
+            covering = {key: item for key, item in features.items() if key not in reopened}
+            covered = self._covered(plan, covering, records, runs)
             scope = [row for row in plan.rows if row.open and row.id not in covered]
             if not scope:
                 continue
@@ -108,7 +115,9 @@ class PlanService:
             flow = flow or self.flows.ensure("feature", project_id, language)
             queued = self._queued(plan, records, runs)
             recorded = {
-                row.id: recorded_work(contexts.get(row_run_id(plan.key, row), "")) for row in scope
+                row.id: carried.get(key) or recorded_work(contexts.get(key, ""))
+                for row in scope
+                if (key := row_run_id(plan.key, row))
             }
             self.engine.create(
                 identifier,
@@ -172,7 +181,7 @@ class PlanService:
     @staticmethod
     def _queued(plan: WorkItem, records: dict[str, TaskRecord], runs: dict[str, Run]) -> list[str]:
         return [
-            f"{key} — {item.title}"
+            f"{key} — {item.title} ({runs[key].status})"
             for key, item in records.items()
             if key in runs
             and item.plan == plan.key
@@ -183,43 +192,87 @@ class PlanService:
     # Rebuilding the board ----------------------------------------------------------
 
     def rebuild(self, doc: dict[str, Json]) -> dict[str, object]:
-        """Back up, drop never-started runs of the per-row import, then create features.
+        """Back up, then plan again all work of the project (or of `plan`) that never started.
 
-        Started runs, legacy tickets with their contracts, features and anything a
-        kept run depends on stay untouched.
+        Never-started features and tickets are removed; what a removed per-row
+        requirement or imported ticket recorded (its requirement, acceptance and
+        decisions) carries over into the new feature. A feature whose tickets were
+        removed is closed: what it delivered stays, its started tickets keep running
+        as top-level work, and its rows are planned again. Started work, tasks, plan
+        reviews and anything a kept run depends on stay untouched.
         """
         project_id, project, workspace = self._project(doc)
-        self.sources(project).items(str(workspace))  # refuse before changing anything
-        records = self.catalog.tasks()
+        only = str(doc.get("plan", ""))
+        # Refuse before changing anything: the plans must read and features must be creatable.
+        self.sources(project).items(str(workspace))
+        self.flows.ensure("feature", project_id, str(project.get("language", "ru")))
         with self.engine.store.unit() as unit:
             runs = {run.id: run for run in unit.runs()}
             edges = unit.dependency_edges()
+        records = {key: item for key, item in self.catalog.tasks().items() if key in runs}
+
+        def planned(item: TaskRecord) -> bool:
+            """A plan's feature, an imported ticket, or a ticket of an open plan feature."""
+            if item.kind == "feature" or item.legacy_id:
+                return True
+            parent = records.get(item.parent)
+            return item.kind == "ticket" and parent is not None and bool(parent.rows)
+
         candidates = {
             key
             for key, item in records.items()
             if item.project == project_id
-            and key in runs
+            and item.plan
+            and (not only or item.plan == only)
+            and planned(item)
+            and not item.reviews
+            and not records.get(item.parent, item).closed
             and machine.discardable(runs[key])
-            # Per-row requirements of the old import; features carry their rows.
-            and item.kind == "feature"
-            and not item.rows
         }
         while True:
             kept_needs = {needed for key, needed in edges if key not in candidates}
             if not candidates & kept_needs:
                 break
             candidates -= kept_needs
-        path = self.engine.store.path
-        backup = path.with_name(f"{path.stem}.before-plan-rebuild-{int(time.time())}.db")
-        self.engine.store.backup(backup)
-        # Recorded drafts of removed per-row requirements carry over into the features.
-        with self.engine.store.unit() as unit:
-            carried = {key: unit.context(key) for key in candidates}
-        removed = self.engine.store.discard(tuple(sorted(candidates)))
-        self.log.record(
-            "board_rebuilt", project=project_id, removed=len(removed), backup=str(backup)
+        reopened = frozenset(
+            item.parent
+            for key, item in records.items()
+            if key in candidates
+            and item.kind == "ticket"
+            and not item.legacy_id
+            and item.parent not in candidates
         )
-        return {"removed": len(removed), "backup": str(backup), **self._sync(doc, carried)}
+        path = self.engine.store.path
+        backup = path.with_name(f"{path.stem}.before-plan-rebuild-{time.time_ns()}.db")
+        self.engine.store.backup(backup)
+        carried: dict[str, str] = {}
+        with self.engine.store.unit() as unit:
+            for key in sorted(candidates):
+                item = records[key]
+                # Imported tickets belong to their row's requirement; features to themselves.
+                owner = item.parent if item.legacy_id else key
+                if item.legacy_id or not item.rows:
+                    work = recorded_work(unit.context(key))
+                    carried[owner] = "\n\n".join(filter(None, (carried.get(owner, ""), work)))
+        removed = self.engine.store.discard(tuple(sorted(candidates)))
+        status = {key: run.status for key, run in runs.items() if key not in candidates}
+        kept = {key: item for key, item in records.items() if key not in candidates}
+        for feature in sorted(reopened):
+            self.catalog.close_task(feature, unfinished(feature, kept, status))
+        self.log.record(
+            "board_rebuilt",
+            project=project_id,
+            plan=only,
+            removed=len(removed),
+            reopened=list[Json](sorted(reopened)),
+            backup=str(backup),
+        )
+        return {
+            "removed": len(removed),
+            "reopened": sorted(reopened),
+            "backup": str(backup),
+            **self._sync(doc, carried, reopened),
+        }
 
 
 # Briefs ----------------------------------------------------------------------------

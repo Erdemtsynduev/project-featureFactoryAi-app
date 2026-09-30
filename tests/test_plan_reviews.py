@@ -361,3 +361,34 @@ def test_a_review_the_busy_plan_postponed_starts_once_the_plan_is_free(service):
     service.engine.dispatch(first, 12, "f1")
     (started,) = service.reviews.sweep()
     assert service.catalog.task(started).trigger == f"blocked:{api}:w1"
+
+
+def test_rebuilding_plans_again_what_never_started_and_keeps_started_work(service, tmp_path):
+    root = tmp_path / "project"
+    (root / "plans").mkdir()
+    (root / "plans" / "110_RALLY_PLAN.md").write_text(
+        "# Rally\n\n- [ ] **FH-02** — Мосты.\n- [ ] **FH-03** — Кабина.\n", encoding="utf-8"
+    )
+    project = {"id": "app", "name": "App", "workspace": str(root), "plans_folder": "plans"}
+    service.mutate("project", project)
+    feature, admitted = approved_plan(service)
+    catalog = service.catalog
+    catalog.update_task(feature, catalog.task(feature).changed(plan="110", rows=("FH-02",)))
+    for key in admitted:
+        catalog.update_task(key, catalog.task(key).changed(plan="110"))
+    api = f"{feature}-api"
+    service.mutate("resume", {"id": api, "version": service.engine.store.get(api).version})
+    service.engine.dispatch(api, 13, "w1")
+
+    rebuilt = service.mutate("plans-rebuild", {"project": "app", "plan": "110"})
+    assert rebuilt["removed"] == len(admitted) - 1 and rebuilt["reopened"] == [feature]
+    assert rebuilt["created"] == ["feature_110"]
+    runs = {r["id"] for r in service.state()["runs"]}
+    assert {feature, api, "feature_110"} <= runs and f"{feature}-ui" not in runs
+    closed, started = catalog.task(feature), catalog.task(api)
+    assert closed.closed and (started.parent, started.origin) == ("", feature)
+    assert catalog.task("feature_110").rows == ("FH-02", "FH-03"), "its rows are planned again"
+    with service.engine.store.unit() as unit:
+        brief = unit.context("feature_110")
+    assert f"{api} — Engine core (running)" in brief, "started work is not duplicated"
+    assert service.mutate("plans-sync", {"project": "app"})["created"] == []

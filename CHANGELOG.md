@@ -13,6 +13,11 @@ digest they were created with.
 
 ## Unreleased
 
+- **Rebuilding the board plans again everything that never started.** Never-started
+  features and tickets (imported or approved under earlier rules) are removed, and
+  what they recorded carries into the new feature; a feature whose tickets were removed
+  is closed and its rows are planned again, while started tickets keep running.
+  `plans-rebuild` takes an optional `plan`. Backups no longer collide within a second.
 - **Plan 110 incident: tickets no longer block on upgrades, and work across
   repositories converges.**
   - Handlers are pinned per attempt. An agent CLI update, engine upgrade or profile

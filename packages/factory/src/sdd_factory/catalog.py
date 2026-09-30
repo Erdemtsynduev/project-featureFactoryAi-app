@@ -159,6 +159,15 @@ class ProjectCatalog:
         """Correct a task's record (title, plan, parent) after creation."""
         self.records.update_task(identifier, canonical(record.document()))
 
+    def close_task(self, identifier: str, detached: list[str]) -> list[str]:
+        """Close work early: it counts as delivered with what is done, and each of its
+        `detached` children becomes top-level work that remembers where it came from."""
+        records = self.tasks()
+        for key in detached:
+            self.update_task(key, records[key].changed(parent="", origin=identifier))
+        self.update_task(identifier, records[identifier].changed(closed=True))
+        return detached
+
     # Artifacts -----------------------------------------------------------------
 
     def save_artifact(self, artifact: Artifact) -> None:

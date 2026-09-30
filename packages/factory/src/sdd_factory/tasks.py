@@ -34,6 +34,7 @@ from sdd_factory.model import (
     TaskRecord,
     language_rule,
     ticket_places,
+    unfinished,
 )
 
 # Input a ticket's brief leaves free for task memory, handoffs and operator guidance.
@@ -201,22 +202,7 @@ class TaskService:
             raise ValueError("Only work with tickets can be closed")
         with self.engine.store.unit() as db:
             status = {run.id: run.status for run in db.runs()}
-        below: dict[str, list[str]] = {}
-        for key, item in records.items():
-            below.setdefault(item.parent, []).append(key)
-
-        def finished(key: str, seen: frozenset[str]) -> bool:
-            """Accepted, and so is everything below it unless it was closed."""
-            if status.get(key) != "accepted" or key in seen:
-                return status.get(key) == "accepted"
-            return records[key].closed or all(
-                finished(child, seen | {key}) for child in below.get(key, ())
-            )
-
-        detached = [key for key in children if not finished(key, frozenset())]
-        for key in detached:
-            self.catalog.update_task(key, records[key].changed(parent="", origin=identifier))
-        self.catalog.update_task(identifier, records[identifier].changed(closed=True))
+        detached = self.catalog.close_task(identifier, unfinished(identifier, records, status))
         self.log.record("work_closed", run=identifier, detached=list[Json](detached))
         return {"closed": identifier, "detached": list[Json](detached)}
 
