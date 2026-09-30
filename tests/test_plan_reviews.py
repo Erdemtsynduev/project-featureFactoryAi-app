@@ -470,7 +470,7 @@ def test_started_tickets_are_superseded_by_the_feature_that_plans_them_again(ser
     assert engine.store.get(ui).paused and catalog.task(api).superseded == again
     codes = {r["id"]: r["attention"]["code"] for r in service.state()["runs"]}
     assert codes[api] == codes[ui] == "superseded"
-    assert api not in service.tasks.known_tickets(again), "a new ticket cannot wait for it"
+    assert api not in service.admission.known_tickets(again), "a new ticket cannot wait for it"
     assert service.mutate("supersede", {"ids": [api], "by": again})["superseded"] == []
     with pytest.raises(ValueError, match="open feature"):
         service.mutate("supersede", {"ids": [api], "by": api})

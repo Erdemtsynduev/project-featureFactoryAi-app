@@ -32,7 +32,7 @@ from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import TaskRecord, language_rule, unfinished
 from sdd_factory.sources.markdown import MarkdownPlans, row_run_id
-from sdd_factory.tasks import supersede
+from sdd_factory.supersession import supersede_run
 
 # Sections of a per-row brief that carry recorded work worth keeping in the feature.
 RECORDED = re.compile(
@@ -234,7 +234,7 @@ class PlanService:
                     or item.rows
                 ):
                     continue
-                if supersede(self.engine, self.catalog, key, feature):
+                if supersede_run(self.engine, self.catalog, key, feature):
                     superseded.append(key)
         return superseded
 

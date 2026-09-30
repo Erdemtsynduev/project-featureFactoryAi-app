@@ -151,7 +151,7 @@ def test_interrupted_approval_is_finished_on_restart_with_the_whole_specificatio
         def crash(*_args):
             raise RuntimeError("process died while admitting tickets")
 
-        monkeypatch.setattr(service.tasks, "_admit", crash)
+        monkeypatch.setattr(service.admission, "_admit", crash)
         with pytest.raises(RuntimeError):
             service.mutate(
                 "answer", {"id": "big", "outcome": "approved", "version": waiting.version}
@@ -170,7 +170,7 @@ def test_interrupted_approval_is_finished_on_restart_with_the_whole_specificatio
         assert restarted.catalog.artifacts("big")["specification"].content == specification
         readmitted = [e for e in restarted.flight() if e["kind"] == "tickets_readmitted"]
         assert readmitted[-1]["tickets"] == ["big-one", "big-two"]
-        assert restarted.tasks.readmit() == []
+        assert restarted.admission.readmit() == []
     finally:
         restarted.coordinator.close()
 
@@ -276,7 +276,7 @@ def test_bulk_resume_respects_dependencies_and_project(tmp_path):
             service.mutate("project", {"id": name, "name": name, "workspace": str(roots[name])})
         flow = Workflow("empty", "done", (Step("done", "finish"),))
         definition = service.engine.store.publish(flow)
-        create = service.tasks.create
+        create = service.creation.create
         create({"id": "base", "project": "app", "definition": definition})
         create(
             {"id": "child", "project": "app", "definition": definition, "dependencies": ["base"]}

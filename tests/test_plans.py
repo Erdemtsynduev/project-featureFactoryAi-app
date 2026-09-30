@@ -2,10 +2,10 @@
 
 import pytest
 from sdd_core.models import Step, Workflow
+from sdd_factory.admission import ticket_scope
 from sdd_factory.model import TaskRecord
 from sdd_factory.plans import feature_brief
 from sdd_factory.sources.markdown import parse_plan
-from sdd_factory.tasks import ticket_scope
 from sdd_ui.service import WorkspaceService
 
 PLAN = """# Rally: большое обновление

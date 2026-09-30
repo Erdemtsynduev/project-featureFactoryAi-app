@@ -29,11 +29,11 @@ from sdd_core.ports import Conflict
 from sdd_core.tickets import draft_of, ordered, waits_for_known
 from sdd_runtime.engine import Engine
 
+from sdd_factory.admission import TicketAdmission, ticket_scope
 from sdd_factory.catalog import Artifact, ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import TaskRecord, language_rule
-from sdd_factory.tasks import TaskService, ticket_scope
 
 # Room a review brief leaves in its workflow's input budget for guidance and memory.
 REVIEW_MARGIN = 4000
@@ -49,18 +49,18 @@ class PlanReviews:
         engine: Engine,
         catalog: ProjectCatalog,
         flows: FlowLibrary,
-        tasks: TaskService,
+        admission: TicketAdmission,
         log: FlightLog,
     ) -> None:
         self.engine, self.catalog, self.flows = engine, catalog, flows
-        self.tasks, self.log = tasks, log
+        self.admission, self.log = admission, log
 
     # Reading the plan -------------------------------------------------------------
 
     def snapshot(self, parent: str) -> tuple[PlanSnapshot, dict[str, str]]:
         """The approved plan of `parent` with each ticket's state, and ticket -> run ids."""
-        drafts = ordered(draft_of(item) for item in self.tasks.breakdown(parent))
-        runs = self.tasks.ticket_runs(parent, drafts)
+        drafts = ordered(draft_of(item) for item in self.admission.breakdown(parent))
+        runs = self.admission.ticket_runs(parent, drafts)
         states: dict[str, TicketState] = {}
         for draft in drafts:
             try:
@@ -77,7 +77,7 @@ class PlanReviews:
                 run.step,
                 tuple(s.id + "*" * s.required for s in flow.steps if s.kind != "finish"),
             )
-        return PlanSnapshot(drafts, states, self.tasks.specification(parent)), runs
+        return PlanSnapshot(drafts, states, self.admission.documents.specification(parent)), runs
 
     def reviews_of(self, parent: str) -> dict[str, TaskRecord]:
         return {key: item for key, item in self.catalog.tasks().items() if item.reviews == parent}
@@ -119,7 +119,7 @@ class PlanReviews:
                 trigger=trigger,
             ),
         )
-        self.tasks.bind(run.id)
+        self.admission.bind(run.id)
         resume = digest(f"{identifier}:resume")[:64]
         self.engine.command(run.id, "resume", resume, run.version, time.time())
         self.log.record("plan_review_requested", run=run.id, plan=parent, trigger=trigger)
@@ -169,7 +169,7 @@ class PlanReviews:
         approved = text(doc.get("outcome"), "outcome") == "approved"
         if item.reviews and approved:
             self.revision(run_id)  # refused here, while the review still awaits the answer
-        answered = self.tasks.answer(doc)
+        answered = self.admission.answer(doc)
         if item.reviews and approved:
             self.apply(run_id)
         elif approved and answered.get("admitted"):
@@ -187,8 +187,8 @@ class PlanReviews:
         parent = self.catalog.task(review).reviews
         snapshot, _ = self.snapshot(parent)
         changes = plan_changes_of(self._changes_data(review))
-        revision = revise(snapshot, changes, self.tasks.scope_of(parent))
-        waits_for_known(revision.create + revision.update, self.tasks.known_tickets(parent))
+        revision = revise(snapshot, changes, self.admission.scope_of(parent))
+        waits_for_known(revision.create + revision.update, self.admission.known_tickets(parent))
         return revision
 
     def _changes_data(self, review: str) -> str:
@@ -207,14 +207,14 @@ class PlanReviews:
         parent = self.catalog.task(review).reviews
         revision = self.revision(review)
         _, runs = self.snapshot(parent)
-        ids = {**runs, **self.tasks.ticket_runs(parent, revision.create)}
+        ids = {**runs, **self.admission.ticket_runs(parent, revision.create)}
         briefed = revision.create + revision.update
-        definitions = self.tasks.ticket_definitions(parent, briefed)
-        contexts = self.tasks.ticket_contexts(parent, briefed, definitions)
+        definitions = self.admission.ticket_definitions(parent, briefed)
+        contexts = self.admission.ticket_contexts(parent, briefed, definitions)
         created = [
             ids[draft.id]
             for draft in revision.create
-            if self.tasks.admit_ticket(
+            if self.admission.admit_ticket(
                 parent, draft, ids, definitions[draft.id], contexts[draft.id]
             )
         ]
@@ -239,7 +239,7 @@ class PlanReviews:
                 self._on_ticket(review, ids[guide.ticket], "retry", self._command("retry"))
         for ticket in revision.holds:
             self._on_ticket(review, ids[ticket], "hold", self._command("pause"))
-        self.tasks.save_breakdown(
+        self.admission.save_breakdown(
             parent, revision.drafts, {draft.id: ids[draft.id] for draft in revision.drafts}
         )
         self.catalog.save_artifact(

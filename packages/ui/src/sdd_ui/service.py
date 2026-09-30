@@ -20,16 +20,20 @@ from sdd_core.models import Json
 from sdd_core.ports import Conflict
 from sdd_core.questions import questions
 from sdd_core.sdk import Registry
+from sdd_factory.admission import TicketAdmission
+from sdd_factory.control import WorkControl
 from sdd_factory.diagnostics import live, record
+from sdd_factory.documents import FeatureDocuments
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import ticket_places
 from sdd_factory.plans import PlanService
 from sdd_factory.reflow import FlowChanges
 from sdd_factory.reviews import PlanReviews
-from sdd_factory.tasks import TaskService
+from sdd_factory.supersession import Supersession
 from sdd_factory.trackers import ProjectSources, installed_trackers
 from sdd_factory.tracking import RunView, TrackerSync
+from sdd_factory.work import WorkCreation
 from sdd_runtime.composition import local_engine
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.versions import consistent, engine, installed
@@ -101,11 +105,15 @@ class WorkspaceService:
         self.flows = FlowLibrary(
             self.engine, self.config, lambda: self.agents.handlers, self.catalog.project
         )
-        self.tasks = TaskService(
-            self.engine, self.catalog, self.flows, self.log, lambda run: self.coordinator.bind(run)
+        self.creation = WorkCreation(self.engine, self.catalog, self.flows, self.log, self._bind)
+        self.control = WorkControl(self.engine, self.catalog, self.log)
+        self.supersession = Supersession(self.engine, self.catalog, self.log)
+        self.documents = FeatureDocuments(self.engine, self.catalog)
+        self.admission = TicketAdmission(
+            self.engine, self.catalog, self.flows, self.log, self._bind, self.documents
         )
         # A plan lead reviews approved plans; its approved proposals change the tickets.
-        self.reviews = PlanReviews(self.engine, self.catalog, self.flows, self.tasks, self.log)
+        self.reviews = PlanReviews(self.engine, self.catalog, self.flows, self.admission, self.log)
         # A project's work comes from its plans folder or its tracker, which also
         # receives the factory's progress through the outbox.
         self.sources = ProjectSources()
@@ -130,25 +138,25 @@ class WorkspaceService:
             "publish": lambda doc: self.flows.check(doc["workflow"], True),
             "queue": self.queue.set_running,
             "budget": self.queue.set_budget,
-            "create": self.tasks.create,
-            "rename": self.tasks.rename,
-            "close": self.tasks.close,
-            "supersede": self.tasks.supersede,
+            "create": self.creation.create,
+            "rename": self.creation.rename,
+            "close": self.supersession.close,
+            "supersede": self.supersession.supersede,
             "plans-sync": self.plans.sync,
             "plans-rebuild": self.plans.rebuild,
             "flow-change": self.reflow.change,
             "flow-update": self.reflow.update,
             "flows-update": self.reflow.update_many,
-            "interactive-demo": self.tasks.demo,
+            "interactive-demo": self.creation.demo,
             "tracker-sync": lambda doc: self.sync_trackers(text(doc.get("project", ""), "project")),
             "answer": self.reviews.answer,
-            "message": self.tasks.message,
-            "recover": self.tasks.recover,
+            "message": self.control.message,
+            "recover": self.control.recover,
         }
         for command in ("pause", "resume", "retry", "stop", "auto", "manual"):
-            self.actions[command] = partial(self.tasks.command, command)
+            self.actions[command] = partial(self.control.command, command)
         for command in ("resume", "pause"):
-            self.actions[command + "-many"] = partial(self.tasks.bulk, command)
+            self.actions[command + "-many"] = partial(self.control.bulk, command)
         found = installed()
         self.versions = {"engine": engine(), "packages": found, "consistent": consistent(found)}
         # Tracker adapters installed with the application, offered in project settings.
@@ -156,11 +164,15 @@ class WorkspaceService:
         self._release_legacy_blocks()
         self._finish_admissions()
 
+    def _bind(self, run_id: str) -> None:
+        """Pin a new run's handlers; the coordinator exists by the time work is created."""
+        self.coordinator.bind(run_id)
+
     def _finish_admissions(self) -> None:
         """Finish what a crash or restart cut short: tickets an approval left out,
         approved plan reviews half applied, and reviews for tickets blocked meanwhile."""
         try:
-            created = self.tasks.readmit()
+            created = self.admission.readmit()
             self.reviews.reapply()
             self.reviews.sweep()
         except (ValueError, KeyError, OSError, Conflict) as error:
@@ -433,9 +445,9 @@ class WorkspaceService:
             "results": [object_json(result) for result in results],
             "metadata": self.catalog.task_metadata().get(identifier, {}),
             "questions": self._questions(identifier),
-            "tickets": self.tasks.preview(identifier),
+            "tickets": self.documents.preview(identifier),
             "changes": self.reviews.proposal(identifier),
-            "documents": self.tasks.documents(identifier),
+            "documents": self.documents.documents(identifier),
             "lane": self._lane(identifier),
         }
 

@@ -346,8 +346,8 @@ def test_bulk_resume_dialog_and_queue_start_explain_what_happens(page, workshop,
     service.mutate("project", {"id": "gamma", "name": "Gamma", "workspace": str(root)})
     flow = Workflow("empty", "done", (Step("done", "finish"),))
     definition = service.engine.store.publish(flow)
-    service.tasks.create({"id": "one", "project": "gamma", "definition": definition})
-    service.tasks.create(
+    service.creation.create({"id": "one", "project": "gamma", "definition": definition})
+    service.creation.create(
         {"id": "two", "project": "gamma", "definition": definition, "dependencies": ["one"]}
     )
     ready(page, url)
