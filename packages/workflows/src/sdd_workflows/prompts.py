@@ -46,7 +46,9 @@ across repositories is a chain of tickets: the ticket of the dependency first, t
 ticket of the repository that uses it, which `depends_on` it, updates its pinned version
 and verifies the integration; criteria verified in the using repository belong to that
 ticket. Every acceptance criterion of the PRD is covered by some ticket.
-Tickets the brief lists as already queued cover their scope: do not duplicate them.
+Tickets the brief lists as already queued cover their scope: do not duplicate them;
+delivered ones are done: build on them. A ticket that waits for one of those names its
+run id, exactly as listed, in `after` (never in `depends_on`).
 Return done with a readable summary table of the tickets in reason. No edits.
 """
 

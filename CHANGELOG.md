@@ -13,6 +13,10 @@ digest they were created with.
 
 ## Unreleased
 
+- **A breakdown can wait for existing work of its plan.** A ticket names run ids of
+  the plan's queued or delivered tickets in `after` (`depends_on` stays within the
+  breakdown). Approval and plan reviews refuse an `after` that is not a ticket of the
+  plan, listing it; the admitted ticket depends on that run.
 - **No duplicate planning after a rebuild.** A feature's brief lists the plan's
   delivered tickets beside its queued ones. A started per-row requirement of the
   earlier import whose row a feature now plans is superseded by it: paused, shown as

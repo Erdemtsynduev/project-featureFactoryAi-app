@@ -365,7 +365,11 @@ def feature_brief(
         text = " ".join([row.text, *row.detail])
         lines.append(f"- {row.id} ({mark}): {text[:400]}")
     if queued:
-        lines += ["", "Already queued tickets of this plan (do not duplicate them):"]
+        lines += [
+            "",
+            "Already queued tickets of this plan (do not duplicate them; a new ticket that"
+            " waits for one names its run id in `after`):",
+        ]
         lines += [f"- {item[:200]}" for item in queued]
     if delivered:
         lines += ["", "Delivered tickets of this plan (done; build on them, do not redo them):"]

@@ -4,7 +4,7 @@ The application turns an approved breakdown into child runs; each draft carries
 everything a fresh ticket agent needs, without the planner's transcript.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from typing import cast
 
@@ -29,6 +29,8 @@ class TicketDraft:
     paths: tuple[str, ...] = ()
     # What the ticket needs besides an agent run (see `models.TicketNeed`).
     needs: tuple[TicketNeed, ...] = ()
+    # Existing work of the same plan (run ids, not in this breakdown) it waits for.
+    after: tuple[str, ...] = ()
 
     @property
     def held(self) -> bool:
@@ -110,6 +112,7 @@ def draft_of(raw: Json) -> TicketDraft:
         strings(item.get("depends_on"), "dependency"),
         strings(item.get("paths"), "path"),
         needs_of(item),
+        strings(item.get("after"), "dependency"),
     )
     if not draft.id or not draft.title:
         raise ValueError("Ticket needs an id and a title")
@@ -128,6 +131,20 @@ def ordered(drafts: Iterable[TicketDraft]) -> tuple[TicketDraft, ...]:
         "Ticket dependencies are cyclic or unknown",
     )
     return tuple(by_id[identifier] for layer in layers for identifier in layer)
+
+
+def waits_for_known(drafts: Iterable[TicketDraft], known: Collection[str]) -> None:
+    """Every `after` names existing work of the plan; a guess is refused with the list."""
+    unknown = [
+        f"{draft.id}: {', '.join(missing)}"
+        for draft in drafts
+        if (missing := [run for run in draft.after if run not in known])
+    ]
+    if unknown:
+        raise ValueError(
+            "Tickets wait for work that is not a ticket of this plan (use the run ids the "
+            "brief lists): " + "; ".join(unknown)
+        )
 
 
 type ScopeOf = Callable[[TicketDraft], tuple[str, ...]]

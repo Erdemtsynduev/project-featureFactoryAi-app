@@ -25,7 +25,7 @@ from sdd_core.plan_changes import (
     revise,
 )
 from sdd_core.ports import Conflict
-from sdd_core.tickets import draft_of, ordered
+from sdd_core.tickets import draft_of, ordered, waits_for_known
 from sdd_runtime.engine import Engine
 
 from sdd_factory.catalog import Artifact, ProjectCatalog
@@ -177,7 +177,9 @@ class PlanReviews:
         parent = self.catalog.task(review).reviews
         snapshot, _ = self.snapshot(parent)
         changes = plan_changes_of(self._changes_data(review))
-        return revise(snapshot, changes, self.tasks.scope_of(parent))
+        revision = revise(snapshot, changes, self.tasks.scope_of(parent))
+        waits_for_known(revision.create + revision.update, self.tasks.known_tickets(parent))
+        return revision
 
     def _changes_data(self, review: str) -> str:
         done = (r for r in self.engine.outputs(review, "plan_changes") if r.outcome == "done")

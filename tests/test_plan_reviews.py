@@ -394,3 +394,45 @@ def test_rebuilding_plans_again_what_never_started_and_keeps_started_work(servic
     assert f"{api} — Engine core (running)" in brief, "started work is not duplicated"
     assert service.mutate("plans-sync", {"project": "app"})["created"] == []
     assert service.reviews.request(feature, "blocked:api", "stuck") is None, "a closed plan"
+
+
+def test_a_new_breakdown_waits_for_existing_tickets_of_its_plan_through_after(service):
+    feature, _ = approved_plan(service)
+    catalog = service.catalog
+    for key, item in catalog.tasks().items():
+        if key == feature or item.parent == feature:
+            catalog.update_task(key, item.changed(plan="110"))
+    run = service.mutate(
+        "create",
+        {
+            "title": "Rally 2",
+            "project": "app",
+            "definition": service.flows.ensure("feature", "app", "ru"),
+        },
+    )
+    again = run["id"]
+    catalog.update_task(again, catalog.task(again).changed(plan="110"))
+    service.mutate("resume", {"id": again, "version": run["version"]})
+    finish(service, again, "s2", reason="SPEC")
+    api = f"{feature}-api"
+
+    def breakdown(attempt: str, after: list[str]) -> int:
+        finish(service, again, attempt, tickets=[{"id": "cab", "title": "Cabin", "after": after}])
+        return service.engine.dispatch(again, 12, "h" + attempt).version
+
+    version = breakdown("t2", ["T1"])
+    with pytest.raises(ValueError, match="not a ticket of this plan.*cab: T1"):
+        service.mutate(
+            "answer", {"id": again, "outcome": "approved", "answer": "", "version": version}
+        )
+    service.mutate(
+        "answer", {"id": again, "outcome": "rework", "answer": "use run ids", "version": version}
+    )
+    finish(service, again, "s3", reason="SPEC")
+    version = breakdown("t3", [api])
+    answered = service.mutate(
+        "answer", {"id": again, "outcome": "approved", "answer": "", "version": version}
+    )
+    (cab,) = answered["admitted"]
+    with service.engine.store.unit() as unit:
+        assert (cab, api) in set(unit.dependency_edges())

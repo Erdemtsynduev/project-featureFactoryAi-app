@@ -18,7 +18,13 @@ from pathlib import Path
 from sdd_core.codec import encode, flag, integer, mapping, sequence, text
 from sdd_core.models import Json, Run
 from sdd_core.ports import Conflict
-from sdd_core.tickets import ScopeOf, TicketDraft, one_repository, tickets_of
+from sdd_core.tickets import (
+    ScopeOf,
+    TicketDraft,
+    one_repository,
+    tickets_of,
+    waits_for_known,
+)
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_workflows.templates import question_example
@@ -370,6 +376,7 @@ class TaskService:
         drafts = tickets_of(self.engine.facts(run_id)) if outcome == "approved" else ()
         # Refused while the feature still awaits approval; rework sends the reason back.
         one_repository(drafts, self.scope_of(run_id))
+        waits_for_known(drafts, self.known_tickets(run_id))
         # Publish the ticket flows and build every brief before the answer, so what
         # can be refused is refused while the feature still awaits approval.
         definitions = self.ticket_definitions(run_id, drafts)
@@ -399,6 +406,17 @@ class TaskService:
             return [asdict(draft) for draft in tickets_of(self.engine.facts(run_id))]
         except ValueError:
             return []
+
+    def known_tickets(self, run_id: str) -> set[str]:
+        """Existing tickets of `run_id`'s plan: what a new ticket's `after` may name."""
+        plan = self.catalog.task(run_id).plan
+        with self.engine.store.unit() as db:
+            runs = {run.id for run in db.runs()}
+        return {
+            key
+            for key, item in self.catalog.tasks().items()
+            if key in runs and item.kind == "ticket" and plan and item.plan == plan
+        }
 
     def scope_of(self, run_id: str) -> ScopeOf:
         """The repositories a draft of `run_id`'s plan changes, within its workspace."""
@@ -529,7 +547,7 @@ class TaskService:
             context,
             None,
             time.time(),
-            tuple(ids[dependency] for dependency in draft.depends_on),
+            (*(ids[dependency] for dependency in draft.depends_on), *draft.after),
             ticket_scope(root, draft.paths),
         )
         self.catalog.save_task(

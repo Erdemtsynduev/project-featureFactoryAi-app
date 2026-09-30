@@ -87,7 +87,9 @@ TICKETS_INSTRUCTION = (
     "goal, testable acceptance criteria, ids of tickets it depends on, owned paths and "
     "`needs`: `human` when a person must decide or review, `asset` when it needs files "
     "agents cannot make or obtain (licensed recordings, purchased models), `web` when its "
-    "agent needs the internet; [] otherwise.\n"
+    "agent needs the internet; [] otherwise. `depends_on` names tickets of this breakdown "
+    "only; `after` names run ids of existing tickets the brief lists that it waits for, [] "
+    "otherwise.\n"
 )
 PLAN_CHANGES_INSTRUCTION = (
     "Return proposed corrections in `plan_changes`, [] when the plan is sound. Each has "
@@ -138,6 +140,7 @@ TICKET: dict[str, Json] = _strict(
         "depends_on": STRINGS,
         "paths": STRINGS,
         "needs": NEEDS,
+        "after": STRINGS,
     }
 )
 TICKETS_SCHEMA: dict[str, Json] = {"type": "array", "items": TICKET}
