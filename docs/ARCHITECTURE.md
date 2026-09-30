@@ -355,8 +355,7 @@ it stops the queue, because then state could not be kept durable.
 Application metadata (projects, plans, task labels, preferences) is behind the
 `sdd_core.catalog.CatalogRecords` port. SQLite schema version 4 owns its tables
 (adopting the ones earlier releases created from the UI, after a verified backup);
-`MemoryCatalog` is the volatile double. Neither the factory nor the UI runs SQL except
-the read-only importer of foreign sdd-orchestrator databases (`sdd_factory.legacy`).
+`MemoryCatalog` is the volatile double. Neither the factory nor the UI runs SQL.
 
 The UI service locks only the coordinator and queue settings. Board reads and engine
 commands run concurrently with the queue through short transactions and CAS, so a long
@@ -383,7 +382,6 @@ core, runtime and workflows; the UI (`sdd-ui`) is an HTTP adapter and console ov
 | `sources` | `FeatureSource` port and `MarkdownPlans` (numbered `NNN_*.md` in the folder a project names) |
 | `flows` | Templates for a project (feature, ticket with its repositories' checks, main flow), validation, publication |
 | `journal`, `diagnostics` | Append-only flight log and per-task incident records |
-| `legacy` | Import of the legacy sdd-orchestrator queue: pure translation and the read-only importer (`python -m sdd_factory.legacy`) |
 
 A feature takes one path: a specification step (`produces: specification`), a
 breakdown step (`produces: tickets`, structured tickets validated by

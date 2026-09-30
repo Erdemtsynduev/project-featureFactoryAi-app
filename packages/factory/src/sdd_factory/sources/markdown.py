@@ -67,11 +67,6 @@ def parse_plan(path: str, text: str) -> WorkItem:
     )
 
 
-def row_run_id(number: str, row: WorkRow) -> str:
-    """The run id the per-row import gave a row, e.g. `110_FH-07`."""
-    return f"{number}_{row.id}"
-
-
 class MarkdownPlans:
     """A work source over a folder of numbered Markdown plans in the workspace."""
 

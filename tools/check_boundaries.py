@@ -21,8 +21,6 @@ COMPOSITION = {
     ("runtime", "cli.py"): {"sdd_providers", "sdd_workflows", "sdd_storage"},
     ("runtime", "engine.py"): {"sdd_storage"},
 }
-# The legacy importer reads a foreign sdd-orchestrator database, read-only.
-FOREIGN_SQL = {("factory", "importer.py")}
 FORBIDDEN = {
     "os",
     "pathlib",
@@ -44,7 +42,6 @@ for package, allowed in ALLOWED.items():
         for node in ast.walk(tree):
             if (
                 package in ("runtime", "ui", "factory")
-                and where not in FOREIGN_SQL
                 and isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr in SQL_CALLS
@@ -86,11 +83,7 @@ for package, allowed in ALLOWED.items():
                     )
                 if package in ("core", "usage") and module in FORBIDDEN:
                     errors.append(f"{path}:{node.lineno}: IO dependency in {package}: {module}")
-                if (
-                    package in ("ui", "factory")
-                    and module == "sqlite3"
-                    and where not in FOREIGN_SQL
-                ):
+                if package in ("ui", "factory") and module == "sqlite3":
                     errors.append(f"{path}:{node.lineno}: SQL in {package}; use a storage port")
                 if package in ("ui", "factory") and name == "sdd_runtime.cli":
                     errors.append(f"{path}:{node.lineno}: compose through sdd_runtime.composition")

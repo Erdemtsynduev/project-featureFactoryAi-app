@@ -16,7 +16,6 @@ covers become one fresh feature, planned under the current rules. Nothing here e
 plan files or starts work.
 """
 
-import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -26,21 +25,13 @@ from sdd_core.tracking import WorkItem, WorkRow, WorkSource
 from sdd_runtime.engine import Engine
 from sdd_runtime.lane_model import lane_branch
 
-from sdd_factory.board import carried_owner, replan
+from sdd_factory.board import replan
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import TaskRecord, language_rule, unfinished
-from sdd_factory.sources.markdown import MarkdownPlans, row_run_id
-from sdd_factory.supersession import supersede_run
+from sdd_factory.sources.markdown import MarkdownPlans
 
-# Sections of a per-row brief that carry recorded work worth keeping in the feature.
-RECORDED = re.compile(
-    r"^(Recorded acceptance draft|Constraints|Verification|Out of scope|Recorded decisions"
-    r"|Requirement):",
-    re.M,
-)
-RECORDED_CHARS = 1500
 # Claim of a planning run whose item lives in a tracker, not in a workspace folder: a
 # path nothing writes, so planning never waits for tickets or blocks them.
 TRACKER_SCOPE = ".sdd-tracker-items"
@@ -73,14 +64,11 @@ class PlanService:
     # Syncing -------------------------------------------------------------------
 
     def sync(self, doc: dict[str, Json]) -> dict[str, object]:
-        """One feature per plan for open rows that no feature or queued ticket covers yet."""
-        return self._sync(doc, {}, frozenset())
+        """One feature per plan for open rows that no feature covers yet."""
+        return self._sync(doc, frozenset())
 
-    def _sync(
-        self, doc: dict[str, Json], carried: dict[str, str], reopened: frozenset[str]
-    ) -> dict[str, object]:
-        """`carried` holds recorded work of removed runs by the row run they belong to;
-        the rows of `reopened` features are planned again."""
+    def _sync(self, doc: dict[str, Json], reopened: frozenset[str]) -> dict[str, object]:
+        """The rows of `reopened` features are planned again."""
         project_id, project, workspace = self._project(doc)
         language = str(project.get("language", "ru"))
         only = str(doc.get("plan", ""))
@@ -94,11 +82,6 @@ class PlanService:
         records = self.catalog.tasks()
         with self.engine.store.unit() as unit:
             runs = {run.id: run for run in unit.runs()}
-            contexts = {
-                key: unit.context(key)
-                for key, item in records.items()
-                if key in runs and item.kind == "feature" and not item.rows
-            }
         features = {
             key: item
             for key, item in records.items()
@@ -108,7 +91,9 @@ class PlanService:
         created: list[Json] = []
         for plan in plans:
             covering = {key: item for key, item in features.items() if key not in reopened}
-            covered = self._covered(plan, covering, records, runs)
+            covered = {
+                row for item in covering.values() if item.plan == plan.key for row in item.rows
+            }
             scope = [row for row in plan.rows if row.open and row.id not in covered]
             if not scope:
                 continue
@@ -116,17 +101,11 @@ class PlanService:
             identifier = f"feature_{plan.key}" + (f"_{len(previous) + 1}" if previous else "")
             flow = flow or self.flows.ensure("feature", project_id, language)
             queued, delivered, dropped = self._tickets(plan, records, runs)
-            recorded = {
-                row.id: carried.get(key) or recorded_work(contexts.get(key, ""))
-                for row in scope
-                if (key := row_run_id(plan.key, row))
-            }
             self.engine.create(
                 identifier,
                 flow,
                 workspace,
-                language_rule(language)
-                + feature_brief(plan, scope, queued, recorded, delivered, dropped),
+                language_rule(language) + feature_brief(plan, scope, queued, delivered, dropped),
                 None,
                 time.time(),
                 (),
@@ -146,7 +125,6 @@ class PlanService:
                 ),
             )
             created.append(identifier)
-        superseded = self._supersede(plans)
         self.catalog.save_plans(
             project_id,
             [
@@ -166,26 +144,8 @@ class PlanService:
             plan=only,
             plans=len(plans),
             created=len(created),
-            superseded=list[Json](superseded),
         )
-        return {"plans": len(plans), "created": created, "superseded": superseded}
-
-    @staticmethod
-    def _covered(
-        plan: WorkItem,
-        features: dict[str, TaskRecord],
-        records: dict[str, TaskRecord],
-        runs: dict[str, Run],
-    ) -> set[str]:
-        """Rows already in a feature's scope or decomposed into queued legacy tickets."""
-        covered = {row for item in features.values() if item.plan == plan.key for row in item.rows}
-        parents = {
-            item.parent
-            for key, item in records.items()
-            if key in runs and item.kind == "ticket" and item.legacy_id
-        }
-        covered |= {row.id for row in plan.rows if row_run_id(plan.key, row) in parents}
-        return covered
+        return {"plans": len(plans), "created": created}
 
     @staticmethod
     def _tickets(
@@ -207,45 +167,12 @@ class PlanService:
                     queued.append(f"{key} — {item.title} ({status})")
         return queued, delivered, superseded
 
-    def _supersede(self, plans: list[WorkItem]) -> list[str]:
-        """Per-row requirements of the earlier import whose row a feature now plans:
-        the feature carries their recorded work, so they are marked superseded by it and
-        paused instead of writing a second specification."""
-        records = self.catalog.tasks()
-        with self.engine.store.unit() as unit:
-            runs = {run.id: run for run in unit.runs()}
-        planning = {
-            (item.plan, row): key
-            for key, item in records.items()
-            if key in runs and item.kind == "feature" and item.rows and not item.closed
-            for row in item.rows
-        }
-        superseded: list[str] = []
-        for plan in plans:
-            for row in plan.rows:
-                key = row_run_id(plan.key, row)
-                feature = planning.get((plan.key, row.id))
-                item, run = records.get(key), runs.get(key)
-                if (
-                    feature is None
-                    or item is None
-                    or run is None
-                    or item.kind != "feature"
-                    or item.rows
-                ):
-                    continue
-                if supersede_run(self.engine, self.catalog, key, feature):
-                    superseded.append(key)
-        return superseded
-
     # Rebuilding the board ----------------------------------------------------------
 
     def rebuild(self, doc: dict[str, Json]) -> dict[str, object]:
         """Back up, then plan again all work of the project (or of `plan`) that never started.
 
-        Never-started features and tickets are removed; what a removed per-row
-        requirement or imported ticket recorded (its requirement, acceptance and
-        decisions) carries over into the new feature. A feature whose tickets were
+        Never-started features and tickets are removed. A feature whose tickets were
         removed is closed: what it delivered stays, its started tickets keep running
         as top-level work, its never-started plan reviews go, and its rows are planned
         again. Other started work, tasks, reviews and anything a kept run depends on stay
@@ -265,13 +192,6 @@ class PlanService:
         path = self.engine.store.path
         backup = path.with_name(f"{path.stem}.before-plan-rebuild-{time.time_ns()}.db")
         self.engine.store.backup(backup)
-        carried: dict[str, str] = {}
-        with self.engine.store.unit() as unit:
-            for key in sorted(candidates):
-                owner = carried_owner(key, records[key])
-                if owner is not None:
-                    work = recorded_work(unit.context(key))
-                    carried[owner] = "\n\n".join(filter(None, (carried.get(owner, ""), work)))
         removed = self.engine.store.discard(tuple(sorted(candidates)))
         status = {key: run.status for key, run in runs.items() if key not in candidates}
         kept = {key: item for key, item in records.items() if key not in candidates}
@@ -289,24 +209,17 @@ class PlanService:
             "removed": len(removed),
             "reopened": sorted(reopened),
             "backup": str(backup),
-            **self._sync(doc, carried, reopened),
+            **self._sync(doc, reopened),
         }
 
 
 # Briefs ----------------------------------------------------------------------------
 
 
-def recorded_work(context: str) -> str:
-    """Specification drafts and decisions a per-row requirement had recorded."""
-    match = RECORDED.search(context)
-    return context[match.start() :][:RECORDED_CHARS].strip() if match else ""
-
-
 def feature_brief(
     plan: WorkItem,
     scope: list[WorkRow],
     queued: list[str],
-    recorded: dict[str, str],
     delivered: list[str] | None = None,
     superseded: list[str] | None = None,
 ) -> str:
@@ -347,9 +260,4 @@ def feature_brief(
             " ticket; reuse the partial work on their lane branch):",
         ]
         lines += [f"- {item[:240]}" for item in superseded]
-    drafts = {key: value for key, value in recorded.items() if value}
-    if drafts:
-        lines += ["", "Recorded specification drafts and decisions (reuse, do not weaken):"]
-        for key, value in drafts.items():
-            lines += [f"### {key}", value]
     return "\n".join(lines)

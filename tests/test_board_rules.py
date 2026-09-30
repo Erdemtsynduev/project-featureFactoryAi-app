@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from sdd_core.admission import MAX_REVIVALS, REVIVE_AFTER, revivable
 from sdd_core.models import Run
-from sdd_factory.board import Replan, carried_owner, plan_tickets, replan, review_trigger
+from sdd_factory.board import Replan, plan_tickets, replan, review_trigger
 from sdd_factory.model import TaskRecord
 
 
@@ -36,14 +36,6 @@ def test_replan_removes_never_started_plan_work_and_reopens_its_feature():
     decided = replan(records, runs, [], "p")
     assert decided.removed == {"t1", "r"} and decided.reopened == {"f"}
     assert replan(records, runs, [], "p", plan="111").removed == frozenset()
-
-
-def test_recorded_work_carries_to_its_row():
-    assert (
-        carried_owner("T_1", record(kind="ticket", legacy_id="110:A.1", parent="110_A")) == "110_A"
-    )
-    assert carried_owner("110_A", record(kind="feature")) == "110_A"
-    assert carried_owner("f", record(kind="feature", rows=("A",))) is None
 
 
 def test_a_review_follows_an_agent_block_or_an_exhausted_loop_only():

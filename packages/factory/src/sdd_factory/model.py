@@ -45,7 +45,6 @@ class TaskRecord:
     rows: tuple[str, ...] = ()  # plan rows a feature covers
     source: str = ""  # the source document of a feature, workspace-relative
     intent: str = ""
-    legacy_id: str = ""  # identity in the legacy orchestrator, when imported
     closed: bool = False  # closed by the operator before all its children were done
     origin: str = ""  # the parent a ticket was detached from when that parent closed
     link: str = ""  # the item's reference in the project's tracker, once mirrored there
@@ -69,7 +68,6 @@ class TaskRecord:
             rows=tuple(str(row) for row in rows) if isinstance(rows, list) else (),
             source=str(document.get("source", "")),
             intent=str(document.get("intent", "")),
-            legacy_id=str(document.get("legacy_id", "")),
             closed=document.get("closed") is True,
             origin=str(document.get("origin", "")),
             link=str(document.get("link", "")),

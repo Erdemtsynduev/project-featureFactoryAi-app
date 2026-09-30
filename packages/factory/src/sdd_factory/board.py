@@ -30,15 +30,15 @@ def replan(
 ) -> Replan:
     """Never-started plan work of `project` (or of one `plan`) to plan again.
 
-    Removed: a plan's never-started features, imported tickets and tickets of an open
-    plan feature; never anything a kept run depends on. A feature losing tickets is
-    reopened: its rows are planned again, and its never-started reviews go with it.
+    Removed: a plan's never-started features and the tickets of an open plan feature;
+    never anything a kept run depends on. A feature losing tickets is reopened: its rows
+    are planned again, and its never-started reviews go with it.
     """
     edges = tuple(edges)
 
     def planned(item: TaskRecord) -> bool:
-        """A plan's feature, an imported ticket, or a ticket of an open plan feature."""
-        if item.kind == "feature" or item.legacy_id:
+        """A plan's feature, or a ticket of an open plan feature."""
+        if item.kind == "feature":
             return True
         parent = records.get(item.parent)
         return item.kind == "ticket" and parent is not None and bool(parent.rows)
@@ -63,10 +63,7 @@ def replan(
     reopened = frozenset(
         item.parent
         for key, item in records.items()
-        if key in candidates
-        and item.kind == "ticket"
-        and not item.legacy_id
-        and item.parent not in candidates
+        if key in candidates and item.kind == "ticket" and item.parent not in candidates
     )
     # A review that never started goes with its plan; nothing depends on reviews.
     candidates |= {
@@ -75,14 +72,6 @@ def replan(
         if key in runs and item.reviews in reopened and machine.discardable(runs[key])
     }
     return Replan(frozenset(candidates), reopened)
-
-
-def carried_owner(key: str, item: TaskRecord) -> str | None:
-    """Where a removed run's recorded work carries over: an imported ticket to its row's
-    requirement, a per-row requirement to itself; other work records nothing."""
-    if item.legacy_id:
-        return item.parent
-    return key if item.kind == "feature" and not item.rows else None
 
 
 def review_trigger(run: Run, blocked_by_agent: bool) -> tuple[str, str] | None:

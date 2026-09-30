@@ -143,21 +143,16 @@ decomposition → subtasks) and AI Hero (grill me → PRD → PRD to issues → 
 A feature comes from **New task → Большая фича**, or from a **plan**: a plan file
 `NNN_*.md` in the project's **plans folder** (a project setting; none by default)
 becomes one feature `feature_<NNN>` whose scope is the plan's
-open and partial rows (closed and rejected rows are context). Rows the old queue
-already decomposed into tickets are not in scope again; those tickets are listed in
-the feature's brief. **Обновить планы из файлов** (`plans-sync`) creates a feature per
+open and partial rows (closed and rejected rows are context). **Обновить планы из файлов** (`plans-sync`) creates a feature per
 plan that has uncovered open rows, and a follow-up feature `feature_<NNN>_<n>` for rows
 added later (research adds rows). **Пересоздать доску из планов** (`plans-rebuild`)
 backs the database up and plans again everything that never started, under the
 current rules (one repository per ticket, chains across repositories): never-started
-features and tickets leave the board, carrying what they recorded (drafts, requirement,
-acceptance) into the new feature; a feature whose tickets left is closed, its started
+features and tickets leave the board; a feature whose tickets left is closed, its started
 tickets keep running as top-level work and its rows are planned again. With `plan` it
 touches one plan. Nothing edits plan files or starts work. A feature's brief lists the
 plan's queued tickets with their state and its delivered tickets, so neither is
-planned twice. A started per-row requirement of the earlier import whose row a feature
-now plans is marked superseded by that feature (**Заменено**, in the done column) and
-paused; its recorded work is already in the feature's brief. Started tickets that cannot finish
+planned twice. Started tickets that cannot finish
 (for example ones spanning repositories) are handed to the feature that plans them
 again with the `supersede` action: they pause, show as **Заменено**, and keep their
 lane and `ffai/<run>` branch so the new tickets can reuse the work.
@@ -317,16 +312,6 @@ Theme and language persist per browser; System follows the OS. Interface copy is
 keyed (`static/js/i18n/ru.js`, `en.js`, checked by `tests/test_ui_i18n.py`); user
 content, agent output and prompts are never translated. Enable browser notifications
 explicitly for new questions, blockers and accepted tasks while the page is open.
-
-## Legacy orchestrator queue
-
-`python -m sdd_factory.legacy <portfolios/<id>.sqlite3> --database <ui.db> --apply` creates
-a new project named after the legacy workspace and moves every unfinished item into it
-as paused runs (the legacy database is read-only and never modified). Plan rows that
-were never decomposed become **requirement** runs; unfinished tickets become
-**ticket** runs (implement, one gate per legacy check, review, bounded repair) scoped
-to their repositories, with dependencies on tickets and on requirement runs. Stop the
-old orchestrator yourself; do not run both against the same workspace.
 
 ## Front-end structure
 

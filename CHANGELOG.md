@@ -13,6 +13,9 @@ digest they were created with.
 
 ## Unreleased
 
+- **The legacy sdd-orchestrator import is removed** (`python -m sdd_factory.legacy`),
+  with what only it created: imported tickets (`legacy_id`), per-row requirements and
+  carrying their recorded drafts into features. Work comes from plans and trackers.
 - **Stored data moves forward once; compatibility shims are gone.** Schema version 6
   records every run's cause and every feature's kind explicitly (backed up first). Removed:
   cause inference on read, the `requirement` kind spelling, the `emits` option spelling,

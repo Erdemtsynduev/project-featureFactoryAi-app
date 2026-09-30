@@ -69,7 +69,6 @@ def test_sync_makes_one_feature_per_plan_and_a_follow_up_for_new_rows(tmp_path, 
         assert service.mutate("plans-sync", {"project": "game"}) == {
             "plans": 1,
             "created": ["feature_110"],
-            "superseded": [],
         }
         meta = service.catalog.task_metadata()["feature_110"]
         assert meta["kind"] == "feature" and meta["rows"] == ["FH-02", "FH-03"]
@@ -94,45 +93,24 @@ def test_sync_makes_one_feature_per_plan_and_a_follow_up_for_new_rows(tmp_path, 
         service.coordinator.close()
 
 
-def test_rebuild_plans_never_started_work_again_and_carries_what_it_recorded(tmp_path, monkeypatch):
+def test_rebuild_plans_never_started_work_again_and_keeps_started_work(tmp_path, monkeypatch):
     service, root, flow = game(tmp_path, monkeypatch)
     try:
         engine, catalog = service.engine, service.catalog
-
-        def legacy(identifier, kind, context="", **extra):
-            engine.create(identifier, flow, root, context, "rev", 1)
-            catalog.save_task(
-                identifier,
-                TaskRecord.load({"project": "game", "kind": kind, "plan": "110", **extra}),
-            )
-
-        legacy("110_FH-02", "feature", "Recorded acceptance draft:\nСтыки не видны с 5 м.")
-        legacy("110_FH-03", "feature")
-        legacy("110_FH-09", "feature")
-        legacy(
-            "110_FH-03_1",
-            "ticket",
-            "Legacy ticket.\nRequirement: FH-03 — кабина.\nAcceptance (frozen): руль виден.",
-            legacy_id="110:FH-03.1",
-            parent="110_FH-03",
+        assert service.mutate("plans-sync", {"project": "game"})["created"] == ["feature_110"]
+        engine.create("started", flow, root, "", "rev", 1)
+        catalog.save_task(
+            "started", TaskRecord.load({"project": "game", "kind": "feature", "plan": "110"})
         )
-        engine.command("110_FH-09", "resume", "go", 0, 2)
-        engine.dispatch("110_FH-09", 3, "started")  # started work survives
+        engine.command("started", "resume", "go", 0, 2)
+        engine.dispatch("started", 3, "a1")  # started work survives
 
         rebuilt = service.mutate("plans-rebuild", {"project": "game"})
-        assert rebuilt["removed"] == 3 and rebuilt["created"] == ["feature_110"]
+        assert rebuilt["removed"] == 1 and rebuilt["created"] == ["feature_110"]
         assert (tmp_path / rebuilt["backup"]).is_file()
         runs = {r["id"] for r in service.state()["runs"]}
-        assert {"110_FH-09", "feature_110"} <= runs
-        assert not {"110_FH-02", "110_FH-03", "110_FH-03_1"} & runs
-        # The imported ticket is planned again; its requirement and acceptance carry over.
+        assert {"started", "feature_110"} <= runs
         assert catalog.task_metadata()["feature_110"]["rows"] == ["FH-02", "FH-03"]
-        with engine.store.unit() as unit:
-            brief = unit.context("feature_110")
-        assert "Стыки не видны с 5 м." in brief and "руль виден" in brief
-        # A never-started feature is itself planned again, under the current plan title.
-        again = service.mutate("plans-rebuild", {"project": "game"})
-        assert again["removed"] == 1 and again["created"] == ["feature_110"]
     finally:
         service.coordinator.close()
 
@@ -188,41 +166,12 @@ def test_a_project_without_a_plans_folder_has_no_plans(tmp_path):
         service.coordinator.close()
 
 
-def test_a_started_per_row_requirement_is_superseded_by_the_feature_planning_its_row(
-    tmp_path, monkeypatch
-):
-    service, root, flow = game(tmp_path, monkeypatch)
-    try:
-        engine, catalog = service.engine, service.catalog
-        engine.create(
-            "110_FH-03", flow, root, "Recorded decisions: кабина от первого лица.", "r", 1
-        )
-        catalog.save_task(
-            "110_FH-03", TaskRecord.load({"project": "game", "kind": "feature", "plan": "110"})
-        )
-        engine.command("110_FH-03", "resume", "go", 0, 2)
-        engine.block("110_FH-03", 4, "Workspace changed outside attempt")
-
-        synced = service.mutate("plans-sync", {"project": "game"})
-        assert synced["created"] == ["feature_110"] and synced["superseded"] == ["110_FH-03"]
-        assert catalog.task("feature_110").rows == ("FH-02", "FH-03")
-        with engine.store.unit() as unit:
-            assert "кабина от первого лица" in unit.context("feature_110"), "its work carries over"
-        assert catalog.task("110_FH-03").superseded == "feature_110"
-        (old,) = [r for r in service.state()["runs"] if r["id"] == "110_FH-03"]
-        assert old["attention"]["code"] == "superseded" and old["lane"] == "done"
-        assert service.mutate("plans-sync", {"project": "game"})["superseded"] == []
-    finally:
-        service.coordinator.close()
-
-
 def test_a_feature_brief_names_delivered_tickets_so_they_are_not_redone():
     plan = parse_plan("plans/110_RALLY_PLAN.md", PLAN)
     brief = feature_brief(
         plan,
         list(plan.rows[1:]),
         [],
-        {},
         ["110-T50 — Брод"],
         ["110-T28 — Удары (branch ffai/110-T28)"],
     )

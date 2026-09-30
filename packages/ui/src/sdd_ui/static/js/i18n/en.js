@@ -826,7 +826,7 @@ export default {
   "plans.action.rebuild": "Rebuild the board from plans",
   "plans.rebuilt": "Never-started work removed: {removed}. Features created: {created}.",
   "plans.rebuildTitle": "Rebuild the board from plans?",
-  "plans.rebuildText": "The database is backed up first. Then everything that never started is planned again under the current rules: never-started features and tickets leave the board (what they recorded moves into the new features), a feature whose tickets left is closed, and every plan's uncovered rows get one feature: specification → tickets → your approval. Started work stays.",
+  "plans.rebuildText": "The database is backed up first. Then everything that never started is planned again under the current rules: never-started features and tickets leave the board, a feature whose tickets left is closed, and every plan's uncovered rows get one feature: specification → tickets → your approval. Started work stays.",
   "log.kind.plans_converted": "Plans converted to the factory format",
   "log.kind.board_rebuilt": "Board rebuilt from plans",
   "detail.documents": "Feature documents",
