@@ -26,7 +26,7 @@ def registry(config: Path | None) -> Registry:
     from sdd_providers.handlers import CommandHandler
     from sdd_providers.structured_cli import Invocation
 
-    from sdd_runtime.lanes import ACTIONS, LaneHandler
+    from sdd_runtime.lane_actions import ACTIONS, LaneHandler
     from sdd_runtime.profiles import RunnerInstallation, load_profiles, register_profiles
     from sdd_runtime.rotation import Cooldowns, apply_rotations, load_rotations
 

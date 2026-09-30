@@ -3,14 +3,8 @@
 from pathlib import Path
 
 from sdd_runtime.application import ApplicationEngine
-from sdd_runtime.lanes import (
-    LANE_VERSION,
-    Lane,
-    attach_links,
-    load_lane,
-    open_lane,
-    remove_lane,
-)
+from sdd_runtime.lane_model import LANE_VERSION, Lane, load_lane
+from sdd_runtime.lanes import attach_links, open_lane, remove_lane
 
 
 class LaneKeeper:

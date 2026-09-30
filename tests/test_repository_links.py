@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 from sdd_core.links import Link, infer_link, missing, stale
 from sdd_core.tickets import TicketDraft, one_repository, ticket_title
-from sdd_runtime.lanes import CommitMessages, LaneJob, attach_links, commit, open_lane, remove_lane
+from sdd_runtime.lane_actions import commit
+from sdd_runtime.lane_model import CommitMessages, LaneJob
+from sdd_runtime.lanes import attach_links, open_lane, remove_lane
 from sdd_runtime.submodules import GitSubmodules, NoLinks, links_of
 from sdd_workflows.templates import ticket
 from test_lanes import git, repository

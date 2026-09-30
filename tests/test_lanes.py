@@ -9,15 +9,9 @@ from sdd_core.models import Step, Workflow
 from sdd_core.sdk import Registry
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
-from sdd_runtime.lanes import (
-    LANE_FILE,
-    LaneJob,
-    integrate,
-    load_lane,
-    open_lane,
-    rebase,
-    remove_lane,
-)
+from sdd_runtime.lane_actions import integrate, rebase
+from sdd_runtime.lane_model import LANE_FILE, LaneJob, load_lane
+from sdd_runtime.lanes import open_lane, remove_lane
 from sdd_storage.store import Store
 
 

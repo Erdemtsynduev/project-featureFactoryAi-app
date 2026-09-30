@@ -14,7 +14,7 @@ from sdd_core.catalog import CatalogRecords
 from sdd_core.codec import canonical, mapping, object_json, sequence, text
 from sdd_core.models import Json
 from sdd_core.ports import Conflict
-from sdd_runtime.lanes import CommitMessages
+from sdd_runtime.lane_model import CommitMessages
 
 from sdd_factory.model import TaskRecord
 from sdd_factory.trackers import tracker_settings

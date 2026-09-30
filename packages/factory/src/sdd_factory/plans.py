@@ -25,7 +25,7 @@ from sdd_core import machine
 from sdd_core.models import Json, Run
 from sdd_core.tracking import WorkItem, WorkRow, WorkSource
 from sdd_runtime.engine import Engine
-from sdd_runtime.lanes import lane_branch
+from sdd_runtime.lane_model import lane_branch
 
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.flows import FlowLibrary

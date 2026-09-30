@@ -9,7 +9,7 @@ from sdd_core.ports import StateStore
 from sdd_core.sdk import Packet, Registry, handler_key
 
 from sdd_runtime.files import attempt_folder
-from sdd_runtime.lanes import load_lane
+from sdd_runtime.lane_model import load_lane
 
 # Receipts scanned for task memory (notes and handoff), and when looking for a session.
 MEMORY_WINDOW = 12

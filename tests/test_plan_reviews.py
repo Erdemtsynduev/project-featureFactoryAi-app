@@ -327,7 +327,7 @@ def test_a_ticket_out_of_visits_asks_its_plan_for_a_review(service):
 def test_a_packet_names_the_repositories_accepted_prerequisites_delivered(tmp_path):
     from sdd_runtime.application import ApplicationEngine
     from sdd_runtime.git import GitProject
-    from sdd_runtime.lanes import Lane, LaneRepo
+    from sdd_runtime.lane_model import Lane, LaneRepo
     from sdd_runtime.packets import delivered
     from sdd_runtime.workspace import LocalWorkspace
     from sdd_storage.memory import MemoryStore
