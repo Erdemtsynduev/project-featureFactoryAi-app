@@ -8,7 +8,7 @@ Why a run is held is the typed `Run.cause`; `Run.reason` is the text people read
 
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import astuple, replace
 
 from sdd_core import revision as revisions
@@ -672,3 +672,44 @@ def plan_revised(run: Run, now: float, detail: str) -> Transition:
     if not discardable(run):
         raise ValueError("Only a ticket that never started can be revised")
     return changed(run, run, now, "plan_revised", detail)
+
+
+def migrate(
+    run: Run,
+    old: Workflow,
+    new: Workflow,
+    digest: str,
+    now: float,
+    moved: Mapping[str, str] | None = None,
+) -> Transition:
+    """Move an idle, unfinished run onto another version of its workflow.
+
+    `moved` names where the run continues when its current step is gone from the new
+    version (a skipped step continues where it routed to). Visits and completed steps
+    stay with the steps that remain; a gate stays passed only where its step does the
+    same work, so changed work is proved again.
+    """
+    if run.active is not None:
+        raise ValueError("Cannot migrate a run with a live attempt")
+    if run.status == "accepted":
+        raise ValueError("An accepted run keeps its workflow")
+    steps = {step.id: step for step in new.steps}
+    target = (moved or {}).get(run.step, run.step)
+    if target not in steps:
+        raise ValueError(f"Step {run.step} has no place in the new workflow")
+    # Routes may change freely; a gate's evidence holds while its step's work is the same.
+    unchanged = {
+        step.id
+        for step in old.steps
+        if step.id in steps
+        and replace(steps[step.id], transitions=()) == replace(step, transitions=())
+    }
+    state = replace(
+        run,
+        workflow_digest=digest,
+        step=target,
+        visits=tuple((step, count) for step, count in run.visits if step in steps),
+        completed=tuple(step for step in run.completed if step in steps),
+        gates=tuple((step, rev) for step, rev in run.gates if step in unchanged),
+    )
+    return changed(run, state, now, "workflow_migrated", digest)

@@ -58,6 +58,7 @@ type EventKind = Literal[
     "operator_message",
     "paused",
     "plan_revised",
+    "workflow_migrated",
     "reconciliation_requested",
     "recovery_exhausted",
     "recovery_scheduled",

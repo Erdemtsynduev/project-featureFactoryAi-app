@@ -2,10 +2,12 @@
 invalidation and lanes. Operator commands are idempotent by request id."""
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from sdd_core import machine
-from sdd_core.codec import canonical, run_json
+from sdd_core.codec import canonical, encode, run_json
+from sdd_core.editor import FlowChange, changed_flow
 from sdd_core.graph import acyclic, validate
 from sdd_core.models import RECORD_ID, Cause, Run
 from sdd_core.ports import Conflict
@@ -123,6 +125,66 @@ class RunCommands:
             db.relocate(run_id, db.location(run_id).workspace, claim)
             db.set_dependencies(run_id, dependencies)
             state = db.apply(run, transition)
+            db.save_command(request_id, request, run_json(state))
+            return state
+
+    def change_flow(
+        self,
+        run_id: str,
+        changes: tuple[FlowChange, ...],
+        request_id: str,
+        expected: int,
+        now: float,
+    ) -> Run:
+        """Publish the run's workflow with `changes` as a new version and migrate the run
+        onto it (see `machine.migrate`). Idempotent by request id."""
+        request = canonical(
+            [run_id, "change_flow", expected, [[type(c).__name__, encode(c)] for c in changes]]
+        )
+        with self.runs.store.unit() as db:
+            done = replayed(db, request_id, request)
+            if done is not None:
+                return done
+        new, moved = changed_flow(self.runs.workflow_of(run_id), changes)
+        digest = self.runs.store.publish(new)
+        return self._migrate(run_id, digest, moved, request_id, request, expected, now)
+
+    def migrate(
+        self,
+        run_id: str,
+        digest: str,
+        moved: Mapping[str, str],
+        request_id: str,
+        expected: int,
+        now: float,
+    ) -> Run:
+        """Move an idle run onto the published workflow `digest`. Idempotent by request id."""
+        request = canonical([run_id, "migrate", expected, digest, sorted(moved.items())])
+        return self._migrate(run_id, digest, moved, request_id, request, expected, now)
+
+    def _migrate(
+        self,
+        run_id: str,
+        digest: str,
+        moved: Mapping[str, str],
+        request_id: str,
+        request: str,
+        expected: int,
+        now: float,
+    ) -> Run:
+        """The project's mandatory gates still hold; a live attempt or a stale version is
+        refused."""
+        new = self.runs.flow(digest)
+        with self.runs.store.unit() as db:
+            done = replayed(db, request_id, request)
+            if done is not None:
+                return done
+            run = db.run(run_id)
+            if run.version != expected:
+                raise Conflict("Stale flow change; refresh the task")
+            validate(new, db.policy(db.location(run_id).workspace))
+            old = self.runs.flow(run.workflow_digest)
+            state = db.apply(run, machine.migrate(run, old, new, digest, now, moved))
             db.save_command(request_id, request, run_json(state))
             return state
 

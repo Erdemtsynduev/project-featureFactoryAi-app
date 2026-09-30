@@ -7,7 +7,7 @@ one of these rules in its own query language.
 from collections.abc import Callable, Iterable
 
 from sdd_core import machine
-from sdd_core.models import LIVE_EFFECT_STATUSES, SETTLED_STATUSES, UNPINNED_KINDS, Run
+from sdd_core.models import LIVE_EFFECT_STATUSES, SETTLED_STATUSES, UNPINNED_KINDS, Run, Transition
 from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE, Conflict, EffectRecord
 
 
@@ -99,3 +99,14 @@ def check_discard(
     for run_id, prerequisite in edges:
         if prerequisite in wanted and run_id not in wanted:
             raise ValueError(f"Run {run_id} depends on {prerequisite}")
+
+
+def check_transition(before: Run, transition: Transition) -> None:
+    """A transition advances the run's version by one, and changes its workflow only
+    as a recorded migration."""
+    after = transition.state
+    if after.id != before.id or after.version != before.version + 1:
+        raise ValueError("Invalid transition version")
+    migrated = any(event.kind == "workflow_migrated" for event in transition.events)
+    if after.workflow_digest != before.workflow_digest and not migrated:
+        raise ValueError("A run changes its workflow only by migration")

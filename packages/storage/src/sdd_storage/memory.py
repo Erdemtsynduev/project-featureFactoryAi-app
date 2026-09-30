@@ -27,6 +27,7 @@ from sdd_core.storage_rules import (
     check_discard,
     check_execution_binding,
     check_immutable,
+    check_transition,
     live_process,
     pin_changes,
     runnable,
@@ -66,9 +67,8 @@ class MemoryUnit:
         return self.state.runs[identifier]
 
     def apply(self, before: Run, transition: Transition) -> Run:
+        check_transition(before, transition)
         after = transition.state
-        if after.id != before.id or after.version != before.version + 1:
-            raise ValueError("Invalid transition version")
         if self.run(before.id).version != before.version:
             raise StaleVersion("Stale state version")
         self.state.runs[before.id] = after

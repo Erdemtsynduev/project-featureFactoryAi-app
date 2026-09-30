@@ -6,9 +6,11 @@ dispatch), `ResultIntake` (results and lost attempts) and `HumanAnswers` (what a
 run asks and the answers it gets). Each depends only on core ports.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from sdd_core.admission import QueueBudget, Slots
+from sdd_core.editor import FlowChange
 from sdd_core.models import Cause, Result, Run, Workflow
 from sdd_core.ports import StateStore, Workspace
 from sdd_core.sdk import ProjectAdapter
@@ -122,6 +124,27 @@ class ApplicationEngine:
         now: float,
     ) -> Run:
         return self.commands.revise(run_id, context, claim, dependencies, request_id, expected, now)
+
+    def change_flow(
+        self,
+        run_id: str,
+        changes: tuple[FlowChange, ...],
+        request_id: str,
+        expected: int,
+        now: float,
+    ) -> Run:
+        return self.commands.change_flow(run_id, changes, request_id, expected, now)
+
+    def migrate(
+        self,
+        run_id: str,
+        digest: str,
+        moved: Mapping[str, str],
+        request_id: str,
+        expected: int,
+        now: float,
+    ) -> Run:
+        return self.commands.migrate(run_id, digest, moved, request_id, expected, now)
 
     def relocate(self, run_id: str, workspace: str, claim: str, now: float) -> Run:
         return self.commands.relocate(run_id, workspace, claim, now)

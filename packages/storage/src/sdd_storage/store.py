@@ -19,7 +19,7 @@ from sdd_core.graph import validate
 from sdd_core.models import Run, Transition, Workflow
 from sdd_core.ports import Conflict as Conflict
 from sdd_core.ports import StaleVersion, UnitOfWork
-from sdd_core.storage_rules import check_dependencies, check_discard, same_input
+from sdd_core.storage_rules import check_dependencies, check_discard, check_transition, same_input
 
 from sdd_storage.catalog import SQLiteCatalog
 from sdd_storage.unit import SQLiteUnit
@@ -268,9 +268,8 @@ class Store:
 
     @staticmethod
     def apply(db: sqlite3.Connection, before: Run, transition: Transition) -> Run:
+        check_transition(before, transition)
         after = transition.state
-        if after.id != before.id or after.version != before.version + 1:
-            raise ValueError("Invalid transition version")
         cursor = db.execute(
             "UPDATE runs SET state=?,version=? WHERE id=? AND version=?",
             (run_json(after), after.version, after.id, before.version),

@@ -39,6 +39,10 @@ class UnitOfWork(
 class StateStore(Protocol):
     def unit(self) -> AbstractContextManager[UnitOfWork]: ...
     def workflow(self, identifier: str) -> Workflow: ...
+    def publish(self, workflow: Workflow, mandatory: tuple[str, ...] = ()) -> str:
+        """Validate and store an immutable workflow version; returns its digest."""
+        ...
+
     def get(self, identifier: str) -> Run:
         """A snapshot read outside any transaction, for display and pre-checks; a
         decision that writes re-reads the run inside its unit of work."""
