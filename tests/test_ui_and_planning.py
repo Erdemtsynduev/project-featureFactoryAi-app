@@ -61,7 +61,9 @@ def test_queue_budget_is_shared_and_survives_new_engine(tmp_path, any_store):
         ),
     )
     definition = store.publish(flow)
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(), max_queue_calls=1)
+    engine = ApplicationEngine(
+        store, GitProject(), LocalWorkspace(tmp_path / "engine-work"), max_queue_calls=1
+    )
     for name in ("one", "two"):
         root = tmp_path / name
         root.mkdir()
@@ -72,7 +74,9 @@ def test_queue_budget_is_shared_and_survives_new_engine(tmp_path, any_store):
     with pytest.raises(Conflict, match="not dispatchable"):
         engine.dispatch("one", 2, "duplicate")
     assert store.get("one") == before
-    restarted = ApplicationEngine(store, GitProject(), LocalWorkspace(), max_queue_calls=1)
+    restarted = ApplicationEngine(
+        store, GitProject(), LocalWorkspace(tmp_path / "engine-work"), max_queue_calls=1
+    )
     blocked = restarted.dispatch("two", 3, "second")
     assert blocked.status == "blocked" and blocked.spend.calls == 0
 

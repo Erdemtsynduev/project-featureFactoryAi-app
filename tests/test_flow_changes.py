@@ -111,7 +111,7 @@ def test_a_started_run_changes_its_flow_through_the_engine(any_store, tmp_path):
     from sdd_runtime.git import GitProject
     from sdd_runtime.workspace import LocalWorkspace
 
-    engine = ApplicationEngine(any_store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(any_store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     run = engine.create("t", any_store.publish(FLOW), tmp_path, "brief", "rev", 1)
     engine.command("t", "resume", "go", run.version, 2)
     started = engine.dispatch("t", 3, "a1")

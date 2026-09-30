@@ -13,7 +13,6 @@ from pathlib import Path
 from sdd_core.models import Json, Run
 from sdd_core.sdk import STDERR_LOG, STDOUT_LOG
 from sdd_runtime.engine import Engine
-from sdd_runtime.files import attempt_folder
 
 from sdd_factory.journal import FlightLog
 
@@ -60,12 +59,10 @@ def _tail(path: Path) -> str:
 
 def record(engine: Engine, log: FlightLog, run_id: str) -> FlightRecord:
     run = engine.store.get(run_id)
-    with engine.store.unit() as db:
-        root = Path(db.location(run_id).workspace)
     attempt = run.active.id if run.active else run.previous_attempt
     files: dict[str, str] = {}
     if attempt:
-        folder = attempt_folder(root, run_id, attempt)
+        folder = Path(engine.workspace.folder(run_id, attempt))
         files = {name: _tail(folder / name) for name in FILES if (folder / name).is_file()}
     return FlightRecord(
         time.time(),
@@ -128,9 +125,7 @@ def live(engine: Engine, run_id: str, hosted: bool) -> dict[str, object]:
     now = time.time()
     if run.active is None:
         return {"active": False, "now": now}
-    with engine.store.unit() as db:
-        root = Path(db.location(run_id).workspace)
-    folder = attempt_folder(root, run_id, run.active.id)
+    folder = Path(engine.workspace.folder(run_id, run.active.id))
     streams: dict[str, object] = {}
     last_output = None
     for name in (STDOUT_LOG, STDERR_LOG):

@@ -4,6 +4,7 @@ The CLI and the UI application both compose through this module, so use cases
 never import concrete adapters and neither front end imports the other.
 """
 
+import os
 import time
 from pathlib import Path
 
@@ -14,10 +15,15 @@ from sdd_storage.store import Store
 from sdd_runtime.engine import Engine
 from sdd_runtime.plugins import load_extensions
 
+# Overrides where the engine keeps attempt files and lanes (a short path helps on
+# Windows, whose paths are limited); by default they lie beside the database.
+WORK_VARIABLE = "FFAI_WORK"
+
 
 def local_engine(database: Path) -> Engine:
     """SQLite state, Git revisions and local files."""
-    return Engine(Store(database))
+    chosen = os.environ.get(WORK_VARIABLE, "").strip()
+    return Engine(Store(database), work=Path(chosen).resolve() if chosen else None)
 
 
 def registry(config: Path | None) -> Registry:

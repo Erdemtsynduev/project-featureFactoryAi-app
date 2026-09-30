@@ -13,7 +13,7 @@ from sdd_core.memory import notes
 from sdd_core.models import PLAN_CHANGE_KINDS, TICKET_NEEDS, Artifact, Json, Result
 from sdd_core.plan_changes import plan_changes_of
 from sdd_core.questions import questions
-from sdd_core.sdk import STDERR_LOG, STDOUT_LOG, Launch, Manifest, Packet
+from sdd_core.sdk import STDERR_LOG, STDOUT_LOG, Launch, Manifest, Packet, evidence_name
 from sdd_core.tickets import features_of, tickets_of
 
 from sdd_providers import budget
@@ -22,11 +22,12 @@ from sdd_providers.failures import classify
 
 
 def artifact(path: Path, packet: Packet, revision: str) -> Artifact:
-    return Artifact(
-        path.resolve().relative_to(Path(packet.workspace).resolve()).as_posix(),
-        hashlib.sha256(path.read_bytes()).hexdigest(),
-        revision,
+    name = evidence_name(
+        path.resolve().as_posix(),
+        Path(packet.workspace).resolve().as_posix(),
+        Path(packet.directory).resolve().as_posix(),
     )
+    return Artifact(name, hashlib.sha256(path.read_bytes()).hexdigest(), revision)
 
 
 class CommandHandler:

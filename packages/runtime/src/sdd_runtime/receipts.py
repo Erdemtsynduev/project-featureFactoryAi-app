@@ -9,7 +9,7 @@ from sdd_core.models import Result
 from sdd_core.sdk import Packet, Registry, handler_key
 
 from sdd_runtime.application import ApplicationEngine
-from sdd_runtime.files import atomic_write, verify_evidence
+from sdd_runtime.files import atomic_write
 from sdd_runtime.launcher import Launcher
 from sdd_runtime.supervisor import Plan
 
@@ -57,7 +57,7 @@ class Receipts:
                 raise ValueError("Workspace changed after completion")
         else:
             result = self._handler_result(packet, exit_code, current)
-        verify_evidence(result.artifacts, Path(packet.workspace), current)
+        self.engine.workspace.verify(result, packet.workspace, current)
         atomic_write(receipt, result_json(result))
         return result
 

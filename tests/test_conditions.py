@@ -79,7 +79,7 @@ def test_unknown_step_is_a_value_error():
 def test_application_routes_on_previous_human_answer(tmp_path, any_store):
     store = any_store
     definition = store.publish(branching())
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     engine.create("one", definition, tmp_path, "test", "rev", 0)
     engine.command("one", "resume", "resume", 0, 1)
     run = engine.dispatch("one", 2, "ask-1")

@@ -3,6 +3,9 @@
 A run executes in one workspace folder. Its claim is the set of paths it owns:
 by default the whole workspace, or explicit sub-repositories of a multi-repo
 workspace. Claims decide both resource ownership and the observed revision.
+
+What the engine itself writes for a run (attempt files, its lane) lives in the
+engine's work folder, outside every project: a project receives only its code.
 """
 
 import json
@@ -12,8 +15,13 @@ from pathlib import Path
 from sdd_core.codec import canonical
 from sdd_core.evidence import durable_evidence
 from sdd_core.models import Result
+from sdd_core.sdk import ENGINE_DIRECTORY
 
-from sdd_runtime.files import ENGINE_DIRECTORY, verify_evidence
+from sdd_runtime.files import locate, verify_evidence
+
+# Folders of the engine's work folder: attempt files per run, and lanes per run.
+ATTEMPTS = "engine"
+LANES = "lanes"
 
 
 def claim_paths(claim: str) -> tuple[str, ...]:
@@ -62,6 +70,18 @@ def overlaps(left: str, right: str) -> bool:
 
 
 class LocalWorkspace:
+    def __init__(self, work: Path) -> None:
+        """`work` is the engine's own folder (see `files.work_folder`)."""
+        self.attempts, self.lanes = work / ATTEMPTS, work / LANES
+
+    def folder(self, run_id: str, attempt_id: str = "") -> str:
+        return (
+            str(self.attempts / run_id / attempt_id) if attempt_id else str(self.attempts / run_id)
+        )
+
+    def lane(self, run_id: str) -> str:
+        return str(self.lanes / run_id)
+
     def resolve(self, path: str) -> str:
         return str(Path(path).resolve(strict=True))
 
@@ -75,15 +95,18 @@ class LocalWorkspace:
         return overlaps(left, right)
 
     def normalize(self, run_id: str, result: Result, workspace: str) -> Result:
-        root = Path(workspace).resolve()
+        root, attempts = Path(workspace).resolve(), self.attempts.resolve()
         artifacts = []
         for artifact in result.artifacts:
-            path = (root / artifact.path).resolve()
-            if not path.is_relative_to(root):
-                raise ValueError("Evidence escapes workspace")
-            artifacts.append(replace(artifact, path=path.relative_to(root).as_posix()))
+            path = locate(artifact.path, root, attempts)
+            name = (
+                f"{ENGINE_DIRECTORY}/{path.relative_to(attempts).as_posix()}"
+                if path.is_relative_to(attempts)
+                else path.relative_to(root).as_posix()
+            )
+            artifacts.append(replace(artifact, path=name))
         checkpoint = f"{ENGINE_DIRECTORY}/{run_id}/checkpoint.md"
         return replace(result, artifacts=durable_evidence(tuple(artifacts), checkpoint))
 
     def verify(self, result: Result, workspace: str, revision: str) -> None:
-        verify_evidence(result.artifacts, Path(workspace), revision)
+        verify_evidence(result.artifacts, Path(workspace), self.attempts, revision)

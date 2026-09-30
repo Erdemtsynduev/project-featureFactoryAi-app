@@ -181,6 +181,6 @@ def test_timed_out_attempt_leaves_no_writer_behind(tmp_path):
         assert not (workspace / "late.txt").exists()
         coordinator.tick(time.time() + 10)
         assert coordinator.engine.store.get("one").reason != "Workspace changed outside attempt"
-        assert list(workspace.glob(".sdd-engine/*/*/containment.json"))
+        assert list(tmp_path.glob("engine.work/engine/*/*/containment.json"))
     finally:
         coordinator.close()

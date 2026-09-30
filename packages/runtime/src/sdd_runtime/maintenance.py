@@ -5,12 +5,13 @@ import time
 from pathlib import Path
 
 from sdd_core.codec import result_load
-from sdd_core.ports import StateStore
+from sdd_core.ports import StateStore, Workspace
+from sdd_core.sdk import evidence_name
 
-from sdd_runtime.files import attempt_folder
 
-
-def archive_diagnostics(store: StateStore, older_than_days: int = 30) -> tuple[str, ...]:
+def archive_diagnostics(
+    store: StateStore, workspace: Workspace, older_than_days: int = 30
+) -> tuple[str, ...]:
     if older_than_days < 1:
         raise ValueError("Retention must be positive")
     cutoff = time.time() - older_than_days * 86400
@@ -18,12 +19,13 @@ def archive_diagnostics(store: StateStore, older_than_days: int = 30) -> tuple[s
     with store.unit() as db:
         rows = db.effects(("done",))
     for row in rows:
-        root = Path(row.workspace)
-        folder = attempt_folder(root, row.run_id, row.id)
+        root = Path(row.workspace).resolve().as_posix()
+        folder = Path(workspace.folder(row.run_id, row.id)).resolve()
         result = result_load(row.receipt or "{}")
-        protected = {(root / artifact.path).resolve() for artifact in result.artifacts}
+        protected = {artifact.path for artifact in result.artifacts}
         for path in folder.glob("*.log"):
-            if path.resolve() in protected or path.stat().st_mtime >= cutoff:
+            name = evidence_name(path.resolve().as_posix(), root, folder.as_posix())
+            if name in protected or path.stat().st_mtime >= cutoff:
                 continue
             target = path.with_suffix(path.suffix + ".gz")
             if target.exists():

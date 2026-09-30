@@ -184,6 +184,15 @@ its neighbours). The `RepositoryLinks` port reads and writes pins. The first ada
 `GitSubmodules` in `sdd_runtime.submodules`, the only code that knows `.gitmodules`; the
 adapter is chosen per repository by what it contains.
 
+**A project receives only its code.** Everything the engine writes for a run lives in its
+work folder, `<database name>.work` beside the database (`FFAI_WORK` overrides it):
+`engine/<run>/<attempt>/` holds the packet, logs and receipt of each attempt and
+`engine/<run>/lane.json` the lane's record; `lanes/<run>/` is the lane itself, a git
+worktree per owned repository with the rest of the workspace linked in. The `Workspace`
+port names both places (`folder`, `lane`). In a project the engine leaves the branch
+`ffai/<run>`, the worktree's registration inside `.git` while the lane exists, and the
+merged commits: no file of the working tree and no ignore rule.
+
 A lane checks out every linked dependency at its pinned commit where the repository links it
 (a detached worktree of the main dependency), so the lane builds and runs like the workspace.
 Isolated ticket flows run a deterministic `commit` operation (`lane-commit`) after every agent

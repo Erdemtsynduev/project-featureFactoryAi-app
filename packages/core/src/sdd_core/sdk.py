@@ -12,6 +12,33 @@ STDOUT_LOG = "stdout.log"
 STDERR_LOG = "stderr.log"
 # The attempt packet the engine writes before launch, for handlers that run later.
 PACKET_FILE = "packet.json"
+# The name an attempt's own files go by as evidence. They are the engine's files, not
+# the project's: the engine keeps them in its own folder, outside every workspace.
+ENGINE_DIRECTORY = ".sdd-engine"
+
+
+def _within(path: str, root: str) -> str | None:
+    """`path` relative to `root`, or None when it is not inside it."""
+    prefix = root.rstrip("/") + "/"
+    return path[len(prefix) :] if path.startswith(prefix) else None
+
+
+def evidence_name(path: str, workspace: str, folder: str) -> str:
+    """The name a file is recorded by as evidence. The three paths are absolute,
+    resolved and written with forward slashes.
+
+    A file of the attempt's folder `<...>/<run>/<attempt>` is named
+    `.sdd-engine/<run>/<attempt>/<file>`, wherever the engine keeps that folder. Any
+    other file must be in the workspace and is named relative to it.
+    """
+    inside = _within(path, folder)
+    if inside is not None:
+        run, attempt = folder.rstrip("/").split("/")[-2:]
+        return "/".join((ENGINE_DIRECTORY, run, attempt, inside))
+    inside = _within(path, workspace)
+    if inside is None:
+        raise ValueError("Evidence must be a file of the workspace or of the attempt")
+    return inside
 
 
 def handler_key(step: Step) -> str:

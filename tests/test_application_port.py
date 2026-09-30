@@ -23,7 +23,7 @@ def application(any_store, tmp_path):
         ),
     )
     definition = store.publish(flow)
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     engine.create("one", definition, tmp_path, "test", "rev", 0)
     engine.command("one", "resume", "resume", 0, 1)
     return engine

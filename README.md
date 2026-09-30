@@ -198,7 +198,10 @@ verified evidence; a model's success claim alone is insufficient.
 | `sdd-trackers` | Tracker adapters (Linear): work items in, specification, tickets and states out |
 
 Python module names `sdd_*`, extension groups `sdd.handlers`, `sdd.agents`,
-`sdd.executors`, and `.sdd-engine` remain stable technical contracts.
+`sdd.executors`, and the `.sdd-engine/` prefix of evidence names remain stable technical
+contracts. The engine writes nothing into a project but its code: attempt files and
+ticket lanes live in the engine's work folder `<database name>.work` beside the database
+(set `FFAI_WORK` to a short path where Windows path limits matter).
 Runtime services do not require `sdd-storage` in custom compositions. In-memory
 storage is for tests, not durable queues. See [Replacing modules](docs/REPLACING-MODULES.md)
 and [Architecture](docs/ARCHITECTURE.md).

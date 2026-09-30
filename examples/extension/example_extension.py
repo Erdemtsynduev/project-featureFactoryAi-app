@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sdd_core.execution import ExecutionHandle, ExecutionObservation, ExecutionRequest
 from sdd_core.models import Artifact, Result, Usage
-from sdd_core.sdk import Launch, Manifest, Packet
+from sdd_core.sdk import Launch, Manifest, Packet, evidence_name
 
 
 class ExampleHandler:
@@ -19,11 +19,13 @@ class ExampleHandler:
 
     def collect(self, packet: Packet, exit_code: int, revision: str) -> Result:
         path = Path(packet.directory) / "stdout.log"
-        proof = Artifact(
-            path.relative_to(Path(packet.workspace)).as_posix(),
-            hashlib.sha256(path.read_bytes()).hexdigest(),
-            revision,
+        # The attempt's folder is the engine's, not the project's: the SDK names its files.
+        name = evidence_name(
+            path.resolve().as_posix(),
+            Path(packet.workspace).resolve().as_posix(),
+            Path(packet.directory).resolve().as_posix(),
         )
+        proof = Artifact(name, hashlib.sha256(path.read_bytes()).hexdigest(), revision)
         return Result(
             packet.attempt.id,
             packet.attempt.generation,

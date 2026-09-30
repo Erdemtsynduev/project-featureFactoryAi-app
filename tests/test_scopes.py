@@ -57,9 +57,6 @@ def test_revision_tracks_every_change_against_head(tmp_path):
     assert revision(repo) not in (clean, modified, untracked)
     git(repo, "checkout", "--", "README.md")
     assert revision(repo) == clean
-    (repo / ".sdd-engine").mkdir()
-    (repo / ".sdd-engine" / "scratch").write_text("ignored", encoding="utf-8")
-    assert revision(repo) == clean
     git(repo, "mv", "README.md", "RENAMED.md")
     assert revision(repo) != clean
 
@@ -107,7 +104,7 @@ def test_scoped_runs_own_only_their_repositories(tmp_path, workspace):
         ),
     )
     definition = store.publish(flow)
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     alpha = engine.create("alpha", definition, workspace, "", None, 0, scope=("libraries/alpha",))
     beta = engine.create("beta", definition, workspace, "", None, 0, scope=("libraries/beta",))
     both = engine.create(

@@ -3,6 +3,7 @@
 import json
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from sdd_core.models import Attempt, Effect, Run, Step, Transition, Workflow
@@ -43,9 +44,9 @@ def test_an_attempt_records_the_handler_it_ran_with(tmp_path):
     coordinator = runtime(tmp_path)
     try:
         assert coordinator.tick(time.time()) == 1
-        (folder,) = [
-            p for p in (tmp_path / "workspace" / ".sdd-engine" / "one").iterdir() if p.is_dir()
-        ]
+        run_folder = Path(coordinator.engine.workspace.folder("one"))
+        (folder,) = [p for p in run_folder.iterdir() if p.is_dir()]
+        assert not list((tmp_path / "workspace").iterdir()), "the project gets no engine files"
         handler = json.loads((folder / "handler.json").read_text(encoding="utf-8"))
         assert handler["id"] == "command"
         settle(coordinator)

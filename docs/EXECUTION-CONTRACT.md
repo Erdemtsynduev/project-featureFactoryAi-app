@@ -70,8 +70,12 @@ A failed gate removes its previous successful verdict. A mutating step invalidat
 gates. Non-finite time cannot bypass deadlines. A lost attempt with model reservations
 conservatively marks usage unknown; token totals do not imply zero expenditure.
 
+An attempt's own files (packet, logs, receipt) are not workspace files. The engine
+keeps them in its work folder, outside every project, and as evidence they are named
+`.sdd-engine/<run-id>/<attempt-id>/<file>` wherever that folder is
+(`sdd_core.sdk.evidence_name`); any other evidence is named relative to the workspace.
 The current run's `.sdd-engine/<run-id>/checkpoint.md` is continuation state.
-Workspace-normalized evidence paths exclude only this exact checkpoint. Checkpoint-only
+Normalized evidence names exclude only this exact checkpoint. Checkpoint-only
 proof is rejected; other handoff/checkpoint files remain protected by hashes.
 Legacy blocked-ticket migration and its one-time independent-review recovery remain
 in the existing orchestrator; no live historical queue is imported here.

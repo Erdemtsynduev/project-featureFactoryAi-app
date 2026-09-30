@@ -105,7 +105,7 @@ def test_real_command_uses_transport_neutral_driver(tmp_path, exit_code):
     engine.dispatch("r", now, "command")
     driver = ExecutionDriver(engine, backend)
     payload = Plan(
-        str(workspace / ".sdd-engine" / "executions" / "command"),
+        engine.workspace.folder("r", "command"),
         str(workspace),
         (sys.executable, "-c", f"print('proof'); raise SystemExit({exit_code})"),
         str(workspace),

@@ -23,7 +23,7 @@ def test_supervisor_death_terminates_coordinator_and_worker(tmp_path, iteration)
         deadline = time.monotonic() + 10
         worker = None
         while time.monotonic() < deadline:
-            pid = host_pid(tmp_path / "workspace")
+            pid = host_pid(tmp_path)
             if pid:
                 worker = psutil.Process(pid)
                 break

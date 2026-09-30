@@ -46,7 +46,7 @@ class Launcher:
                     db.bind_handler(run_id, handler_key(step), document)
 
     def packet(self, run_id: str) -> Packet:
-        return build_packet(self.engine.store, self.registry, run_id)
+        return build_packet(self.engine.store, self.registry, run_id, self.engine.workspace)
 
     def prepare(self, run_id: str) -> tuple[Packet, Plan]:
         """The dispatched attempt's packet and launch plan, its files written.

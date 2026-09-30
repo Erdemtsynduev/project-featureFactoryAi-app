@@ -103,7 +103,7 @@ def command_result(request: ExecutionRequest, plan: Plan, exit_code: int) -> Res
         outcome,
         "Command completed",
         current,
-        (evidence(stdout, workspace, current),),
+        (evidence(stdout, workspace, Path(plan.folder), current),),
     )
 
 

@@ -25,7 +25,9 @@ FLOW = Workflow(
 
 @pytest.fixture
 def engine(any_store, tmp_path):
-    return ApplicationEngine(any_store, GitProject(), LocalWorkspace()), tmp_path
+    return ApplicationEngine(
+        any_store, GitProject(), LocalWorkspace(tmp_path / "engine-work")
+    ), tmp_path
 
 
 def create(engine, run_id, root, dependencies=(), context="brief"):

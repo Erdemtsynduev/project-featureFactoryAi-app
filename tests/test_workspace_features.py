@@ -32,7 +32,7 @@ def test_message_persists_once_and_enters_next_packet(tmp_path, any_store):
             Step("finish", "finish"),
         ),
     )
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     engine.create("one", store.publish(flow), root, "Original", revision(root), 0)
     run = engine.message("one", "Ответы на русском", "message", 0, 1)
     assert run.paused and run.spend.calls == 0
@@ -53,7 +53,7 @@ def test_recovery_reconciles_changed_revision_without_bypassing_gates(tmp_path, 
     store = any_store
     root = tmp_path / "project"
     root.mkdir()
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     flow = main_flow()
     engine.create("one", store.publish(flow), root, "Requirement", revision(root), 0)
     engine.command("one", "resume", "resume", 0, 1)
@@ -91,7 +91,7 @@ def test_an_attempt_that_changed_nothing_is_retried_or_restarted_not_reconciled(
     store = any_store
     root = tmp_path / "project"
     root.mkdir()
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     engine.create("one", store.publish(main_flow()), root, "Requirement", revision(root), 0)
     engine.command("one", "resume", "resume", 0, 1)
     for index in range(2):
@@ -203,7 +203,7 @@ def test_retry_after_the_call_limit_grants_the_workflow_budget_once_more(tmp_pat
         ),
         max_calls=1,
     )
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     engine.create("one", store.publish(flow), root, "Task", revision(root), 0)
     engine.command("one", "resume", "resume", 0, 1)
     run = engine.dispatch("one", 2, "first")

@@ -50,9 +50,10 @@ def runtime(tmp_path, code="print('ok')", timeout=30, argv=None):
     return Coordinator(engine, registry)
 
 
-def host_pid(workspace):
-    """The PID a running attempt's host recorded, once it has."""
-    for identity in workspace.glob(".sdd-engine/*/*/identity.json"):
+def host_pid(tmp_path):
+    """The PID a running attempt's host recorded, once it has (see `runtime`: the
+    engine's work folder lies beside its database, not in the workspace)."""
+    for identity in tmp_path.glob("engine.work/engine/*/*/identity.json"):
         return json.loads(identity.read_text(encoding="utf-8"))["pid"]
     return None
 
@@ -287,7 +288,7 @@ def test_restart_after_coordinator_killed(tmp_path):
         deadline = time.monotonic() + 10
         pid = None
         while time.monotonic() < deadline:
-            pid = host_pid(tmp_path / "workspace")
+            pid = host_pid(tmp_path)
             if pid:
                 break
             if process.poll() is not None:

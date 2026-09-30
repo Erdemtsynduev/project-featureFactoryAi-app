@@ -35,7 +35,7 @@ FLOW = Workflow(
 @pytest.fixture
 def engine(any_store, tmp_path):
     store = any_store
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     root = tmp_path / "project"
     root.mkdir()
     engine.root = root  # type: ignore[attr-defined]
@@ -62,9 +62,10 @@ def done(engine: ApplicationEngine, attempt: str = "a1", generation: int = 1) ->
         ({"max_operations": 0}, "At least one agent"),
     ],
 )
-def test_engine_refuses_impossible_budgets(options, message):
+def test_engine_refuses_impossible_budgets(tmp_path, options, message):
+    workspace = LocalWorkspace(tmp_path / "engine-work")
     with pytest.raises(ValueError, match=message):
-        ApplicationEngine(MemoryStore(), GitProject(), LocalWorkspace(), **options)
+        ApplicationEngine(MemoryStore(), GitProject(), workspace, **options)
 
 
 def test_create_refuses_bad_ids_and_oversized_context(engine):

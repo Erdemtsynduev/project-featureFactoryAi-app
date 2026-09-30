@@ -4,10 +4,11 @@ import hashlib
 import os
 import subprocess
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sdd_core import revision as revisions
 from sdd_core.models import Artifact
+from sdd_core.sdk import ENGINE_DIRECTORY, evidence_name
 
 from sdd_runtime.platform import NO_WINDOW
 
@@ -29,15 +30,14 @@ def atomic_write(path: Path, content: str) -> None:
             time.sleep(0.02 * (attempt + 1))
 
 
-# Engine scratch inside a workspace: packets, host receipts and logs per attempt.
-ENGINE_DIRECTORY = ".sdd-engine"
-# Isolated working copies of runs ("lanes"), one folder per run.
-LANES = ".sdd-lanes"
-SCRATCH = (".git", ENGINE_DIRECTORY, LANES, "__pycache__", ".venv", ".pytest_cache")
+# Folders of a workspace that are not its content.
+SCRATCH = (".git", "__pycache__", ".venv", ".pytest_cache")
 
 
-def attempt_folder(workspace: Path, run_id: str, attempt_id: str) -> Path:
-    return workspace / ENGINE_DIRECTORY / run_id / attempt_id
+def work_folder(database: Path) -> Path:
+    """The engine's own folder beside its database: attempt files and lanes live here,
+    so a project receives nothing but its code."""
+    return database.with_name(database.stem + ".work")
 
 
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
@@ -129,20 +129,42 @@ def revision(root: Path) -> str:
     return revisions.named(checksum.hexdigest())
 
 
-def evidence(path: Path, root: Path, current_revision: str) -> Artifact:
-    resolved = path.resolve(strict=True)
-    if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
-        raise ValueError("Evidence must be a workspace file")
+def _checksum(path: Path) -> str:
     checksum = hashlib.sha256()
-    with resolved.open("rb") as stream:
+    with path.open("rb") as stream:
         while block := stream.read(1024 * 1024):
             checksum.update(block)
-    return Artifact(
-        resolved.relative_to(root.resolve()).as_posix(), checksum.hexdigest(), current_revision
+    return checksum.hexdigest()
+
+
+def evidence(path: Path, workspace: Path, folder: Path, current_revision: str) -> Artifact:
+    """A file as evidence of the attempt whose folder is `folder` (see `evidence_name`)."""
+    resolved = path.resolve(strict=True)
+    if not resolved.is_file():
+        raise ValueError("Evidence must be a file")
+    name = evidence_name(
+        resolved.as_posix(), workspace.resolve().as_posix(), folder.resolve().as_posix()
     )
+    return Artifact(name, _checksum(resolved), current_revision)
 
 
-def verify_evidence(artifacts: tuple[Artifact, ...], root: Path, current_revision: str) -> None:
+def locate(name: str, workspace: Path, attempts: Path) -> Path:
+    """The file an evidence name means: an attempt's file under `attempts` (the engine's
+    folder of attempt files), else a file of the workspace."""
+    first, *rest = PurePosixPath(name).parts or ("",)
+    root = attempts if first == ENGINE_DIRECTORY else workspace
+    path = (root.joinpath(*rest) if first == ENGINE_DIRECTORY else root / name).resolve()
+    if not path.is_relative_to(root.resolve()):
+        raise ValueError("Evidence escapes workspace")
+    return path
+
+
+def verify_evidence(
+    artifacts: tuple[Artifact, ...], workspace: Path, attempts: Path, current_revision: str
+) -> None:
     for artifact in artifacts:
-        if evidence(root / artifact.path, root, current_revision) != artifact:
+        path = locate(artifact.path, workspace, attempts)
+        if not path.is_file() or artifact != Artifact(
+            artifact.path, _checksum(path), current_revision
+        ):
             raise ValueError("Stale or modified evidence")

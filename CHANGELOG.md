@@ -13,6 +13,18 @@ digest they were created with.
 
 ## Unreleased
 
+- **The engine writes nothing into a project but its code.** Attempt files (packets,
+  logs, receipts) and ticket lanes moved from `.sdd-engine/` and `.sdd-lanes/` inside
+  the project to the engine's work folder `<database name>.work` beside the database
+  (`FFAI_WORK` names another place, for a short path on Windows). The engine no longer
+  edits `.git/info/exclude`. A project keeps the branch `ffai/<run>` and the merged
+  commits. Evidence of an attempt is still named `.sdd-engine/<run>/<attempt>/<file>`
+  (`sdd_core.sdk.evidence_name`); a handler of your own names its evidence through it.
+  **Breaking:** `Workspace` gains `folder` and `lane`; `LocalWorkspace` takes the work
+  folder. Files that earlier releases left inside a project are not moved: delete
+  `.sdd-engine/` and `.sdd-lanes/` there. A ticket whose lane an earlier release opened
+  inside the project cannot continue: supersede it and plan its scope again.
+
 - **Ending an attempt no longer waits for zombies.** On Linux and macOS a process that
   ended stays in the process table until its parent reads its exit status. The lineage
   counted it as a survivor, so an end timed out with "Descendants outside containment

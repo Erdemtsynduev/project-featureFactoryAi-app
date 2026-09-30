@@ -224,7 +224,7 @@ def test_a_read_only_agent_starts_beside_unfinished_work_holding_its_paths(tmp_p
     from sdd_runtime.workspace import LocalWorkspace
 
     store = any_store
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     root = tmp_path / "work"
     root.mkdir()
     end = Step("end", "finish")
@@ -332,7 +332,7 @@ def test_revise_rewrites_only_a_never_started_run(tmp_path, any_store):
     from sdd_runtime.workspace import LocalWorkspace
 
     store = any_store
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     root = tmp_path / "work"
     root.mkdir()
     definition = store.publish(TICKET)
@@ -399,7 +399,7 @@ def test_a_packet_names_the_repositories_accepted_prerequisites_delivered(tmp_pa
     from sdd_storage.memory import MemoryStore
 
     store = MemoryStore()
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     root = tmp_path / "work"
     root.mkdir()
     done = store.publish(Workflow("done", "end", (Step("end", "finish"),)))

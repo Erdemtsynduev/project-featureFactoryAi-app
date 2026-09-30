@@ -1,11 +1,13 @@
 """Isolated working copies ("lanes"): one git worktree per task, as in Orca or a
 worktree-per-task factory.
 
-A lane lives at `<workspace>/.sdd-lanes/<run>/`. Every repository in the run's
-scope is a git worktree on branch `ffai/<run>`, created from the repository's
-current HEAD when the run first starts. Everything else in the workspace is
-linked (a junction on Windows, a symlink elsewhere) so tools and project checks
-see the same layout; linked folders are other checkouts and must not be edited.
+A lane lives in the engine's work folder, outside the project. Every repository in
+the run's scope is a git worktree on branch `ffai/<run>`, created from the
+repository's current HEAD when the run first starts. Everything else in the
+workspace is linked (a junction on Windows, a symlink elsewhere) so tools and
+project checks see the same layout; linked folders are other checkouts and must not
+be edited. The project itself gets the branch and, in its `.git`, the worktree's
+registration: no file of its working tree is written.
 
 Opening, linking dependencies and removing a lane live here; commit, rebase and integrate
 are lane steps (`lane_actions`).
@@ -16,10 +18,9 @@ import shutil
 import sys
 from pathlib import Path
 
-from sdd_runtime.files import ENGINE_DIRECTORY, LANES, atomic_write
+from sdd_runtime.files import atomic_write
 from sdd_runtime.git import git, is_repository_top
 from sdd_runtime.lane_model import (
-    LANE_FILE,
     Attached,
     Lane,
     LaneRepo,
@@ -28,7 +29,7 @@ from sdd_runtime.lane_model import (
 )
 from sdd_runtime.submodules import links_of
 
-SKIP = {".git", LANES, ENGINE_DIRECTORY}
+SKIP = {".git"}
 
 
 def link_folder(target: Path, link: Path) -> None:
@@ -60,10 +61,14 @@ def _mirror(source: Path, lane: Path, scope: set[Path]) -> None:
             link_folder(entry, lane / entry.name)
 
 
-def open_lane(workspace: Path, run_id: str, scope: tuple[Path, ...]) -> Lane:
-    """Create (or finish creating) the lane; safe to repeat after a crash."""
+def open_lane(
+    workspace: Path, run_id: str, scope: tuple[Path, ...], root: Path, record: Path
+) -> Lane:
+    """Create (or finish creating) the lane at `root` and write its `record`; safe to
+    repeat after a crash."""
     workspace = workspace.resolve()
-    root = workspace / LANES / run_id
+    root.mkdir(parents=True, exist_ok=True)
+    root = root.resolve()
     branch = lane_branch(run_id)
     scoped = {path.resolve() for path in scope} or {workspace}
     repos: list[LaneRepo] = []
@@ -96,13 +101,9 @@ def open_lane(workspace: Path, run_id: str, scope: tuple[Path, ...]) -> Lane:
     if scoped != {workspace}:
         _mirror(workspace, root, scoped)
     lane = Lane(run_id, str(workspace), str(root), repos)
-    atomic_write(root / LANE_FILE, lane.document())
-    for repo in repos:
-        _exclude(lane.work(repo), (LANE_FILE, ENGINE_DIRECTORY + "/"))
-    if is_repository_top(workspace):
-        _exclude(workspace, (LANES + "/",))
+    atomic_write(record, lane.document())
     attach_links(lane)
-    atomic_write(root / LANE_FILE, lane.document())
+    atomic_write(record, lane.document())
     return lane
 
 
@@ -134,36 +135,12 @@ def attach_links(lane: Lane) -> bool:
     return len(lane.attached) != before
 
 
-def _exclude(repo: Path, patterns: tuple[str, ...]) -> None:
-    """Add patterns to the repository's local exclude file, never to .gitignore.
-
-    Worktrees share `info/exclude` with their main repository, which is fine:
-    the patterns only name engine bookkeeping.
-    """
-    admin = Path(
-        git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
-    )
-    exclude = admin / "info" / "exclude"
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    current = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-    additions = [p for p in patterns if p not in current.split()]
-    if additions:
-        exclude.write_text(current.rstrip() + "\n" + "\n".join(additions) + "\n", encoding="utf-8")
-
-
-def remove_lane(lane: Lane) -> None:
-    """Delete worktrees, merged branches and links; never follow a link."""
-    written = Path(lane.root) / LANE_FILE
-    if written.is_file():
-        lane = load_lane(written.read_text(encoding="utf-8"))  # the lane's latest record
+def remove_lane(lane: Lane, record: Path) -> None:
+    """Delete worktrees, merged branches and links; never follow a link. The run's
+    attempt files are not in the lane, so they stay."""
+    if record.is_file():
+        lane = load_lane(record.read_text(encoding="utf-8"))  # the lane's latest record
     workspace, root = Path(lane.workspace), Path(lane.root)
-    evidence_dir = root / ENGINE_DIRECTORY
-    if evidence_dir.is_dir():
-        target = workspace / ENGINE_DIRECTORY
-        target.mkdir(exist_ok=True)
-        for item in evidence_dir.iterdir():
-            if not (target / item.name).exists():
-                shutil.move(str(item), str(target / item.name))
     # Attached dependencies first: they live inside the repositories' worktrees.
     for attached in sorted(lane.attached, key=lambda a: a.path.count("/"), reverse=True):
         source = workspace / attached.dependency
@@ -178,6 +155,7 @@ def remove_lane(lane: Lane) -> None:
         git(main, "worktree", "prune", check=False)
         git(main, "branch", "-d", repo.branch, check=False)  # only if merged
     _unlink_tree(root)
+    record.unlink(missing_ok=True)
 
 
 def _unlink_tree(path: Path) -> None:

@@ -272,7 +272,7 @@ def test_queue_caps_are_optional_and_consistent():
 
 def test_a_resting_profile_leaves_its_steps_unstarted(tmp_path):
     store = MemoryStore()
-    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace(tmp_path / "engine-work"))
     root = tmp_path / "project"
     root.mkdir()
     engine.create("one", store.publish(flow()), root, "", "rev", 0)

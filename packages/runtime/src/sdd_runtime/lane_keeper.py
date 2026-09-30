@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from sdd_runtime.application import ApplicationEngine
-from sdd_runtime.lane_model import LANE_VERSION, Lane, load_lane
+from sdd_runtime.lane_model import LANE_VERSION, Lane, lane_file, load_lane
 from sdd_runtime.lanes import attach_links, open_lane, remove_lane
 
 
@@ -12,6 +12,9 @@ class LaneKeeper:
         self.engine = engine
         # Runs whose lane is settled in this process; the database stays authoritative.
         self.cleaned: set[str] = set()
+
+    def _record(self, run_id: str) -> Path:
+        return lane_file(Path(self.engine.workspace.folder(run_id)))
 
     def open(self, run_id: str, now: float) -> None:
         """Give the run its isolated worktrees before its first attempt (idempotent)."""
@@ -34,7 +37,8 @@ class LaneKeeper:
             # Record the intent before touching any repository.
             with self.engine.store.unit() as db:
                 db.save_lane(run_id, Lane(run_id, str(main), "", status="opening").document())
-        lane = open_lane(main, run_id, scope)
+        root = Path(self.engine.workspace.lane(run_id))
+        lane = open_lane(main, run_id, scope, root, self._record(run_id))
         lane_claim = self.engine.workspace.claim(
             lane.root, tuple(repo.path for repo in lane.repos if repo.path != ".")
         )
@@ -58,7 +62,7 @@ class LaneKeeper:
         with self.engine.store.unit() as db:
             db.save_lane(run_id, lane.document())
         try:
-            remove_lane(lane)
+            remove_lane(lane, self._record(run_id))
         except (OSError, RuntimeError):
             return  # retried on the next pass; a locked file must not stop the queue
         lane.status = "removed"

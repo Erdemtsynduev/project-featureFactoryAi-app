@@ -13,7 +13,13 @@ def lane_branch(run_id: str) -> str:
     return "ffai/" + run_id
 
 
-LANE_FILE = ".sdd-lane.json"
+# The lane's record on disk, in the run's own folder beside its attempts: a lane
+# step reads it there, and nothing of the engine lies in a working copy.
+LANE_FILE = "lane.json"
+
+
+def lane_file(run_folder: Path) -> Path:
+    return run_folder / LANE_FILE
 
 
 RESULT_FILE = "lane-result.json"

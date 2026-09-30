@@ -8,10 +8,10 @@ from sdd_core.links import Link, infer_link, missing, stale
 from sdd_core.tickets import TicketDraft, one_repository, ticket_title
 from sdd_runtime.lane_actions import commit
 from sdd_runtime.lane_model import CommitMessages, LaneJob
-from sdd_runtime.lanes import attach_links, open_lane, remove_lane
+from sdd_runtime.lanes import attach_links
 from sdd_runtime.submodules import GitSubmodules, NoLinks, links_of
 from sdd_workflows.templates import ticket
-from test_lanes import git, repository
+from test_lanes import git, opened, removed, repository
 
 
 def submodule(app: Path, url: str, path: str) -> None:
@@ -92,19 +92,19 @@ def test_submodules_are_read_as_links_to_workspace_repositories(linked):
 
 
 def test_a_lane_checks_dependencies_out_where_the_repository_links_them(linked):
-    lane = open_lane(linked, "t1", (linked / "app",))
+    lane = opened(linked, "t1", (linked / "app",))
     work = Path(lane.root) / "app"
     assert (work / "addons" / "alpha" / "NAME").read_text(encoding="utf-8") == "alpha"
     assert {a.path for a in lane.attached} == {"app/addons/alpha", "app/addons/beta"}
     assert git(work, "status", "--porcelain") == "", "checked-out dependencies are clean"
     assert attach_links(lane) is False, "attaching again changes nothing"
-    remove_lane(lane)
+    removed(lane)
     worktrees = git(linked / "libraries" / "alpha", "worktree", "list")
     assert len(worktrees.splitlines()) == 1, "the dependency's lane worktree is gone"
 
 
 def test_commit_records_work_then_pins_what_prerequisites_delivered(linked):
-    lane = open_lane(linked, "t2", (linked / "app",))
+    lane = opened(linked, "t2", (linked / "app",))
     work = Path(lane.root) / "app"
     (work / "feature.txt").write_text("done", encoding="utf-8")
     alpha = linked / "libraries" / "alpha"
@@ -121,11 +121,11 @@ def test_commit_records_work_then_pins_what_prerequisites_delivered(linked):
     assert head(work / "addons" / "alpha") == head(alpha), "the lane shows the new pin"
     assert git(work, "status", "--porcelain") == ""
     assert commit(lane, job) == ("done", "Nothing to commit")
-    remove_lane(lane)
+    removed(lane)
 
 
 def test_a_delivered_dependency_without_a_link_is_linked_like_its_neighbours(linked):
-    lane = open_lane(linked, "t3", (linked / "app",))
+    lane = opened(linked, "t3", (linked / "app",))
     work = Path(lane.root) / "app"
     gamma = linked / "libraries" / "gamma"
     outcome, reason = commit(lane, LaneJob("Use gamma", delivered=("libraries/gamma",)))
@@ -136,16 +136,16 @@ def test_a_delivered_dependency_without_a_link_is_linked_like_its_neighbours(lin
     assert (work / "addons" / "gamma" / "NAME").read_text(encoding="utf-8") == "gamma"
     blocked = commit(lane, LaneJob("Use lint", delivered=("tools/lint",)))
     assert blocked[0] == "blocked" and "no neighbouring link" in blocked[1]
-    remove_lane(lane)
+    removed(lane)
 
 
 def test_a_repository_without_links_is_only_committed(linked):
     alpha = linked / "libraries" / "alpha"
-    lane = open_lane(linked, "t4", (alpha,))
+    lane = opened(linked, "t4", (alpha,))
     (Path(lane.root) / "libraries" / "alpha" / "new.txt").write_text("x", encoding="utf-8")
     outcome, reason = commit(lane, LaneJob("Alpha work", delivered=("libraries/beta",)))
     assert outcome == "done" and "alpha: work" in reason
-    remove_lane(lane)
+    removed(lane)
 
 
 # The ticket flow ------------------------------------------------------------------------------

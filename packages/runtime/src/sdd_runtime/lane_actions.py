@@ -30,13 +30,13 @@ from sdd_core.tickets import ticket_title
 from sdd_runtime.files import atomic_write, evidence
 from sdd_runtime.git import git, is_repository_top
 from sdd_runtime.lane_model import (
-    LANE_FILE,
     RESULT_FILE,
     Attached,
     CommitMessages,
     Lane,
     LaneJob,
     LaneRepo,
+    lane_file,
     load_lane,
 )
 from sdd_runtime.lanes import link_folder
@@ -236,7 +236,7 @@ class LaneHandler:
         self.manifest = Manifest("lane-" + action, "0.1.0", capabilities=("process", "operation"))
 
     def prepare(self, packet: Packet) -> Launch:
-        if not (Path(packet.workspace) / LANE_FILE).is_file():
+        if not lane_file(Path(packet.directory).parent).is_file():
             raise ValueError("This run has no isolated lane; merge steps need one")
         argv = (
             sys.executable,
@@ -259,7 +259,8 @@ class LaneHandler:
                 revision,
             )
         document = object_json(path.read_text(encoding="utf-8"))
-        proof: tuple[Artifact, ...] = (evidence(path, Path(packet.workspace), revision),)
+        folder = Path(packet.directory)
+        proof: tuple[Artifact, ...] = (evidence(path, Path(packet.workspace), folder, revision),)
         return Result(
             packet.attempt.id,
             packet.attempt.generation,
@@ -282,7 +283,9 @@ def job_of(directory: Path, run_id: str) -> LaneJob:
 
 def main() -> None:
     action, directory, run_id = sys.argv[1:4]
-    lane = load_lane(Path(LANE_FILE).read_text(encoding="utf-8"))
+    # The attempt's folder lies in the run's folder, beside the lane's record.
+    record = lane_file(Path(directory).parent)
+    lane = load_lane(record.read_text(encoding="utf-8"))
     if lane.run != run_id:
         raise SystemExit("Lane belongs to another run")
     try:
@@ -290,7 +293,7 @@ def main() -> None:
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         outcome, reason = "blocked", str(error)
     # Links a commit added belong to the lane record, so removing the lane finds them.
-    atomic_write(Path(lane.root) / LANE_FILE, lane.document())
+    atomic_write(record, lane.document())
     atomic_write(Path(directory) / RESULT_FILE, json.dumps({"outcome": outcome, "reason": reason}))
 
 
