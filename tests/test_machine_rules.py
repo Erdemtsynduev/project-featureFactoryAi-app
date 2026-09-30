@@ -288,3 +288,15 @@ def test_release_condition_gives_back_its_visit():
     run = ready(active=attempt, status="running", visits=(("route", 1),))
     released = machine.release_condition(run, 2).state
     assert released.active is None and dict(released.visits)["route"] == 0
+
+
+def test_a_revision_of_an_earlier_format_is_re_based_not_an_outside_change():
+    workflow = flow()
+    run = ready(workflow, gates=("check",))
+    current = machine.revision_named("abc")
+    assert machine.earlier_format(run.revision) and not machine.earlier_format(current)
+    rebased = machine.rebase_revision(run, current, 2).state
+    assert rebased.revision == current and rebased.gates == ()
+    assert rebased.status == run.status, "nothing is held"
+    with pytest.raises(ValueError, match="earlier format"):
+        machine.rebase_revision(rebased, machine.revision_named("def"), 3)

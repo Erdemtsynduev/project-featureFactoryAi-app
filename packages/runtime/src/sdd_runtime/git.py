@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from sdd_core.codec import canonical, object_json, text
+from sdd_core.machine import revision_named
 from sdd_core.sdk import Manifest
 
 from sdd_runtime.files import atomic_write, revision
@@ -44,7 +45,7 @@ class GitProject:
         path = Path(workspace)
         if not path.exists() and path.parent.is_dir():
             # A scoped repository that the run has not created yet.
-            return hashlib.sha256(b"absent:" + path.name.encode()).hexdigest()
+            return revision_named(hashlib.sha256(b"absent:" + path.name.encode()).hexdigest())
         return revision(path)
 
     @staticmethod

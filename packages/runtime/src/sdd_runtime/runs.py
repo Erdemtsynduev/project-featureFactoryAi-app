@@ -8,6 +8,7 @@ write then compares-and-swaps the run version and retries if it moved meanwhile.
 from collections.abc import Callable
 
 from sdd_core.codec import canonical, digest, run_load
+from sdd_core.machine import revision_named
 from sdd_core.models import Result, Run, Workflow
 from sdd_core.ports import Conflict, StaleVersion, StateStore, Workspace
 from sdd_core.records import CommandLog, ResultRecords
@@ -42,7 +43,9 @@ class RunContext:
         paths = self.workspace.paths(claim)
         if len(paths) == 1:
             return self.project.revision(paths[0])
-        return digest(canonical([[path, self.project.revision(path)] for path in paths]))
+        return revision_named(
+            digest(canonical([[path, self.project.revision(path)] for path in paths]))
+        )
 
     def observe(self, run_id: str) -> str:
         """Current revision of everything the run owns."""

@@ -129,6 +129,9 @@ class ApplicationEngine:
     def invalidate(self, run_id: str, revision: str, now: float) -> Run:
         return self.commands.invalidate(run_id, revision, now)
 
+    def rebase_revision(self, run_id: str, revision: str, now: float) -> Run:
+        return self.commands.rebase_revision(run_id, revision, now)
+
     def block(self, run_id: str, now: float, reason: str, cause: Cause = "blocked") -> Run:
         return self.commands.block(run_id, now, reason, cause)
 

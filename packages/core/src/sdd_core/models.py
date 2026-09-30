@@ -53,6 +53,7 @@ type EventKind = Literal[
     "condition_released",
     "dispatched",
     "lane_opened",
+    "revision_rebased",
     "limit",
     "operator_message",
     "paused",

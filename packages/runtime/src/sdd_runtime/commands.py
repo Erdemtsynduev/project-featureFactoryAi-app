@@ -173,6 +173,13 @@ class RunCommands:
                 raise Conflict("Cannot invalidate an active attempt")
             return db.apply(run, machine.invalidate(run, revision, now))
 
+    def rebase_revision(self, run_id: str, revision: str, now: float) -> Run:
+        with self.runs.store.unit() as db:
+            run = db.run(run_id)
+            if run.active:
+                raise Conflict("Cannot re-base an active attempt")
+            return db.apply(run, machine.rebase_revision(run, revision, now))
+
     def block(self, run_id: str, now: float, reason: str, cause: Cause = "blocked") -> Run:
         """Park one run with a visible reason; other runs keep being scheduled."""
         with self.runs.store.unit() as db:

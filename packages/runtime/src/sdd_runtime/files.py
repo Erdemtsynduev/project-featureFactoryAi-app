@@ -6,6 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from sdd_core.machine import revision_named
 from sdd_core.models import Artifact
 
 from sdd_runtime.platform import NO_WINDOW
@@ -110,7 +111,7 @@ def revision(root: Path) -> str:
             if any(part in SCRATCH for part in Path(name).parts):
                 continue
             checksum.update(f"{name}\0{content}\0".encode())
-        return checksum.hexdigest()
+        return revision_named(checksum.hexdigest())
     checksum = hashlib.sha256(b"no-git")
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
@@ -123,7 +124,7 @@ def revision(root: Path) -> str:
             with path.open("rb") as stream:
                 while block := stream.read(1024 * 1024):
                     checksum.update(block)
-    return checksum.hexdigest()
+    return revision_named(checksum.hexdigest())
 
 
 def evidence(path: Path, root: Path, current_revision: str) -> Artifact:

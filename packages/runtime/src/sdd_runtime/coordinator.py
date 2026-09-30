@@ -290,6 +290,8 @@ class Coordinator:
                 return False
             run = self.engine.store.get(run_id)
         observed = self.revision(run_id)
+        if observed != run.revision and machine.earlier_format(run.revision):
+            run = self.engine.rebase_revision(run_id, observed, now)
         if observed != run.revision:
             self.engine.invalidate(run_id, observed, now)
             return False
