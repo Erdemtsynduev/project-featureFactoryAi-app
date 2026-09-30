@@ -11,6 +11,15 @@ contract (workflow schema, result schema, storage schema, HTTP actions) needs a 
 minor version before 1.0 and a migration; existing tasks stay pinned to the workflow
 digest they were created with.
 
+## Unreleased
+
+- **Ending an attempt no longer waits for zombies.** On Linux and macOS a process that
+  ended stays in the process table until its parent reads its exit status. The lineage
+  counted it as a survivor, so an end timed out with "Descendants outside containment
+  have not terminated" although nothing was running.
+- CI shows each failed test as an annotation of the run. Tests of the Python install
+  manager's alias run only where the alias starts an interpreter, not the Store's stub.
+
 ## 0.5.0 — 2026-09-30
 
 - **Stopping a finished process group works on macOS.** macOS answers `EPERM` when a

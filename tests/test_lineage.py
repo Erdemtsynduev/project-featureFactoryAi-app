@@ -1,12 +1,13 @@
-import os
 import sys
 import time
-from pathlib import Path
 
+import psutil
 import pytest
+from sdd_runtime import lineage as lineages
 from sdd_runtime.lineage import Lineage
 from sdd_runtime.platform import Job
 from sdd_runtime.sandbox import Sandbox
+from test_interpreters import INSTALL_MANAGER, needs_install_manager
 from test_runtime import runtime
 
 
@@ -62,12 +63,27 @@ def test_lineage_reports_a_descendant_it_cannot_end():
         lineage.end(timeout=0.2)
 
 
-INSTALL_MANAGER = Path(os.environ.get("LOCALAPPDATA", ""), "Microsoft/WindowsApps/python.exe")
+def test_a_zombie_is_not_a_survivor(monkeypatch):
+    # POSIX keeps an ended child in the process table until its parent reads its exit
+    # status. It can run nothing, so an end must not wait for it.
+    class Listed:
+        def __init__(self, pid, parent, created, status):
+            self.pid = pid
+            self.info = {"ppid": parent, "create_time": created, "status": status}
+
+    listed = [
+        Listed(10, 1, 100.0, psutil.STATUS_RUNNING),
+        Listed(11, 10, 101.0, psutil.STATUS_ZOMBIE),
+        Listed(12, 10, 102.0, psutil.STATUS_SLEEPING),
+    ]
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs: listed)
+    assert lineages.process_table() == {10: (1, 100.0), 12: (10, 102.0)}
+    ended = Lineage(None, lineages.process_table, lambda pid, created: None)
+    ended.known = {11: 101.0}
+    ended.end(timeout=0.2)  # only a zombie is left: confirmed, no timeout
 
 
-@pytest.mark.skipif(
-    os.name != "nt" or not INSTALL_MANAGER.is_file(), reason="Python install manager alias"
-)
+@needs_install_manager
 def test_stop_ends_descendants_that_broke_away_from_the_job(tmp_path):
     # The install manager's `python.exe` runs its interpreter in a job that lets
     # children break away silently: they belong to no job, and a job stop alone
@@ -137,9 +153,7 @@ def test_a_restarted_owner_ends_what_the_durable_lineage_remembers(tmp_path):
     assert sorted(processes.ended) == [10, 11]
 
 
-@pytest.mark.skipif(
-    os.name != "nt" or not INSTALL_MANAGER.is_file(), reason="Python install manager alias"
-)
+@needs_install_manager
 def test_timed_out_attempt_leaves_no_writer_behind(tmp_path):
     # The feature_110-T48 incident end to end: a step times out while a process that
     # broke away from its job keeps working. The attempt must end with it, so the

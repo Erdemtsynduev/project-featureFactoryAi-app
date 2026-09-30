@@ -28,8 +28,12 @@ Table = dict[int, tuple[int, float]]
 
 
 def process_table() -> Table:
+    """Every process that can still run code. A zombie is a process that ended and
+    waits for its parent to read its exit status: it is never a survivor."""
     table: Table = {}
-    for process in psutil.process_iter(["ppid", "create_time"]):
+    for process in psutil.process_iter(["ppid", "create_time", "status"]):
+        if process.info["status"] == psutil.STATUS_ZOMBIE:
+            continue
         parent, created = process.info["ppid"], process.info["create_time"]
         if parent is not None and created is not None:
             table[process.pid] = (int(parent), float(created))

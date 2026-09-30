@@ -8,6 +8,13 @@ from sdd_runtime.platform import Job
 from sdd_runtime.sandbox import Sandbox
 
 ALIASES = Path(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps")
+INSTALL_MANAGER = ALIASES / "python.exe"
+# The alias exists on every Windows, but without the Python install manager it is the
+# Store's stub, which starts no interpreter: only a resolving alias is the real thing.
+needs_install_manager = pytest.mark.skipif(
+    os.name != "nt" or not INSTALL_MANAGER.is_file() or launched_by(str(INSTALL_MANAGER)) is None,
+    reason="Python install manager alias",
+)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows app execution aliases")
@@ -30,11 +37,9 @@ def test_alias_folders_are_preceded_by_the_interpreters_they_launch(tmp_path):
     assert contained_path(str(other), resolve) == str(other)
 
 
-@pytest.mark.skipif(
-    os.name != "nt" or not (ALIASES / "python.exe").is_file(), reason="Python install manager"
-)
+@needs_install_manager
 def test_the_alias_resolves_to_an_interpreter_whose_children_stay_in_the_job(tmp_path):
-    folder = launched_by(str(ALIASES / "python.exe"))
+    folder = launched_by(str(INSTALL_MANAGER))
     assert folder is not None and Path(folder, "python.exe").is_file()
     started = tmp_path / "started.txt"
     code = (
