@@ -7,11 +7,24 @@ import tempfile
 import venv
 from pathlib import Path
 
+import annotations
 from wheels import DIST, ROOT, clean
 
 
 def run(args: list[str], cwd: Path = ROOT) -> None:
-    subprocess.run(args, cwd=cwd, check=True, timeout=180)
+    """Run one step; on GitHub Actions a failed step is an annotation with its output."""
+    try:
+        done = subprocess.run(
+            args, cwd=cwd, timeout=180, capture_output=True, text=True, errors="replace"
+        )
+        output, code = done.stdout + done.stderr, done.returncode
+    except subprocess.TimeoutExpired as late:
+        output, code = f"No result within {late.timeout} s", 1
+    print(output, end="")
+    if code:
+        if annotations.enabled():
+            print(annotations.error("build_check: " + " ".join(args[1:4]), output))
+        raise SystemExit(code)
 
 
 clean()

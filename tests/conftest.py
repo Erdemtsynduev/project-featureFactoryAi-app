@@ -1,29 +1,23 @@
 """Suite-wide isolation from the operator's own accounts, and failures CI can show."""
 
-import os
-
+import annotations
 import pytest
 
-# GitHub shows the first ten error annotations of a step; the tail of a failure says why.
+# GitHub shows the first ten error annotations of a step.
 ANNOTATIONS = 10
-ANNOTATION_CHARS = 1500
 
 
 def pytest_terminal_summary(terminalreporter):
     """On GitHub Actions each failed test becomes an annotation of the run, so a red
     job says which test failed and why without opening its log."""
-    if os.environ.get("GITHUB_ACTIONS") != "true":
+    if not annotations.enabled():
         return
     stats = terminalreporter.stats
     failed = [*stats.get("failed", ()), *stats.get("error", ())]
     for report in failed[:ANNOTATIONS]:
         path, line, _ = report.location
-        why = report.longreprtext[-ANNOTATION_CHARS:]
-        # Workflow commands are one line: GitHub decodes these escapes back.
-        text = why.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        title = report.nodeid.replace(",", "%2C").replace("::", " ")
         terminalreporter.write_line(
-            f"::error file={path},line={(line or 0) + 1},title={title}::{text}"
+            annotations.error(report.nodeid, report.longreprtext, path, (line or 0) + 1)
         )
 
 

@@ -36,6 +36,8 @@ packages = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/conftest.py reports failures through tools/annotations.py.
+pythonpath = ["tools"]
 
 [tool.mypy]
 strict = true
