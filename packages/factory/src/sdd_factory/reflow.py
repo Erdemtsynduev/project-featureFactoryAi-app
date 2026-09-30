@@ -68,7 +68,8 @@ class FlowChanges:
 
     def update_many(self, doc: dict[str, Json]) -> dict[str, object]:
         """Move the project's unfinished, idle work onto the current versions of its
-        templates. `dry: true` only reports what is outdated."""
+        templates; superseded and closed work stays as it is. `dry: true` only reports
+        what is outdated."""
         project = text(doc.get("project"), "project")
         wanted = {text(x, "id") for x in sequence(doc.get("ids", []))}
         dry = doc.get("dry") is True
@@ -80,8 +81,14 @@ class FlowChanges:
         refused: dict[str, Json] = {}
         for run in runs:
             record = records.get(run.id)
-            if record is None or record.project != project or (wanted and run.id not in wanted):
-                continue
+            if (
+                record is None
+                or record.project != project
+                or record.superseded
+                or record.closed
+                or (wanted and run.id not in wanted)
+            ):
+                continue  # superseded or closed work is not carried on
             try:
                 current = self.current(run.id)
                 if current is None or current == run.workflow_digest:

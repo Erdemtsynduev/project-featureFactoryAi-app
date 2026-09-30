@@ -538,6 +538,9 @@ def test_a_person_changes_a_tasks_flow_and_moves_outdated_work_to_the_current_te
             newer if name == "ticket" else ensure(name, project, language)
         ),
     )
+    extra = f"{feature}-extra"
+    service.catalog.update_task(extra, service.catalog.task(extra).changed(superseded=feature))
+    admitted = [key for key in admitted if key != extra]  # superseded work is not carried on
     report = service.mutate("flows-update", {"project": "app", "dry": True})
     assert set(report["outdated"]) == set(admitted) and report["updated"] == []
     moved = service.mutate("flows-update", {"project": "app"})
