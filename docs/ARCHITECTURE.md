@@ -365,7 +365,13 @@ core, runtime and workflows; the UI (`sdd-ui`) is an HTTP adapter and console ov
 |---|---|
 | `model` | The vocabulary, typed: `TaskRecord` (feature, ticket, task), intents, the language rule |
 | `catalog` | `ProjectCatalog`: projects (with checks per repository), plan summaries, task records (correctable), artifacts |
-| `tasks` | Creating work by intent, commands, bulk start/pause with dependencies, answers, approval of a breakdown (ticket admission, artifacts), recovery |
+| `work` | `WorkCreation`: creating work by intent, renaming, the question demo |
+| `control` | `WorkControl`: operator commands, bulk start/pause with prerequisites, messages, recovery |
+| `admission` | `TicketAdmission`: approving a breakdown (one repository per ticket, `after`), admitting each ticket with its flow and brief, finishing an interrupted approval |
+| `documents` | `FeatureDocuments`: a feature's specification, the breakdown awaiting approval, exported documents |
+| `supersession` | `Supersession`: closing a parent early, handing work to the feature that plans it again |
+| `reviews` | `PlanReviews`: the plan lead's reviews, from trigger to applied revision |
+| `reflow` | `FlowChanges`: changing a task's flow, moving outdated work to current templates |
 | `plans` | A plan document becomes one feature; follow-up features for new rows; rebuilding a board from plans |
 | `sources` | `FeatureSource` port and `MarkdownPlans` (numbered `NNN_*.md` in the folder a project names) |
 | `flows` | Templates for a project (feature, ticket with its repositories' checks, main flow), validation, publication |
