@@ -5,12 +5,12 @@ import sys
 import time
 
 import pytest
+from sdd_core.admission import REVIVE_AFTER
 from sdd_core.codec import canonical
 from sdd_core.machine import WAIT_RETRY_LIMIT
 from sdd_core.models import Result, Step, Workflow
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.model import TaskRecord
-from sdd_ui.queue import REVIVE_AFTER
 from sdd_ui.service import WorkspaceService
 
 

@@ -30,6 +30,7 @@ from sdd_core.tickets import draft_of, ordered, waits_for_known
 from sdd_runtime.engine import Engine
 
 from sdd_factory.admission import TicketAdmission, ticket_scope
+from sdd_factory.board import review_trigger
 from sdd_factory.catalog import Artifact, ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
@@ -145,19 +146,16 @@ class PlanReviews:
     def _review_trigger(self, run: Run) -> tuple[str, str] | None:
         """Why a stopped ticket needs its plan reviewed: its agent blocked it, or its
         repair loop exhausted a step's visits. Engine or operator blocks never do."""
-        if run.status != "blocked" or run.previous_attempt is None:
-            return None
-        if run.cause == "visit_limit":
-            return "limit", "exhausted its repair loop"
-        if run.cause != "blocked":
-            return None
+        return review_trigger(run, run.cause == "blocked" and self._blocked_by_agent(run))
+
+    def _blocked_by_agent(self, run: Run) -> bool:
+        """Whether the run's last attempt returned `blocked` itself."""
         with self.engine.store.unit() as db:
             results = db.results(run.id)
-        agent = any(
+        return any(
             result.attempt_id == run.previous_attempt and result.outcome == "blocked"
             for result in results
         )
-        return ("blocked", "was blocked by its agent") if agent else None
 
     # Deciding -------------------------------------------------------------------------
 

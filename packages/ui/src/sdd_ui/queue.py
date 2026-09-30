@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from sdd_core.admission import QueueBudget
+from sdd_core.admission import QueueBudget, revivable
 from sdd_core.catalog import CatalogRecords
 from sdd_core.codec import canonical, flag, integer, object_json
 from sdd_core.models import Json, Run, Workflow
@@ -32,9 +32,6 @@ DEFAULTS: dict[str, Json] = {
 # Caps every earlier release saved by default. They were never a subscription's limit,
 # so a queue still holding exactly them runs uncapped from now on.
 LEGACY_DEFAULT_CAPS = (40, 8)
-# A run blocked after repeated limit waits is retried once its agents rest no more.
-REVIVE_AFTER = 30 * 60
-MAX_REVIVALS = 5
 WATCH_EVERY = 1.0
 
 
@@ -243,19 +240,13 @@ class QueueController:
                     )
 
     def _revive(self, run: Run, now: float) -> None:
-        if (
-            run.status != "blocked"
-            or run.cause != "wait_limit"
-            or run.active is not None
-            or self.revivals.get(run.id, 0) >= MAX_REVIVALS
-        ):
-            return
+        if run.status != "blocked" or run.cause != "wait_limit":
+            return  # cheap check before reading history
         history = self.engine.store.history(run.id, limit=1000)
         since = float(str(history[-1]["at"])) if history else now
-        if now - since < REVIVE_AFTER:
-            return
         step = self.engine.store.workflow(run.workflow_digest).step(run.step)
-        if step.kind == "agent" and not self.available(handler_key(step)):
+        available = step.kind != "agent" or self.available(handler_key(step))
+        if not revivable(run, since, now, self.revivals.get(run.id, 0), available):
             return
         try:
             self.engine.command(run.id, "retry", uuid.uuid4().hex, run.version, now)

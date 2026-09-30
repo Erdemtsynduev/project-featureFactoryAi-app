@@ -21,12 +21,12 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from sdd_core import machine
 from sdd_core.models import Json, Run
 from sdd_core.tracking import WorkItem, WorkRow, WorkSource
 from sdd_runtime.engine import Engine
 from sdd_runtime.lane_model import lane_branch
 
+from sdd_factory.board import carried_owner, replan
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
@@ -260,54 +260,16 @@ class PlanService:
             runs = {run.id: run for run in unit.runs()}
             edges = unit.dependency_edges()
         records = {key: item for key, item in self.catalog.tasks().items() if key in runs}
-
-        def planned(item: TaskRecord) -> bool:
-            """A plan's feature, an imported ticket, or a ticket of an open plan feature."""
-            if item.kind == "feature" or item.legacy_id:
-                return True
-            parent = records.get(item.parent)
-            return item.kind == "ticket" and parent is not None and bool(parent.rows)
-
-        candidates = {
-            key
-            for key, item in records.items()
-            if item.project == project_id
-            and item.plan
-            and (not only or item.plan == only)
-            and planned(item)
-            and not item.reviews
-            and not records.get(item.parent, item).closed
-            and machine.discardable(runs[key])
-        }
-        while True:
-            kept_needs = {needed for key, needed in edges if key not in candidates}
-            if not candidates & kept_needs:
-                break
-            candidates -= kept_needs
-        reopened = frozenset(
-            item.parent
-            for key, item in records.items()
-            if key in candidates
-            and item.kind == "ticket"
-            and not item.legacy_id
-            and item.parent not in candidates
-        )
-        # A review that never started goes with its plan; nothing depends on reviews.
-        candidates |= {
-            key
-            for key, item in records.items()
-            if item.reviews in reopened and machine.discardable(runs[key])
-        }
+        decided = replan(records, runs, edges, project_id, only)
+        candidates, reopened = decided.removed, decided.reopened
         path = self.engine.store.path
         backup = path.with_name(f"{path.stem}.before-plan-rebuild-{time.time_ns()}.db")
         self.engine.store.backup(backup)
         carried: dict[str, str] = {}
         with self.engine.store.unit() as unit:
             for key in sorted(candidates):
-                item = records[key]
-                # Imported tickets belong to their row's requirement; features to themselves.
-                owner = item.parent if item.legacy_id else key
-                if item.legacy_id or (item.kind == "feature" and not item.rows):
+                owner = carried_owner(key, records[key])
+                if owner is not None:
                     work = recorded_work(unit.context(key))
                     carried[owner] = "\n\n".join(filter(None, (carried.get(owner, ""), work)))
         removed = self.engine.store.discard(tuple(sorted(candidates)))

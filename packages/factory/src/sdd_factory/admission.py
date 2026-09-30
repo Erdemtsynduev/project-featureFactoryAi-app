@@ -16,6 +16,7 @@ from sdd_core.tickets import (
 )
 from sdd_runtime.engine import Engine
 
+from sdd_factory.board import plan_tickets
 from sdd_factory.catalog import Artifact, ProjectCatalog
 from sdd_factory.documents import FeatureDocuments
 from sdd_factory.flows import FlowLibrary
@@ -120,18 +121,9 @@ class TicketAdmission:
 
     def known_tickets(self, run_id: str) -> set[str]:
         """Existing tickets of `run_id`'s plan: what a new ticket's `after` may name."""
-        plan = self.catalog.task(run_id).plan
         with self.engine.store.unit() as db:
-            runs = {run.id for run in db.runs()}
-        return {
-            key
-            for key, item in self.catalog.tasks().items()
-            if key in runs
-            and item.kind == "ticket"
-            and plan
-            and item.plan == plan
-            and not item.superseded
-        }
+            runs = [run.id for run in db.runs()]
+        return plan_tickets(self.catalog.tasks(), runs, self.catalog.task(run_id).plan)
 
     def scope_of(self, run_id: str) -> ScopeOf:
         """The repositories a draft of `run_id`'s plan changes, within its workspace."""

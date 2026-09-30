@@ -8,6 +8,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
+from sdd_core.models import Run
+
 type Slot = Literal["agent", "operation"]
 
 
@@ -61,3 +63,21 @@ class QueueBudget:
         return (self.calls is not None and calls >= self.calls) or (
             planning and self.planning_calls is not None and planning_calls >= self.planning_calls
         )
+
+
+# A run blocked after repeated limit waits is retried once its agents rest no more.
+REVIVE_AFTER = 30 * 60
+MAX_REVIVALS = 5
+
+
+def revivable(run: Run, since: float, now: float, revivals: int, available: bool) -> bool:
+    """Whether a run the limit waits exhausted may be retried now: it has rested long
+    enough since it stopped, it was not revived too often, and an agent can take it."""
+    return (
+        run.status == "blocked"
+        and run.cause == "wait_limit"
+        and run.active is None
+        and revivals < MAX_REVIVALS
+        and now - since >= REVIVE_AFTER
+        and available
+    )
