@@ -104,7 +104,7 @@ class WorkspaceService:
         self.admission = TicketAdmission(
             self.engine, self.catalog, self.flows, self.log, self._bind, self.documents
         )
-        # A plan lead reviews approved plans; its approved proposals change the tickets.
+        # The lead revises a feature's tickets when one is stuck; approved proposals apply.
         self.reviews = PlanReviews(self.engine, self.catalog, self.flows, self.admission, self.log)
         self.answers = Answers(self.catalog, self.admission, self.reviews)
         # A project's work comes from its plans folder or its tracker, which also

@@ -51,12 +51,12 @@ class FlowLibrary:
         # One builder per template: a new template is a new row.
         self.builders: dict[str, Callable[[ProjectSettings, tuple[str, ...]], Workflow]] = {
             "feature": self._feature,
-            "main-flow": lambda settings, repositories: main_flow(),
+            "main-flow": lambda settings, repositories: main_flow(settings.roles),
             "ticket": self._ticket,
-            "approved-feature": lambda settings, repositories: approved_feature(),
+            "approved-feature": lambda settings, repositories: approved_feature(settings.roles),
             "interview": lambda settings, repositories: interview(),
             "demo": lambda settings, repositories: command_demo(sys.executable),
-            "plan-review": lambda settings, repositories: plan_review(),
+            "plan-review": lambda settings, repositories: plan_review(settings.roles),
         }
 
     def template(
@@ -95,6 +95,7 @@ class FlowLibrary:
         """The project's ticket flow; `web` lets its agents use the internet."""
         flow = ticket(
             settings.ticket_checks(repositories),
+            settings.roles,
             isolated=settings.isolation,
             auto_resolve=settings.auto_resolve,
             commit_messages=(settings.commit_message, settings.pin_message),
@@ -103,7 +104,8 @@ class FlowLibrary:
 
     def _feature(self, settings: ProjectSettings, repositories: tuple[str, ...]) -> Workflow:
         # The planner learns what the project's ticket agents can and cannot do.
-        return feature(agents=capabilities(self._ticket(settings, repositories)))
+        agents = capabilities(self._ticket(settings, repositories))
+        return feature(settings.roles, agents)
 
     def agents(self, project_id: str) -> str:
         """What the project's ticket agents can do, for planning and review briefs."""

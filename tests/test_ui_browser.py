@@ -575,6 +575,31 @@ def test_project_settings_choose_a_tracker_without_storing_a_token(page, worksho
     assert not errors
 
 
+def test_project_settings_name_the_profile_of_each_role(page, workshop, tmp_path):
+    from playwright.sync_api import expect
+
+    url, service = workshop
+    errors = []
+    page.on("pageerror", lambda error: errors.append(error))
+    root = tmp_path / "roles-project"
+    root.mkdir()
+    project = {"id": "roles", "name": "Roles", "workspace": str(root)}
+    service.mutate("project", {**project, "roles": {"lead": "opus"}})
+    page.goto(url)
+    page.wait_for_selector("html[data-ready=true]")
+    page.locator("#project-select").select_option("roles")
+    page.locator("#project-edit").click()
+    lead = page.locator("select[name=role_lead]")
+    expect(lead).to_have_value("opus")
+    expect(lead.locator("option").first).to_have_text("По умолчанию: codex")
+    expect(page.locator("select[name=role_implementer]")).to_have_value("")
+    lead.select_option("")
+    page.get_by_role("button", name="Сохранить").click()
+    expect(page.locator("dialog[open]")).to_have_count(0)
+    assert service.catalog.project("roles")["roles"] == {}
+    assert not errors
+
+
 def test_a_person_skips_a_step_of_a_tasks_flow_from_its_drawer(page, workshop, tmp_path):
     from playwright.sync_api import expect
 

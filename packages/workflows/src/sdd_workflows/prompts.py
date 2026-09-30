@@ -53,7 +53,7 @@ Return done with a readable summary table of the tickets in reason. No edits.
 """
 
 PLAN_REVIEW = """Review this approved ticket plan as its lead. The brief says why the
-review runs (a ticket its agent blocked, or a fresh breakdown), what the ticket agents can
+review runs (a ticket its agent blocked or could not repair), what the ticket agents can
 and cannot do, and every ticket with its state. Propose the smallest set of corrections in
 `plan_changes`: merge never-started tickets that own the same paths or duplicate scope
 (each ticket still changes one repository; split work across repositories into a chain,

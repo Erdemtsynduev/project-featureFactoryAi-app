@@ -76,6 +76,21 @@ configuration remains supported separately. OpenCode read-only execution is not
 qualified; configuration rejects that policy. Claude/Codex/Cursor read-only
 policies map to their existing adapter controls, not a universal security sandbox.
 
+## Roles of a project
+
+The bundled flows name four roles, and each project says which profile plays each
+(project settings → **Роли агентов**, or `roles` in the `project` action):
+
+| Role | Steps | Default profile |
+|---|---|---|
+| `lead` | revising a feature's tickets when one is stuck (`plan-review`) | `codex` |
+| `analyst` | specification and ticket breakdown | `codex` |
+| `implementer` | implementation, repair, conflict resolution | `claude` |
+| `reviewer` | review, diagnosis, reconciliation | `codex` |
+
+A role left out keeps its default. A change applies to work created afterwards; a
+started run keeps the workflow version it was created with.
+
 ## Tools a step grants
 
 Agents may edit files and, on working steps, run commands. Anything more is explicit

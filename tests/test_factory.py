@@ -105,3 +105,36 @@ def test_tickets_run_the_checks_of_the_repositories_they_own(tmp_path):
             )
     finally:
         service.coordinator.close()
+
+
+def test_a_project_names_the_profile_of_each_role(tmp_path):
+    service = WorkspaceService(tmp_path / "ui.db")
+    try:
+        root = tmp_path / "game"
+        root.mkdir()
+        project = {"id": "game", "name": "Game", "workspace": str(root)}
+        roles = {"lead": "opus", "implementer": "kimi", "reviewer": ""}
+        saved = service.mutate("project", {**project, "roles": roles})
+        assert saved["roles"] == {"implementer": "kimi", "lead": "opus"}, (
+            "unset roles keep defaults"
+        )
+        handlers = lambda name: {  # noqa: E731
+            step.id: step.handler
+            for step in service.flows.template(name, "game").steps
+            if step.kind == "agent"
+        }
+        assert handlers("plan-review") == {"replan": "opus"}
+        ticket = handlers("ticket")
+        assert (ticket["implement"], ticket["repair"], ticket["review"]) == (
+            "kimi",
+            "kimi",
+            "codex",
+        )
+        assert set(handlers("feature").values()) == {"codex"}, "the analyst was left as it was"
+        assert service.flows.template("ticket") == service.flows.template("ticket", "missing")
+        with pytest.raises(ValueError, match="Unknown roles: boss; known: lead, analyst"):
+            service.mutate("project", {**project, "roles": {"boss": "opus"}})
+        with pytest.raises(ValueError, match="Invalid profile names"):
+            service.mutate("project", {**project, "roles": {"lead": "two words"}})
+    finally:
+        service.coordinator.close()

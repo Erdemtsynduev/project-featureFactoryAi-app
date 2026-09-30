@@ -13,6 +13,12 @@ digest they were created with.
 
 ## Unreleased
 
+- **Roles are a project setting, and the lead is named.** A project names the agent
+  profile of its lead, analyst, implementer and reviewer (`roles`); before, the profiles
+  were fixed in the templates. The lead's review of a feature's tickets runs only when a
+  ticket is stuck, no longer right after a person approved the breakdown, and its step
+  is `replan`.
+
 - **Planning and reviews no longer wait behind stopped tickets.** A plan review claimed
   the whole workspace, so any started, unfinished ticket kept it from ever starting
   while the board said "queued". A read-only agent step now waits only for a live

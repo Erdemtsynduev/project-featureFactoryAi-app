@@ -309,7 +309,7 @@ def _insert(args: Namespace) -> int:
 def _template(args: Namespace) -> int:
     from sdd_workflows.templates import approved_feature, feature, interview, main_flow
 
-    builders = {
+    builders: dict[str, Callable[[], Workflow]] = {
         "feature": feature,
         "approved-feature": approved_feature,
         "main-flow": main_flow,

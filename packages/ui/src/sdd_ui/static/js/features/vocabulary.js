@@ -14,6 +14,8 @@ const KNOWN_STEPS = new Set([
   "diagnose",
   "repair",
   "reconcile",
+  "replan",
+  "decide",
   "interview",
   "approve",
   "accepted",

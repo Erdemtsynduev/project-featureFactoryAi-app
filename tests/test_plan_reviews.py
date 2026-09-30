@@ -1,4 +1,4 @@
-"""A plan lead reviews an approved breakdown; approved proposals change the tickets."""
+"""The lead revises a feature's approved tickets; approved proposals change them."""
 
 import sys
 from dataclasses import replace
@@ -114,29 +114,25 @@ def approved_plan(service: WorkspaceService) -> tuple[str, list[str]]:
 
 
 def review_of(service: WorkspaceService, feature: str) -> str:
-    (review,) = [
-        key
-        for key, item in service.reviews.reviews_of(feature).items()
-        if item.trigger.startswith("breakdown")
-    ]
+    """A review of the feature's tickets, as a stuck ticket would ask for one."""
+    review = service.reviews.request(feature, "asked", "a ticket is stuck")
+    assert review is not None
     return review
 
 
-def test_approving_a_breakdown_asks_the_plan_lead_once(service):
+def test_approving_a_breakdown_starts_no_review_and_a_review_is_asked_once(service):
     feature, children = approved_plan(service)
     assert children == [f"{feature}-{key}" for key in ("api", "ui", "docs", "extra")]
+    assert service.reviews.reviews_of(feature) == {}, "a person just approved these tickets"
     review = review_of(service, feature)
     item = service.catalog.task(review)
-    assert (item.reviews, item.trigger, item.intent) == (
-        feature,
-        f"breakdown:{feature}",
-        "plan-review",
-    )
+    assert (item.reviews, item.trigger, item.intent) == (feature, "asked", "plan-review")
+    assert item.title == "Rally · пересмотр тикетов", "named in the feature's language"
     with service.engine.store.unit() as db:
         brief = db.context(review)
     assert "Engine docs" in brief and "never started" in brief and "AC-1 engine" in brief
     assert not service.engine.store.get(review).paused, "a review starts by itself"
-    assert service.reviews.request(feature, f"breakdown:{feature}", "again") is None
+    assert service.reviews.request(feature, "asked", "again") is None
 
 
 def test_an_approved_review_merges_cancels_rewires_and_holds(service):
@@ -200,9 +196,6 @@ def test_an_approved_review_merges_cancels_rewires_and_holds(service):
 
 def test_a_ticket_its_agent_blocks_asks_for_one_review_with_the_reason(service):
     feature, _ = approved_plan(service)
-    first = review_of(service, feature)
-    finish(service, first, "r1", outcome="unchanged", tickets=[], plan_changes=[])
-    assert service.engine.dispatch(first, 12, "f1").status == "accepted"
     api = f"{feature}-api"
     service.mutate("resume", {"id": api, "version": service.engine.store.get(api).version})
     blocked = finish(service, api, "w1", outcome="blocked", reason="No licensed engine recordings")
@@ -262,9 +255,6 @@ def test_a_review_owns_no_folder_and_held_work_says_what_it_waits_for(service, m
         ),
     )
     feature, _ = approved_plan(service)
-    first = review_of(service, feature)
-    finish(service, first, "r1", outcome="unchanged", tickets=[], plan_changes=[])
-    service.engine.dispatch(first, 12, "f1")
     engine = service.engine
     api, ui = f"{feature}-api", f"{feature}-ui"
     service.mutate("resume", {"id": api, "version": engine.store.get(api).version})
@@ -384,9 +374,6 @@ def test_approval_refuses_a_ticket_that_changes_two_repositories(service, tmp_pa
 
 def test_a_ticket_out_of_visits_asks_its_plan_for_a_review(service):
     feature, _ = approved_plan(service)
-    first = review_of(service, feature)
-    finish(service, first, "r1", outcome="unchanged", tickets=[], plan_changes=[])
-    service.engine.dispatch(first, 12, "f1")
     api = f"{feature}-api"
     service.engine.block(api, 13, "Step visit limit", cause="visit_limit")
     stuck = replace(service.engine.store.get(api), previous_attempt="w9")
@@ -448,7 +435,7 @@ def test_rebuilding_plans_again_what_never_started_and_keeps_started_work(servic
     service.mutate("resume", {"id": api, "version": service.engine.store.get(api).version})
     service.engine.dispatch(api, 13, "w1")
 
-    review = review_of(service, feature)  # the breakdown's review, never started
+    review = review_of(service, feature)  # a review that never started
     rebuilt = service.mutate("plans-rebuild", {"project": "app", "plan": "110"})
     assert rebuilt["removed"] == len(admitted) and rebuilt["reopened"] == [feature]
     assert rebuilt["created"] == ["feature_110"]

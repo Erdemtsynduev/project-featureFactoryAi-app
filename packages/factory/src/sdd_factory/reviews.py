@@ -1,7 +1,8 @@
-"""Plan reviews: a plan lead's proposals for an approved ticket breakdown.
+"""Plan reviews: the lead's proposals for a feature's approved tickets.
 
-A review runs when a ticket's agent blocks it or right after a breakdown is
-approved. Its agent only proposes `plan_changes`; a person decides. Every rule is
+A review runs when a ticket's agent blocks it or its repair loop runs out; a person
+just approved a fresh breakdown, so none runs then. Its agent only proposes
+`plan_changes`; a person decides. Every rule is
 `sdd_core.plan_changes`; this service reads the plan, starts reviews and applies
 an approved `Revision` through versioned engine commands, each idempotent by its
 request id, with the review's `plan_changes` artifact written last as the marker
@@ -40,6 +41,8 @@ from sdd_factory.model import PLANNING_SCOPE, TaskRecord, language_rule
 REVIEW_MARGIN = 4000
 # The human step of the plan-review workflow where a person decides.
 DECIDE = "decide"
+# What a review is called in its title, by the feature's language.
+TITLE = {"ru": "пересмотр тикетов", "en": "ticket review"}
 
 type TicketCommand = Callable[[Run, str], object]
 
@@ -114,7 +117,7 @@ class PlanReviews:
             run.id,
             TaskRecord(
                 project=feature.project,
-                title=f"{feature.title or parent} · plan review",
+                title=f"{feature.title or parent} · {TITLE.get(feature.language, TITLE['en'])}",
                 language=feature.language,
                 plan=feature.plan,
                 intent="plan-review",

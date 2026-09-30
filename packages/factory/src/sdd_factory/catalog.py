@@ -17,6 +17,7 @@ from sdd_core.ports import Conflict
 from sdd_runtime.lane_model import CommitMessages
 
 from sdd_factory.model import TaskRecord
+from sdd_factory.settings import roles_of
 from sdd_factory.trackers import tracker_settings
 
 # A feature's documents, and on a plan review the changes it applied.
@@ -118,6 +119,9 @@ class ProjectCatalog:
             # The project's commit convention for engine commits in lanes; empty = default.
             "commit_message": messages.work if doc.get("commit_message") else "",
             "pin_message": messages.pin if doc.get("pin_message") else "",
+            # The agent profile of each role (lead, analyst, implementer, reviewer) that
+            # differs from the templates' default.
+            "roles": roles_of(doc.get("roles")),
         }
         self.records.save_project(identifier, canonical(result))
         return result

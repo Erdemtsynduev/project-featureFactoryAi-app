@@ -8,7 +8,24 @@ from sdd_core.models import Step, Workflow
 from sdd_workflows import prompts
 
 
-def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str = "{}") -> Workflow:
+@dataclass(frozen=True)
+class Roles:
+    """The agent profile that plays each role in a project's flows."""
+
+    # Revises a feature's tickets when one is stuck.
+    lead: str = "codex"
+    # Writes specifications and ticket breakdowns.
+    analyst: str = "codex"
+    implementer: str = "claude"
+    # Reviews, diagnoses and reconciles.
+    reviewer: str = "codex"
+
+
+DEFAULT_ROLES = Roles()
+
+
+def main_flow(roles: Roles = DEFAULT_ROLES, checks: str = "{}") -> Workflow:
+    analyst, implementer, reviewer = roles.analyst, roles.implementer, roles.reviewer
     flow = Workflow(
         "main-flow",
         "spec",
@@ -16,7 +33,7 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
             Step(
                 "spec",
                 "agent",
-                reviewer,
+                analyst,
                 prompts.SPEC,
                 (("done", "tickets"), ("questions", "interview")),
                 required=True,
@@ -30,7 +47,7 @@ def main_flow(implementer: str = "claude", reviewer: str = "codex", checks: str 
             Step(
                 "tickets",
                 "agent",
-                reviewer,
+                analyst,
                 prompts.TICKETS,
                 (("done", "implement"),),
                 required=True,
@@ -168,8 +185,7 @@ out where this repository links them; change them only through their own tickets
 
 def ticket(
     checks: tuple[CheckCommand, ...],
-    implementer: str = "claude",
-    reviewer: str = "codex",
+    roles: Roles = DEFAULT_ROLES,
     *,
     allow_commits: bool = False,
     max_input_chars: int = 60000,
@@ -188,6 +204,7 @@ def ticket(
     In a lane the engine commits after every agent pass (`commit`), so checks and review
     see committed work; `commit_messages` are the project's (work, pin) templates.
     """
+    implementer, reviewer = roles.implementer, roles.reviewer
     verify = "check_1" if checks else "review"
     first = "commit" if isolated else verify
     # An explicit commit authorization wins; a lane otherwise leaves committing to the engine.
@@ -391,13 +408,14 @@ def with_tools(flow: Workflow, tools: tuple[str, ...]) -> Workflow:
     )
 
 
-def feature(analyst: str = "codex", agents: str = "") -> Workflow:
+def feature(roles: Roles = DEFAULT_ROLES, agents: str = "") -> Workflow:
     """Turn one feature into an approved specification (PRD) and ticket breakdown.
 
     The agent may ask structured questions; the human approves the result. The
     tickets step declares structured tickets; the application admits them as child
     ticket runs only after the approval, never from the agent's own decision.
     """
+    analyst = roles.analyst
     return Workflow(
         "feature",
         "spec",
@@ -443,8 +461,8 @@ def feature(analyst: str = "codex", agents: str = "") -> Workflow:
     )
 
 
-def plan_review(analyst: str = "codex") -> Workflow:
-    """A plan lead's review of an approved breakdown: proposals a person decides on.
+def plan_review(roles: Roles = DEFAULT_ROLES) -> Workflow:
+    """The lead's revision of a feature's approved tickets: proposals a person decides on.
 
     The agent only proposes (`plan_changes`); the application applies an approved
     proposal, so no plan changes on an agent's own decision. The brief carries the
@@ -452,12 +470,12 @@ def plan_review(analyst: str = "codex") -> Workflow:
     """
     return Workflow(
         "plan-review",
-        "review",
+        "replan",
         (
             Step(
-                "review",
+                "replan",
                 "agent",
-                analyst,
+                roles.lead,
                 prompts.PLAN_REVIEW,
                 (("done", "decide"), ("unchanged", "accepted")),
                 config='{"produces":"plan_changes","purpose":"planning"}',
@@ -470,7 +488,7 @@ def plan_review(analyst: str = "codex") -> Workflow:
                 transitions=(
                     ("approved", "accepted"),
                     ("rejected", "accepted"),
-                    ("rework", "review"),
+                    ("rework", "replan"),
                 ),
             ),
             Step("accepted", "finish"),
@@ -481,9 +499,9 @@ def plan_review(analyst: str = "codex") -> Workflow:
     )
 
 
-def approved_feature() -> Workflow:
+def approved_feature(roles: Roles = DEFAULT_ROLES) -> Workflow:
     """Execute an explicitly approved feature without planning: approval, then build."""
-    flow = main_flow()
+    flow = main_flow(roles)
     steps = tuple(step for step in flow.steps if step.id not in ("spec", "tickets", "interview"))
     approval = Step(
         "approve",

@@ -200,11 +200,15 @@ Commits use the repository's configured author. Checks and review therefore alwa
 committed, consistently pinned repository. Agents in lanes are told not to commit or edit pin
 files.
 
-## Plan reviews: a plan lead proposes, a person decides
+## Plan reviews: the lead proposes, a person decides
 
 An approved breakdown is not frozen. A plan review runs when a ticket's own agent
-returns `blocked` or a ticket exhausts a step's visits, and right after a breakdown is approved. At most one runs per plan
-at a time, one runs per trigger, and a plan gets at most `MAX_REVIEWS`. The review is a
+returns `blocked` or a ticket exhausts a step's visits. None runs right after a breakdown
+is approved: a person has just decided on those tickets. At most one runs per feature
+at a time, one runs per trigger, and a feature gets at most `MAX_REVIEWS`. The **lead**
+is one of a project's four roles (`Roles`: lead, analyst, implementer, reviewer); the
+project's `roles` setting names the agent profile of each, and the templates take them
+as their step handlers. The review is a
 workflow (`plan-review`): its read-only agent step `produces: plan_changes` from a brief
 that lists every ticket with its state, blocking reason, needs, dependencies and owned
 paths, plus what the project's ticket agents can do. The capabilities text is derived

@@ -127,6 +127,30 @@ export function openProjectDialog(project = null) {
     placeholder: "build({repo}): pin {dependency} {sha}",
     spellcheck: "false",
   });
+  // Which agent profile plays each role; empty keeps the default the server names.
+  const profiles = Object.keys(store.state?.profile_config?.profiles || {});
+  const roles = Object.fromEntries(
+    (store.state?.role_defaults || []).map(([role, profile]) => {
+      const chosen = project?.roles?.[role] || "";
+      // A profile that was removed since stays listed, so saving does not drop it silently.
+      const names = [...new Set([...profiles, chosen].filter(Boolean))];
+      return [
+        role,
+        h(
+          "select",
+          { name: "role_" + role },
+          h(
+            "option",
+            { value: "" },
+            t("project.roleDefault", { profile }),
+          ),
+          ...names.map((name) =>
+            h("option", { value: name, selected: name === chosen }, name),
+          ),
+        ),
+      ];
+    }),
+  );
   let idTouched = editing;
   id.addEventListener("input", () => (idTouched = true));
   name.addEventListener("input", () => {
@@ -177,6 +201,19 @@ export function openProjectDialog(project = null) {
       h("label", {}, web, h("span", {}, t("project.web"))),
       h("label", { class: "field" }, h("span", {}, t("project.commitMessage")), commitMessage),
       h("label", { class: "field" }, h("span", {}, t("project.pinMessage")), pinMessage),
+    ),
+    h(
+      "fieldset",
+      { class: "wide roles" },
+      h("legend", {}, t("project.roles")),
+      h("small", { class: "hint" }, t("project.rolesHint")),
+      h(
+        "div",
+        { class: "form-grid" },
+        Object.entries(roles).map(([role, select]) =>
+          field(t("project.role." + role), select, t("project.roleHint." + role)),
+        ),
+      ),
     ),
   );
   const draftState = h("small", { class: "draft-state" });
@@ -274,6 +311,9 @@ export function openProjectDialog(project = null) {
         web: web.checked,
         commit_message: commitMessage.value.trim(),
         pin_message: pinMessage.value.trim(),
+        roles: Object.fromEntries(
+          Object.entries(roles).map(([role, select]) => [role, select.value]),
+        ),
       });
       draft.clear();
       dialog.close(true);

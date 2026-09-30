@@ -77,6 +77,10 @@ def test_dynamic_key_families_are_complete():
             for p in ("title", "text")
         ],
         "welcome.": [f"{s}.{p}" for s in ("agents", "project", "task") for p in ("title", "text")],
+        "project.role.": ["lead", "analyst", "implementer", "reviewer"],
+        "project.roleHint.": ["lead", "analyst", "implementer", "reviewer"],
+        "role.": ["replan"],
+        "step.": ["replan", "decide"],
         "nav.": ["overview", "board", "team", "flows", "agents", "usage", "journal"],
         "template.": ["main-flow", "feature", "ticket", "approved-feature", "interview", "demo"],
     }

@@ -11,6 +11,7 @@ from sdd_core.models import Json
 from sdd_core.questions import questions
 from sdd_factory.diagnostics import live, record
 from sdd_factory.model import ticket_places
+from sdd_factory.settings import ROLE_DEFAULTS
 
 from sdd_ui.attention import attention, calls_needed, lane, outline, projection, rollup
 
@@ -130,6 +131,7 @@ class BoardView:
             "cooldowns": self.agents.resting(),
             "active_processes": len(self.queue.coordinator.active()),
             "projects": self.catalog.projects(),
+            "role_defaults": ROLE_DEFAULTS,
             "task_metadata": self.catalog.task_metadata(),
             "plans": self.catalog.plans(),
             "locations": locations,

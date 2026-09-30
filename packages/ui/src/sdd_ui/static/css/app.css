@@ -349,7 +349,8 @@ legend {
   font-weight: 650;
   color: var(--ink-2);
 }
-.checks {
+.checks,
+.roles {
   display: grid;
   gap: 8px;
 }
