@@ -13,6 +13,13 @@ digest they were created with.
 
 ## Unreleased
 
+- **A person's answer reaches the next agent whole.** A rework note was cut to 1,600
+  characters like an agent's summary, and the handoff listed the newest line first, so a
+  short budget dropped the answer first. A person's answer is never shortened, and the
+  handoff now runs oldest first so the newest lines survive.
+- **Approving a large breakdown takes seconds** (each repository's revision is read once)
+  and the approve button says it is creating tickets; the drawer opens a waiting task
+  on its answer, whatever tab it remembered.
 - **The legacy sdd-orchestrator import is removed** (`python -m sdd_factory.legacy`),
   with what only it created: imported tickets (`legacy_id`), per-row requirements and
   carrying their recorded drafts into features. Work comes from plans and trackers.

@@ -26,8 +26,23 @@ def test_brief_deduplicates_notes_oldest_first_and_bounds_handoff():
     memory = brief(newest_first)
     assert memory.notes == ("Keep v1 endpoint", "Use UTC", "API lives in api/")
     assert len(memory.handoff) == 3
-    assert memory.handoff[0].startswith("- [done] third") and memory.handoff[0].endswith("…")
+    assert memory.handoff[-1].startswith("- [done] third") and memory.handoff[-1].endswith("…")
+    assert memory.handoff[0] == "- [done] first", "oldest first, newest last"
     assert "zeroth" not in memory.render()
+
+
+def test_a_persons_answer_reaches_the_next_agent_whole_and_survives_a_short_budget():
+    answer = (
+        "Старые тикеты отменены: " + "feature_110-T1 «Неповторяющиеся земля» (ветка ffai/x); " * 60
+    )
+    newest_first = (
+        receipt("rework", answer, answer=answer),
+        receipt("done", "breakdown " * 400),
+    )
+    memory = brief(newest_first).render()
+    assert " ".join(answer.split()) in memory, "never shortened"
+    fitted = fit("ctx", memory, len(answer) + 400)
+    assert "A person answered, in full" in fitted and "ffai/x" in fitted.splitlines()[-1]
 
 
 def test_fit_keeps_context_and_newest_memory_within_budget():

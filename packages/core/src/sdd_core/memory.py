@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from sdd_core.codec import object_json, result_load
 from sdd_core.tickets import strings
 
-# One handoff line keeps the head of a reason; the full receipt stays on disk.
+# One handoff line keeps the head of an agent's reason; the full receipt stays on disk.
+# A person's answer is an instruction and is never shortened.
 HANDOFF_CHARS = 1600
 NOTE_CHARS = 280
 MAX_NOTES = 40
@@ -31,7 +32,8 @@ class Brief:
             parts.append("Task memory (durable notes from earlier steps):")
             parts.extend("- " + note for note in self.notes)
         if self.handoff:
-            parts.append("Handoff (newest first):")
+            # Newest last: when the budget is short, `fit` drops the oldest lines first.
+            parts.append("Handoff (oldest first; the last line is the newest):")
             parts.extend(self.handoff)
         return "\n".join(parts)
 
@@ -43,12 +45,20 @@ def notes(data: str) -> tuple[str, ...]:
     )
 
 
+def answered_by_person(data: str) -> bool:
+    """Whether a result records a person's answer (see `questions.answer`)."""
+    return "answer" in object_json(data or "{}")
+
+
 def brief(documents: tuple[str, ...], handoff_results: int = 3) -> Brief:
     """Memory for the next packet from receipts ordered newest first."""
     results = [result_load(document) for document in documents]
     handoff: list[str] = []
-    for result in results[:handoff_results]:
+    for result in reversed(results[:handoff_results]):
         reason = " ".join(result.reason.split())
+        if answered_by_person(result.data):
+            handoff.append(f"- [{result.outcome}] A person answered, in full: {reason}")
+            continue
         if len(reason) > HANDOFF_CHARS:
             reason = reason[:HANDOFF_CHARS] + " …"
         handoff.append(f"- [{result.outcome}] {reason}")
