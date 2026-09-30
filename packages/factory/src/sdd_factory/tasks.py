@@ -18,7 +18,7 @@ from pathlib import Path
 from sdd_core.codec import encode, flag, integer, mapping, sequence, text
 from sdd_core.models import Json, Run
 from sdd_core.ports import Conflict
-from sdd_core.tickets import TicketDraft, tickets_of
+from sdd_core.tickets import ScopeOf, TicketDraft, one_repository, tickets_of
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_workflows.templates import question_example
@@ -382,6 +382,8 @@ class TaskService:
         run_id = text(doc.get("id"), "id")
         outcome = text(doc.get("outcome"), "outcome")
         drafts = tickets_of(self.engine.facts(run_id)) if outcome == "approved" else ()
+        # Refused while the feature still awaits approval; rework sends the reason back.
+        one_repository(drafts, self.scope_of(run_id))
         # Publish the ticket flows and build every brief before the answer, so what
         # can be refused is refused while the feature still awaits approval.
         definitions = self.ticket_definitions(run_id, drafts)
@@ -412,17 +414,20 @@ class TaskService:
         except ValueError:
             return []
 
+    def scope_of(self, run_id: str) -> ScopeOf:
+        """The repositories a draft of `run_id`'s plan changes, within its workspace."""
+        with self.engine.store.unit() as db:
+            root = Path(db.location(run_id)[0])
+        return lambda draft: ticket_scope(root, draft.paths)
+
     def ticket_definitions(self, run_id: str, drafts: tuple[TicketDraft, ...]) -> dict[str, str]:
         """Each ticket's workflow: the project's ticket template with its owners' checks."""
         if not drafts:
             return {}
         item = self.catalog.task(run_id)
-        with self.engine.store.unit() as db:
-            root = Path(db.location(run_id)[0])
+        scope = self.scope_of(run_id)
         return {
-            draft.id: self.flows.ensure(
-                "ticket", item.project, item.language, ticket_scope(root, draft.paths)
-            )
+            draft.id: self.flows.ensure("ticket", item.project, item.language, scope(draft))
             for draft in drafts
         }
 

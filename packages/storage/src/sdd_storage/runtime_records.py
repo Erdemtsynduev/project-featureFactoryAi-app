@@ -3,9 +3,9 @@
 import sqlite3
 
 from sdd_core.codec import canonical, digest, run_load
-from sdd_core.models import UNPINNED_KINDS, Run
+from sdd_core.models import LIVE_EFFECT_STATUSES, UNPINNED_KINDS, Run
 from sdd_core.ports import Conflict
-from sdd_core.records import EffectRecord
+from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE, EffectRecord
 
 
 class SQLiteRuntimeRecords:
@@ -25,13 +25,14 @@ class SQLiteRuntimeRecords:
         if old and old[0] == manifest:
             return
         if old:
-            executed = self.db.execute(
-                "SELECT 1 FROM effects WHERE run=? AND kind NOT IN (?,?) LIMIT 1",
-                (run_id, *UNPINNED_KINDS),
+            live = self.db.execute(
+                "SELECT 1 FROM effects WHERE run=? AND kind NOT IN (?,?) AND status IN (?,?,?) LIMIT 1",
+                (run_id, *UNPINNED_KINDS, *LIVE_EFFECT_STATUSES),
             ).fetchone()
-            if executed:
-                raise Conflict("Pinned handler settings or version changed")
-            # Nothing ran yet: the pin follows the operator's current profiles.
+            if live:
+                raise Conflict(HANDLER_CHANGED_WHILE_LIVE)
+            # Between attempts the pin follows the operator's current handler; each attempt
+            # keeps the manifest it ran with in its own folder.
             self.db.execute(
                 "UPDATE bindings SET manifest=? WHERE run=? AND handler=?",
                 (manifest, run_id, handler),

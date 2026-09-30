@@ -113,30 +113,38 @@ class PlanReviews:
         return run.id
 
     def blocked(self, run: Run) -> str | None:
-        """A ticket its own agent blocked asks its plan for a review."""
+        """A ticket its own agent blocked, or whose repair loop ran out, asks its plan
+        for a review. The ticket's line in the brief carries its reason."""
         item = self.catalog.task(run.id)
-        if item.kind != "ticket" or not item.parent or not self._agent_blocked(run):
+        trigger = self._review_trigger(run)
+        if item.kind != "ticket" or not item.parent or trigger is None:
             return None
-        # The ticket's own line in the brief carries its blocking reason.
-        detail = f"ticket {run.id} was blocked by its agent"
-        return self.request(item.parent, f"blocked:{run.id}:{run.previous_attempt}", detail)
+        kind, detail = trigger
+        key = f"{kind}:{run.id}:{run.previous_attempt}"
+        return self.request(item.parent, key, f"ticket {run.id} {detail}")
 
     def sweep(self) -> list[str]:
-        """Reviews for tickets their agents blocked while nobody watched (a restart)."""
+        """Reviews for tickets that stopped while nobody watched (a restart)."""
         with self.engine.store.unit() as db:
             blocked = [run for run in db.runs() if run.status == "blocked"]
         return [started for run in blocked if (started := self.blocked(run))]
 
-    def _agent_blocked(self, run: Run) -> bool:
-        """Blocked by its agent's own result, not by the engine or an operator."""
-        if run.status != "blocked" or run.cause != "blocked" or run.previous_attempt is None:
-            return False
+    def _review_trigger(self, run: Run) -> tuple[str, str] | None:
+        """Why a stopped ticket needs its plan reviewed: its agent blocked it, or its
+        repair loop exhausted a step's visits. Engine or operator blocks never do."""
+        if run.status != "blocked" or run.previous_attempt is None:
+            return None
+        if run.cause == "visit_limit":
+            return "limit", "exhausted its repair loop"
+        if run.cause != "blocked":
+            return None
         with self.engine.store.unit() as db:
             results = db.results(run.id)
-        return any(
+        agent = any(
             result.attempt_id == run.previous_attempt and result.outcome == "blocked"
             for result in results
         )
+        return ("blocked", "was blocked by its agent") if agent else None
 
     # Deciding -------------------------------------------------------------------------
 
@@ -163,8 +171,10 @@ class PlanReviews:
             return []
 
     def revision(self, review: str) -> Revision:
-        snapshot, _ = self.snapshot(self.catalog.task(review).reviews)
-        return revise(snapshot, plan_changes_of(self._changes_data(review)))
+        parent = self.catalog.task(review).reviews
+        snapshot, _ = self.snapshot(parent)
+        changes = plan_changes_of(self._changes_data(review))
+        return revise(snapshot, changes, self.tasks.scope_of(parent))
 
     def _changes_data(self, review: str) -> str:
         done = (r for r in self.engine.outputs(review, "plan_changes") if r.outcome == "done")

@@ -7,6 +7,7 @@ import pytest
 from sdd_core.codec import canonical, result_json
 from sdd_core.context import ContextRecord, assemble
 from sdd_core.models import Result
+from sdd_core.ports import Conflict
 from sdd_runtime.files import atomic_write, revision
 from sdd_storage.store import Store
 from test_runtime import hosted, runtime, settle
@@ -96,19 +97,24 @@ def test_v1_migration_backs_up_and_preserves_state(tmp_path):
     assert list(tmp_path.glob("*.pre-v2-*.bak"))
 
 
-def test_model_profile_is_pinned(tmp_path):
+def test_a_changed_handler_waits_for_the_live_attempt_then_applies(tmp_path):
     coordinator = runtime(tmp_path)
     coordinator.bind("one")
     handler = coordinator.registry.get("command")
     old = handler.manifest
     try:
-        # Until an attempt is dispatched the pin follows the installed handler.
         handler.manifest = replace(old, version="98.0")
         coordinator.bind("one")
-        coordinator.engine.dispatch("one", time.time(), "attempt")
+        run = coordinator.engine.dispatch("one", time.time(), "attempt")
+        # An upgrade (a new CLI, a profile edit) never rewrites a live attempt's handler.
         handler.manifest = replace(old, version="99.0")
-        with pytest.raises(ValueError, match="Pinned"):
+        with pytest.raises(Conflict, match="live"):
             coordinator.bind("one")
+        assert run.active is not None
+        coordinator.engine.recover("one", time.time(), True, "ended", run.revision)
+        coordinator.bind("one")  # between attempts the pin follows the installed handler
+        with coordinator.engine.store.unit() as db:
+            assert db.effect("attempt").status == "abandoned"
     finally:
         handler.manifest = old
 

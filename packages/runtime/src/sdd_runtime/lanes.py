@@ -7,6 +7,11 @@ current HEAD when the run first starts. Everything else in the workspace is
 linked (a junction on Windows, a symlink elsewhere) so tools and project checks
 see the same layout; linked folders are other checkouts and must not be edited.
 
+Committing is a workflow step too: `commit` records the agent's work with the project's
+commit message and advances the pins of dependencies the run's accepted prerequisites
+delivered (see `sdd_core.links`), so checks and review always see a committed,
+consistently pinned repository.
+
 Merging back is a workflow step, never implicit:
 * `integrate` (read-only for the lane) fast-forwards each main checkout to the
   lane branch, or reports `behind` when the lane has uncommitted work or the
@@ -21,17 +26,21 @@ is moved back into the workspace so history stays inspectable.
 import json
 import os
 import shutil
-import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from sdd_core.codec import canonical, object_json, sequence, text
+from sdd_core.codec import canonical, decode, mapping, object_json, sequence, text
+from sdd_core.links import Link, infer_link, missing, stale
 from sdd_core.models import Artifact, Result
-from sdd_core.sdk import Launch, Manifest, Packet
+from sdd_core.options import StepOptions
+from sdd_core.sdk import PACKET_FILE, Launch, Manifest, Packet
+from sdd_core.tickets import ticket_title
 
 from sdd_runtime.files import ENGINE_DIRECTORY, atomic_write, evidence
-from sdd_runtime.platform import NO_WINDOW
+from sdd_runtime.git import git, is_repository_top
+from sdd_runtime.submodules import links_of
 
 LANES = ".sdd-lanes"
 LANE_FILE = ".sdd-lane.json"
@@ -39,6 +48,51 @@ RESULT_FILE = "lane-result.json"
 SKIP = {".git", LANES, ENGINE_DIRECTORY}
 # Commits made on behalf of the engine need an identity even on fresh machines.
 IDENTITY = ("-c", "user.name=Feature Factory", "-c", "user.email=feature-factory@localhost")
+# Version 2 lanes check linked dependencies out (`attached`).
+LANE_VERSION = 2
+# Subjects longer than this are cut: commit tools and reviewers expect short subjects.
+SUBJECT_CHARS = 72
+
+
+@dataclass(frozen=True)
+class CommitMessages:
+    """A project's commit convention for engine commits; Conventional without attribution
+    by default. `{repo}` is the repository's folder name."""
+
+    work: str = "feat({repo}): {title}"
+    pin: str = "build({repo}): pin {dependency} {sha}"
+
+    @classmethod
+    def of(cls, options: StepOptions) -> "CommitMessages":
+        defaults = cls()
+        return cls(options.commit_message or defaults.work, options.pin_message or defaults.pin)
+
+    def check(self) -> None:
+        """Refuse a template that names an unknown field."""
+        self.for_work("repo", "title")
+        self.for_pin("repo", "dependency", "0" * 40)
+
+    def for_work(self, repo: str, title: str) -> str:
+        return _subject(self.work.format(repo=repo, title=title))
+
+    def for_pin(self, repo: str, dependency: str, sha: str) -> str:
+        name = dependency.rsplit("/", 1)[-1]
+        return _subject(self.pin.format(repo=repo, dependency=name, sha=sha[:10]))
+
+
+def _subject(message: str) -> str:
+    line = " ".join(message.split())
+    return line if len(line) <= SUBJECT_CHARS else line[: SUBJECT_CHARS - 1].rstrip() + "…"
+
+
+@dataclass(frozen=True)
+class LaneJob:
+    """What a lane action needs from its attempt: the ticket, the convention, and the
+    repositories its accepted prerequisites delivered."""
+
+    title: str
+    messages: CommitMessages = CommitMessages()
+    delivered: tuple[str, ...] = ()
 
 
 @dataclass
@@ -51,16 +105,33 @@ class LaneRepo:
 
 
 @dataclass
+class Attached:
+    """A dependency checked out inside the lane where a repository links it."""
+
+    path: str  # relative to the lane root
+    dependency: str  # the dependency repository, relative to the workspace
+
+
+@dataclass
 class Lane:
     run: str
     workspace: str
     root: str
     repos: list[LaneRepo] = field(default_factory=list)
     status: str = "active"  # opening | active | removing | removed
-    version: int = 1
+    version: int = LANE_VERSION
+    attached: list[Attached] = field(default_factory=list)
 
     def document(self) -> str:
         return canonical(asdict(self))
+
+    def work(self, repo: LaneRepo) -> Path:
+        """The repository's working copy in the lane."""
+        return Path(self.root) if repo.path == "." else Path(self.root) / repo.path
+
+    def main(self, repo: LaneRepo) -> Path:
+        """The repository's main copy in the workspace."""
+        return Path(self.workspace) if repo.path == "." else Path(self.workspace) / repo.path
 
 
 def load_lane(document: str) -> Lane:
@@ -73,40 +144,22 @@ def load_lane(document: str) -> Lane:
             text(item["origin"], "origin"),
             item.get("fresh") is True,
         )
-        for item in (dict(x) for x in sequence(raw.get("repos", [])))  # type: ignore[arg-type]
+        for item in (mapping(x) for x in sequence(raw.get("repos", [])))
     ]
+    attached = [
+        Attached(text(item["path"], "path"), text(item["dependency"], "dependency"))
+        for item in (mapping(x) for x in sequence(raw.get("attached", [])))
+    ]
+    version = raw.get("version", 1)
     return Lane(
         text(raw["run"], "run"),
         text(raw["workspace"], "workspace"),
         text(raw["root"], "root"),
         repos,
         text(raw.get("status", "active"), "status"),
+        version if isinstance(version, int) else 1,
+        attached,
     )
-
-
-def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=300,
-        creationflags=NO_WINDOW,
-        env={**os.environ, "GIT_EDITOR": "true", "GIT_TERMINAL_PROMPT": "0"},
-    )
-    if check and result.returncode:
-        raise RuntimeError(
-            f"git {' '.join(args[:2])}: {result.stderr.strip() or result.stdout.strip()}"
-        )
-    return result
-
-
-def is_repository_top(path: Path) -> bool:
-    if not (path / ".git").exists():
-        return False
-    top = git(path, "rev-parse", "--show-toplevel", check=False).stdout.strip()
-    return bool(top) and Path(top).resolve() == path.resolve()
 
 
 def _link(target: Path, link: Path) -> None:
@@ -176,12 +229,40 @@ def open_lane(workspace: Path, run_id: str, scope: tuple[Path, ...]) -> Lane:
     lane = Lane(run_id, str(workspace), str(root), repos)
     atomic_write(root / LANE_FILE, lane.document())
     for repo in repos:
-        _exclude(
-            root if repo.path == "." else root / repo.path, (LANE_FILE, ENGINE_DIRECTORY + "/")
-        )
+        _exclude(lane.work(repo), (LANE_FILE, ENGINE_DIRECTORY + "/"))
     if is_repository_top(workspace):
         _exclude(workspace, (LANES + "/",))
+    attach_links(lane)
+    atomic_write(root / LANE_FILE, lane.document())
     return lane
+
+
+def attach_links(lane: Lane) -> bool:
+    """Check out every linked dependency where the lane's repositories link it, at its
+    pinned commit, so the lane builds and runs as the workspace does. Idempotent; True
+    when something was attached. A dependency that cannot be attached is skipped."""
+    workspace, root = Path(lane.workspace), Path(lane.root)
+    known = {item.path for item in lane.attached}
+    before = len(lane.attached)
+    for repo in lane.repos:
+        if repo.fresh:
+            continue
+        for link in links_of(str(root), repo.path).links(str(root), repo.path):
+            place = link.path if repo.path == "." else f"{repo.path}/{link.path}"
+            target, source = root / place, workspace / link.dependency
+            if place in known or not link.pinned or not is_repository_top(source):
+                continue
+            if target.is_dir() and any(target.iterdir()):
+                continue  # already populated, as by an initialised submodule
+            if target.is_dir():
+                target.rmdir()
+            added = git(
+                source, "worktree", "add", "--detach", str(target), link.pinned, check=False
+            )
+            if added.returncode == 0:
+                lane.attached.append(Attached(place, link.dependency))
+                known.add(place)
+    return len(lane.attached) != before
 
 
 def _exclude(repo: Path, patterns: tuple[str, ...]) -> None:
@@ -202,7 +283,26 @@ def _exclude(repo: Path, patterns: tuple[str, ...]) -> None:
 
 
 def _dirty(repo: Path) -> bool:
-    return bool(git(repo, "status", "--porcelain", "--untracked-files=all").stdout.strip())
+    status = git(
+        repo, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=dirty"
+    )
+    return bool(status.stdout.strip())
+
+
+def _author(repo: Path) -> tuple[str, ...]:
+    """The repository's configured author; the engine's identity only when there is none."""
+    configured = git(repo, "config", "--get", "user.email", check=False).stdout.strip()
+    return () if configured else IDENTITY
+
+
+def _commit(repo: Path, message: str, *, everything: bool = True) -> None:
+    if everything:
+        git(repo, "add", "-A")
+    git(repo, *_author(repo), "commit", "-q", "-m", message)
+
+
+def _name(lane: Lane, repo: LaneRepo) -> str:
+    return Path(lane.workspace if repo.path == "." else repo.path).name
 
 
 def _ancestor(repo: Path, older: str, newer: str) -> bool:
@@ -216,11 +316,9 @@ def _rebasing(repo: Path) -> bool:
 
 def integrate(lane: Lane) -> tuple[str, str]:
     """Fast-forward main checkouts; `behind` when a rebase or commit must come first."""
-    workspace, root = Path(lane.workspace), Path(lane.root)
     plans = []
     for repo in lane.repos:
-        work = root if repo.path == "." else root / repo.path
-        main = workspace if repo.path == "." else workspace / repo.path
+        work, main = lane.work(repo), lane.main(repo)
         if _dirty(work):
             return "behind", f"{repo.path}: uncommitted work in the lane"
         if repo.fresh:
@@ -258,32 +356,101 @@ def integrate(lane: Lane) -> tuple[str, str]:
     return "merged", "Merged: " + ", ".join(merged)
 
 
-def rebase(lane: Lane, message: str) -> tuple[str, str]:
+def rebase(lane: Lane, job: LaneJob) -> tuple[str, str]:
     """Commit leftover work, continue or start a rebase onto the moved base."""
-    workspace, root = Path(lane.workspace), Path(lane.root)
     rebased = []
     for repo in lane.repos:
-        work = root if repo.path == "." else root / repo.path
-        main = workspace if repo.path == "." else workspace / repo.path
+        work, main = lane.work(repo), lane.main(repo)
         if not repo.fresh and _rebasing(work):
-            result = git(work, *IDENTITY, "rebase", "--continue", check=False)
+            result = git(work, *_author(work), "rebase", "--continue", check=False)
             if result.returncode:
                 return "conflict", _conflicts(repo.path, work)
         if _dirty(work):
-            git(work, "add", "-A")
-            git(work, *IDENTITY, "commit", "-q", "-m", message)
+            _commit(work, job.messages.for_work(_name(lane, repo), job.title))
         if repo.fresh:
             continue
         head = git(main, "rev-parse", "HEAD").stdout.strip()
         if _ancestor(work, head, "HEAD"):
             continue
-        result = git(work, *IDENTITY, "rebase", head, check=False)
+        result = git(work, *_author(work), "rebase", head, check=False)
         if result.returncode:
             return "conflict", _conflicts(repo.path, work)
         rebased.append(f"{repo.path} onto {head[:10]}")
     return "done", (
         "Rebased " + ", ".join(rebased)
     ) if rebased else "Work committed; base unchanged"
+
+
+def commit(lane: Lane, job: LaneJob) -> tuple[str, str]:
+    """Commit the agent's work, then advance the pins of delivered dependencies.
+
+    One commit per pinned dependency, dependencies the repository does not link yet are
+    linked like its neighbours; without a pattern to follow the step is blocked. Nothing
+    to do is `done` too, so the step can run after every agent pass.
+    """
+    workspace, root = Path(lane.workspace), Path(lane.root)
+    heads = {
+        dependency: git(workspace / dependency, "rev-parse", "HEAD").stdout.strip()
+        for dependency in job.delivered
+        if is_repository_top(workspace / dependency)
+    }
+    made: list[str] = []
+    for repo in lane.repos:
+        work, name = lane.work(repo), _name(lane, repo)
+        if _dirty(work):
+            _commit(work, job.messages.for_work(name, job.title))
+            made.append(f"{repo.path}: work")
+        if repo.fresh or not heads:
+            continue
+        adapter = links_of(str(root), repo.path)
+        links = adapter.links(str(root), repo.path)
+        if not links:
+            continue  # pins nothing of this workspace: the work commit is all
+        for link, head in stale(links, heads):
+            if link.pinned and not _ancestor(workspace / link.dependency, link.pinned, head):
+                continue  # never move a pin backwards
+            adapter.pin(str(root), repo.path, link, head)
+            _check_out(lane, repo, link, head)
+            _commit(work, job.messages.for_pin(name, link.dependency, head), everything=False)
+            made.append(f"{repo.path}: pin {link.dependency} {head[:10]}")
+        for dependency in missing(links, heads, repo.path):
+            new = infer_link(links, dependency)
+            if new is None:
+                return "blocked", (
+                    f"{repo.path} does not link {dependency} and has no neighbouring link "
+                    "to follow; add the link by hand, then retry"
+                )
+            adapter.add(str(root), repo.path, new, heads[dependency])
+            _check_out(lane, repo, new, heads[dependency])
+            _commit(
+                work,
+                job.messages.for_pin(name, dependency, heads[dependency]),
+                everything=False,
+            )
+            made.append(f"{repo.path}: link {dependency} {heads[dependency][:10]}")
+    return "done", ("Committed " + "; ".join(made)) if made else "Nothing to commit"
+
+
+def _check_out(lane: Lane, repo: LaneRepo, link: Link, commit: str) -> None:
+    """Show the dependency at its new pin where the repository links it."""
+    place = link.path if repo.path == "." else f"{repo.path}/{link.path}"
+    target, source = Path(lane.root) / place, Path(lane.workspace) / link.dependency
+    if any(item.path == place for item in lane.attached):
+        git(target, "checkout", "-q", "--detach", commit)
+        return
+    if target.is_dir() and not any(target.iterdir()):
+        target.rmdir()
+    if not target.exists():
+        git(source, "worktree", "add", "--detach", str(target), commit)
+        lane.attached.append(Attached(place, link.dependency))
+
+
+# The lane actions a workflow step can run, by name.
+ACTIONS: dict[str, Callable[[Lane, LaneJob], tuple[str, str]]] = {
+    "commit": commit,
+    "integrate": lambda lane, job: integrate(lane),
+    "rebase": rebase,
+}
 
 
 def _conflicts(path: str, work: Path) -> str:
@@ -297,6 +464,9 @@ def _conflicts(path: str, work: Path) -> str:
 
 def remove_lane(lane: Lane) -> None:
     """Delete worktrees, merged branches and links; never follow a link."""
+    written = Path(lane.root) / LANE_FILE
+    if written.is_file():
+        lane = load_lane(written.read_text(encoding="utf-8"))  # the lane's latest record
     workspace, root = Path(lane.workspace), Path(lane.root)
     evidence_dir = root / ENGINE_DIRECTORY
     if evidence_dir.is_dir():
@@ -305,11 +475,15 @@ def remove_lane(lane: Lane) -> None:
         for item in evidence_dir.iterdir():
             if not (target / item.name).exists():
                 shutil.move(str(item), str(target / item.name))
+    # Attached dependencies first: they live inside the repositories' worktrees.
+    for attached in sorted(lane.attached, key=lambda a: a.path.count("/"), reverse=True):
+        source = workspace / attached.dependency
+        git(source, "worktree", "remove", "--force", str(root / attached.path), check=False)
+        git(source, "worktree", "prune", check=False)
     for repo in lane.repos:
         if repo.fresh:
             continue
-        main = workspace if repo.path == "." else workspace / repo.path
-        work = root if repo.path == "." else root / repo.path
+        main, work = lane.main(repo), lane.work(repo)
         if work.exists() and not os.path.isjunction(work) and not work.is_symlink():
             git(main, "worktree", "remove", "--force", str(work), check=False)
         git(main, "worktree", "prune", check=False)
@@ -332,10 +506,10 @@ def _unlink_tree(path: Path) -> None:
 
 
 class LaneHandler:
-    """Runs `integrate` or `rebase` for the lane the attempt executes in."""
+    """Runs one lane action (see `ACTIONS`) for the lane the attempt executes in."""
 
     def __init__(self, action: str) -> None:
-        if action not in ("integrate", "rebase"):
+        if action not in ACTIONS:
             raise ValueError("Unknown lane action")
         self.action = action
         self.manifest = Manifest("lane-" + action, "0.1.0", capabilities=("process", "operation"))
@@ -375,18 +549,27 @@ class LaneHandler:
         )
 
 
+def job_of(directory: Path, run_id: str) -> LaneJob:
+    """The lane job an attempt describes in its packet (written before launch)."""
+    packet = decode(Packet, object_json((directory / PACKET_FILE).read_text(encoding="utf-8")))
+    return LaneJob(
+        ticket_title(packet.context) or run_id,
+        CommitMessages.of(packet.step.options),
+        packet.delivered,
+    )
+
+
 def main() -> None:
     action, directory, run_id = sys.argv[1:4]
     lane = load_lane(Path(LANE_FILE).read_text(encoding="utf-8"))
     if lane.run != run_id:
         raise SystemExit("Lane belongs to another run")
     try:
-        if action == "integrate":
-            outcome, reason = integrate(lane)
-        else:
-            outcome, reason = rebase(lane, f"ffai: {run_id} work before merge")
-    except (RuntimeError, OSError) as error:
+        outcome, reason = ACTIONS[action](lane, job_of(Path(directory), run_id))
+    except (RuntimeError, OSError, ValueError, KeyError) as error:
         outcome, reason = "blocked", str(error)
+    # Links a commit added belong to the lane record, so removing the lane finds them.
+    atomic_write(Path(lane.root) / LANE_FILE, lane.document())
     atomic_write(Path(directory) / RESULT_FILE, json.dumps({"outcome": outcome, "reason": reason}))
 
 

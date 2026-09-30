@@ -18,6 +18,10 @@ class StaleVersion(Conflict):
     """Optimistic concurrency: the run changed since it was read; re-read and retry."""
 
 
+# A handler may change between a run's attempts, never under a live one.
+HANDLER_CHANGED_WHILE_LIVE = "Handler changed while an attempt of this run is live"
+
+
 @dataclass(frozen=True)
 class EffectRecord:
     id: str
@@ -105,10 +109,11 @@ class ExecutionRecords(Protocol):
     """Outbox effects, pinned handlers and host ownership of attempts."""
 
     def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
-        """Pin a handler's manifest to a run.
+        """Pin a handler's manifest to a run for its next attempt.
 
-        A different manifest is a Conflict once the run has dispatched any process
-        attempt; before that the pin follows the operator's current profiles.
+        The pin follows the current manifest whenever no process attempt of the run is
+        live (an agent upgrade or a profile edit applies from the next step); while one
+        is live a different manifest is a Conflict, so the caller waits.
         """
         ...
 

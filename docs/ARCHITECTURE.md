@@ -153,10 +153,46 @@ Provider adapters currently block on unclassified CLI failures. A trusted adapte
 Reset moments are read from epochs, "in N hours" and absolute local times ("try again at
 Oct 4th, 2026 11:41 PM", "resets 3pm"), bounded to a week.
 
+## Handlers are pinned per attempt
+An attempt runs with the handler manifest of its step at dispatch, and `handler.json` in its
+folder records it. Between attempts a run's binding follows the installed handler, so an agent
+CLI update, an engine upgrade or a profile edit applies from the next step. While an attempt of
+the run is live, a changed handler is a `Conflict`: the coordinator waits and never blocks.
+Runs that an earlier release blocked with "Pinned handler settings or version changed" are
+released once on start.
+
+## One repository per ticket; the engine commits and pins
+A ticket changes exactly one repository. Work across repositories is a chain of tickets: the
+dependency's ticket first, then the ticket of the repository that uses it. The second ticket
+`depends_on` the first, advances its pin and verifies the integration. The planner is told
+this, and approving a breakdown with a ticket spanning repositories is refused with the list.
+
+Repositories of a workspace may pin each other. `sdd_core.links` holds the rules as pure
+functions (which pins are stale, which dependency is missing, where a new link goes, following
+its neighbours). The `RepositoryLinks` port reads and writes pins. The first adapter is
+`GitSubmodules` in `sdd_runtime.submodules`, the only code that knows `.gitmodules`; the
+adapter is chosen per repository by what it contains.
+
+A lane checks out every linked dependency at its pinned commit where the repository links it
+(a detached worktree of the main dependency), so the lane builds and runs like the workspace.
+Isolated ticket flows run a deterministic `commit` operation (`lane-commit`) after every agent
+pass:
+1. commit the agent's work with the project's template (`commit_message`, default
+   `feat({repo}): {title}`);
+2. advance the pin of every dependency the run's accepted prerequisites delivered
+   (`Packet.delivered`) to its main head, one commit each (`pin_message`, default
+   `build({repo}): pin {dependency} {sha}`);
+3. link a delivered dependency the repository does not link yet the way its neighbours are
+   linked, or block with the reason when there is no pattern.
+
+Commits use the repository's configured author. Checks and review therefore always see a
+committed, consistently pinned repository. Agents in lanes are told not to commit or edit pin
+files.
+
 ## Plan reviews: a plan lead proposes, a person decides
 
 An approved breakdown is not frozen. A plan review runs when a ticket's own agent
-returns `blocked`, and right after a breakdown is approved. At most one runs per plan
+returns `blocked` or a ticket exhausts a step's visits, and right after a breakdown is approved. At most one runs per plan
 at a time, one runs per trigger, and a plan gets at most `MAX_REVIEWS`. The review is a
 workflow (`plan-review`): its read-only agent step `produces: plan_changes` from a brief
 that lists every ticket with its state, blocking reason, needs, dependencies and owned

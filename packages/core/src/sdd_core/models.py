@@ -93,6 +93,8 @@ HELD_NEEDS: tuple[TicketNeed, ...] = ("human", "asset")
 PROCESS_KINDS: tuple[Kind, ...] = ("agent", "check", "operation")
 # Effect kinds that launch no handler process, so they never lock a pinned manifest.
 UNPINNED_KINDS: tuple[Kind, ...] = ("human", "condition")
+# Effect statuses of an attempt whose process may still run.
+LIVE_EFFECT_STATUSES = ("pending", "running", "uncertain")
 # Provider failures that refuse an attempt before any model work: the attempt's
 # reserved calls are returned when its result also measured no tokens.
 REFUSALS = ("usage_limit", "rate_limit", "authentication", "unreachable", "model_not_available")

@@ -12,9 +12,17 @@ from sdd_core import machine
 from sdd_core.catalog import AgentCall, OutboxEntry
 from sdd_core.codec import digest, result_load, workflow_json
 from sdd_core.graph import validate
-from sdd_core.models import UNPINNED_KINDS, Attempt, Result, Run, Transition, Workflow
+from sdd_core.models import (
+    LIVE_EFFECT_STATUSES,
+    UNPINNED_KINDS,
+    Attempt,
+    Result,
+    Run,
+    Transition,
+    Workflow,
+)
 from sdd_core.ports import Conflict, StaleVersion, UnitOfWork
-from sdd_core.records import EffectRecord
+from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE, EffectRecord
 
 
 @dataclass
@@ -104,7 +112,7 @@ class MemoryUnit:
     def active_claims(self) -> tuple[tuple[str, str], ...]:
         return tuple(
             (record.kind, self.location(record.run_id)[1])
-            for record in self.effects(("pending", "running", "uncertain"))
+            for record in self.effects(LIVE_EFFECT_STATUSES)
             if record.kind not in ("human", "condition")
         )
 
@@ -138,13 +146,14 @@ class MemoryUnit:
     def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
         key = (run_id, handler)
         old = self.state.bindings.get(key)
-        if old is not None and old != manifest and self._executed(run_id):
-            raise Conflict("Pinned handler settings or version changed")
+        if old is not None and old != manifest and self._live(run_id):
+            raise Conflict(HANDLER_CHANGED_WHILE_LIVE)
         self.state.bindings[key] = manifest
 
-    def _executed(self, run_id: str) -> bool:
+    def _live(self, run_id: str) -> bool:
         return any(
-            e.run_id == run_id and e.kind not in UNPINNED_KINDS for e in self.state.effects.values()
+            e.run_id == run_id and e.kind not in UNPINNED_KINDS and e.status in LIVE_EFFECT_STATUSES
+            for e in self.state.effects.values()
         )
 
     def context(self, run_id: str) -> str:

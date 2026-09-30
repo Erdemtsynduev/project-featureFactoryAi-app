@@ -18,10 +18,10 @@ from pathlib import Path
 from sdd_core import machine
 from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load, text
 from sdd_core.execution import ExecutionRequest
-from sdd_core.models import Result
+from sdd_core.models import LIVE_EFFECT_STATUSES, PROCESS_KINDS, Result, Step
 from sdd_core.ports import Conflict
 from sdd_core.records import EffectRecord
-from sdd_core.sdk import Packet, Registry, handler_key
+from sdd_core.sdk import PACKET_FILE, Manifest, Packet, Registry, handler_key
 
 from sdd_runtime.application import ApplicationEngine
 from sdd_runtime.execution import ExecutionDriver
@@ -37,6 +37,7 @@ COMMAND_LINE_CHARS = 32000
 # How often `contain` re-reads a run that moved while its failure was being recorded.
 CONTAIN_RETRIES = 3
 RECEIPT_FILE = "receipt.json"
+HANDLER_FILE = "handler.json"
 
 
 class Coordinator:
@@ -105,25 +106,29 @@ class Coordinator:
         except (ValueError, Conflict) as error:
             self.block(run_id, now, "Automatic answer: " + str(error))
 
+    def manifest(self, step: Step) -> Manifest:
+        """The handler a step runs with now, checked against the step's needs."""
+        manifest = self.registry.get(handler_key(step)).manifest
+        required_profile = step.options.profile_snapshot
+        if not step.handler and step.profile != "default" and required_profile is None:
+            raise ValueError("Resolve named profiles when creating the run with --config")
+        if (
+            required_profile is not None
+            and object_json(manifest.settings).get("profile") != required_profile
+        ):
+            raise ValueError("Run profile differs from its creation snapshot")
+        if step.kind not in manifest.capabilities:
+            raise ValueError(f"Handler {manifest.id} lacks {step.kind} capability")
+        return manifest
+
     def bind(self, run_id: str) -> None:
+        """Pin every process step's current handler; waits (Conflict) while one runs."""
         workflow = self.engine.store.workflow(self.engine.store.get(run_id).workflow_digest)
         with self.engine.store.unit() as db:
             for step in workflow.steps:
-                if step.kind not in ("agent", "check", "operation"):
-                    continue
-                manifest = self.registry.get(handler_key(step)).manifest
-                required_profile = step.options.profile_snapshot
-                if not step.handler and step.profile != "default" and required_profile is None:
-                    raise ValueError("Resolve named profiles when creating the run with --config")
-                if (
-                    required_profile is not None
-                    and object_json(manifest.settings).get("profile") != required_profile
-                ):
-                    raise ValueError("Run profile differs from its creation snapshot")
-                if step.kind not in manifest.capabilities:
-                    raise ValueError(f"Handler {manifest.id} lacks {step.kind} capability")
-                document = canonical(asdict(manifest))
-                db.bind_handler(run_id, handler_key(step), document)
+                if step.kind in PROCESS_KINDS:
+                    document = canonical(asdict(self.manifest(step)))
+                    db.bind_handler(run_id, handler_key(step), document)
 
     def packet(self, run_id: str) -> Packet:
         return build_packet(self.engine.store, self.registry, run_id)
@@ -142,7 +147,9 @@ class Coordinator:
             raise ValueError("Explicit executable required")
         if len(subprocess.list2cmdline(launch.argv)) > COMMAND_LINE_CHARS:
             raise ValueError("Command line too long; the handler must pass its prompt on stdin")
-        atomic_write(folder / "packet.json", canonical(asdict(packet)))
+        atomic_write(folder / PACKET_FILE, canonical(asdict(packet)))
+        # The handler this attempt runs with: its provenance, whatever changes later.
+        atomic_write(folder / HANDLER_FILE, canonical(asdict(self.manifest(packet.step))))
         if launch.input:
             atomic_write(folder / INPUT_FILE, launch.input)
         plan = Plan(
@@ -230,7 +237,7 @@ class Coordinator:
     def restore(self, now: float) -> None:
         """Called under the coordinator lease before any new dispatch."""
         with self.engine.store.unit() as db:
-            rows = db.effects(("pending", "running", "uncertain"))
+            rows = db.effects(LIVE_EFFECT_STATUSES)
             requests = {row.id: db.execution(row.id) for row in rows}
         for row in rows:
             if row.kind == "human":
@@ -288,6 +295,8 @@ class Coordinator:
             return False
         try:
             self.bind(run_id)
+        except Conflict:
+            return False  # a handler changed under a live attempt: bind after it ends
         except (ValueError, KeyError) as error:
             self.block(run_id, now, str(error))
             return False

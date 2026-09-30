@@ -3,7 +3,14 @@
 from pathlib import Path
 
 from sdd_runtime.application import ApplicationEngine
-from sdd_runtime.lanes import Lane, load_lane, open_lane, remove_lane
+from sdd_runtime.lanes import (
+    LANE_VERSION,
+    Lane,
+    attach_links,
+    load_lane,
+    open_lane,
+    remove_lane,
+)
 
 
 class LaneKeeper:
@@ -19,6 +26,12 @@ class LaneKeeper:
             workspace, claim = db.location(run_id)
         known = load_lane(document) if document else None
         if known and known.status == "active" and Path(workspace) == Path(known.root):
+            if known.version < LANE_VERSION:
+                # A lane opened by an earlier release gains its dependencies once.
+                attach_links(known)
+                known.version = LANE_VERSION
+                with self.engine.store.unit() as db:
+                    db.save_lane(run_id, known.document())
             return
         main = Path(known.workspace) if known else Path(workspace)
         paths = self.engine.workspace.paths(claim)

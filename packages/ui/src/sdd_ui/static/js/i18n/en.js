@@ -63,6 +63,8 @@ export default {
     "Each ticket works in its own git worktree and merges fast-forward",
   "project.autoResolve": "An agent resolves merge conflicts (otherwise you do)",
   "project.web": "Ticket agents may use the internet (web search and fetch)",
+  "project.commitMessage": "Engine commit message ({repo}, {title})",
+  "project.pinMessage": "Pin commit message ({repo}, {dependency}, {sha})",
   "project.saved": "Project “{name}” saved",
 
   "queue.start": "Start queue",

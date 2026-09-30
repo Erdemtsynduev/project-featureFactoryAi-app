@@ -12,7 +12,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
 from sdd_core.models import PLAN_CHANGE_KINDS, PlanChangeKind, Status, TicketNeed
-from sdd_core.tickets import TicketDraft, draft_of, needs_of, ordered, strings
+from sdd_core.tickets import (
+    ScopeOf,
+    TicketDraft,
+    draft_of,
+    needs_of,
+    one_repository,
+    ordered,
+    strings,
+)
 from sdd_core.wire import Json, flag, mapping, object_json, sequence, text
 
 # Reviews one plan may take; a plan that needs more needs a person, not more reviews.
@@ -178,8 +186,16 @@ class Revision:
     summary: tuple[str, ...] = ()
 
 
-def revise(snapshot: PlanSnapshot, changes: tuple[PlanChange, ...]) -> Revision:
-    """Apply `changes` to the plan, or refuse them with the first broken rule."""
+def revise(
+    snapshot: PlanSnapshot,
+    changes: tuple[PlanChange, ...],
+    scope_of: ScopeOf = lambda draft: (),
+) -> Revision:
+    """Apply `changes` to the plan, or refuse them with the first broken rule.
+
+    `scope_of` names the repositories a draft changes: every new or rewritten ticket
+    must change one repository (see `tickets.one_repository`).
+    """
     plan = {draft.id: draft for draft in snapshot.drafts}
     known = set(plan)
     touched: set[str] = set()
@@ -273,9 +289,11 @@ def revise(snapshot: PlanSnapshot, changes: tuple[PlanChange, ...]) -> Revision:
         and draft != before[draft.id]
         and not (snapshot.states.get(draft.id) or _UNSTARTED).started
     )
+    create = tuple(draft for draft in drafts if draft.id in created)
+    one_repository(create + update, scope_of)
     return Revision(
         drafts,
-        tuple(draft for draft in drafts if draft.id in created),
+        create,
         update,
         tuple(sorted(replaced)),
         tuple(holds),

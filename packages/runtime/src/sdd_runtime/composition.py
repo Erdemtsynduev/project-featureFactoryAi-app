@@ -26,13 +26,13 @@ def registry(config: Path | None) -> Registry:
     from sdd_providers.handlers import CommandHandler
     from sdd_providers.structured_cli import Invocation
 
-    from sdd_runtime.lanes import LaneHandler
+    from sdd_runtime.lanes import ACTIONS, LaneHandler
     from sdd_runtime.profiles import RunnerInstallation, load_profiles, register_profiles
     from sdd_runtime.rotation import Cooldowns, apply_rotations, load_rotations
 
     result = Registry()
     result.register(CommandHandler())
-    for action in ("integrate", "rebase"):
+    for action in ACTIONS:
         result.register(LaneHandler(action))
     if config is None:
         return result

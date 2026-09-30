@@ -10,6 +10,8 @@ API_VERSION = 1
 # before the payload starts, so their presence proves the launch.
 STDOUT_LOG = "stdout.log"
 STDERR_LOG = "stderr.log"
+# The attempt packet the engine writes before launch, for handlers that run later.
+PACKET_FILE = "packet.json"
 
 
 def handler_key(step: Step) -> str:
@@ -38,6 +40,9 @@ class Packet:
     context: str
     # Native session to continue; context then holds only what is new since it.
     resume: str = ""
+    # Repositories (workspace-relative) that the run's accepted prerequisites changed:
+    # a dependent repository advances its pins to what they delivered.
+    delivered: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,25 @@ digest they were created with.
 
 ## Unreleased
 
+- **Plan 110 incident: tickets no longer block on upgrades, and work across
+  repositories converges.**
+  - Handlers are pinned per attempt. An agent CLI update, engine upgrade or profile
+    edit applies from the next attempt; while an attempt is live the coordinator waits
+    and never blocks. `handler.json` records each attempt's handler. The 11 tickets
+    blocked by "Pinned handler settings or version changed" are released once on start.
+  - One repository per ticket: work across repositories is a chain of tickets, the
+    dependency first. The planner is told this, and approval refuses a spanning ticket.
+  - Repository links are a port (`sdd_core.links`) with a git submodule adapter. Lanes
+    check linked dependencies out at their pins, so they build without temporary
+    projects.
+  - A deterministic `commit` step runs after every agent pass in isolated tickets. It
+    commits the work with the project's template, advances the pins of dependencies
+    that accepted prerequisites delivered, and links a missing dependency the way its
+    neighbours are linked. Commits use the repository's configured author; the
+    templates are project settings.
+  - A ticket that exhausts a step's visits asks the plan lead for a review.
+  - A run waiting for a person holds no workspace; `lanes.load_lane` reads its version.
+
 - **A plan lead reviews approved plans.** Ticket T10 was blocked because its
   acceptance needed licensed recordings from the web, which neither the planner knew
   nor the agent could reach. Now:

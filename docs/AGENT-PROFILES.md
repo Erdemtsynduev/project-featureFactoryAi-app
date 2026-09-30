@@ -87,6 +87,11 @@ tool the bound handler's manifest does not list. A project's **web** setting gra
 web to every agent step of its ticket flow; planners and plan reviews are told which
 steps have it.
 
+## Upgrades apply between attempts
+Profiles, models and agent CLIs may change at any time. A change applies from a run's next
+attempt; an attempt in flight keeps the handler it started with, and its `handler.json`
+records it. Nothing blocks a run because an agent was upgraded.
+
 ## Create a pinned run
 
 ```text

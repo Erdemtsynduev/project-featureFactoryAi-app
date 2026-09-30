@@ -14,6 +14,7 @@ from sdd_core.catalog import CatalogRecords
 from sdd_core.codec import canonical, mapping, object_json, sequence, text
 from sdd_core.models import Json
 from sdd_core.ports import Conflict
+from sdd_runtime.lanes import CommitMessages
 
 from sdd_factory.model import TaskRecord
 from sdd_factory.trackers import tracker_settings
@@ -28,6 +29,20 @@ class Artifact:
     kind: str  # one of ARTIFACT_KINDS
     content: str  # Markdown for people
     data: Json = None  # structured form, when there is one
+
+
+def commit_messages(doc: dict[str, Json]) -> CommitMessages:
+    """The project's commit templates for engine commits, checked; defaults when unset."""
+    defaults = CommitMessages()
+    messages = CommitMessages(
+        text(doc.get("commit_message") or defaults.work, "commit_message"),
+        text(doc.get("pin_message") or defaults.pin, "pin_message"),
+    )
+    try:
+        messages.check()
+    except (KeyError, IndexError, ValueError) as error:
+        raise ValueError(f"Commit message template names an unknown field: {error}") from None
+    return messages
 
 
 def checks_of(value: Json, label: str) -> list[str]:
@@ -63,6 +78,7 @@ class ProjectCatalog:
         if language not in ("ru", "en"):
             raise ValueError("Unsupported response language")
         checks = checks_of(doc.get("checks", []), "check argument")
+        messages = commit_messages(doc)
         # Per-repository checks: a ticket runs the checks of the repositories it owns.
         repository_checks: dict[str, Json] = {}
         for repository, argv in mapping(doc.get("repository_checks", {})).items():
@@ -99,6 +115,9 @@ class ProjectCatalog:
             "auto_resolve": doc.get("auto_resolve", True) is not False,
             # Ticket agents may use the internet (web search and fetch).
             "web": doc.get("web", False) is True,
+            # The project's commit convention for engine commits in lanes; empty = default.
+            "commit_message": messages.work if doc.get("commit_message") else "",
+            "pin_message": messages.pin if doc.get("pin_message") else "",
         }
         self.records.save_project(identifier, canonical(result))
         return result

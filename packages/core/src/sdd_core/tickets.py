@@ -4,7 +4,7 @@ The application turns an approved breakdown into child runs; each draft carries
 everything a fresh ticket agent needs, without the planner's transcript.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import cast
 
@@ -41,7 +41,7 @@ class TicketDraft:
         Within `limit` characters the ticket itself is kept whole; a specification
         that does not fit is cut at a line and says so, never silently.
         """
-        lines = [f"Ticket {self.id}: {self.title}"]
+        lines = [f"{TICKET_HEADER}{self.id}: {self.title}"]
         if self.goal:
             lines.append("Goal: " + self.goal)
         if self.acceptance:
@@ -74,6 +74,17 @@ def _shortened(kept: int, total: int) -> str:
         f"\n[Specification shortened to fit the ticket budget: {kept} of {total}"
         " characters. The acceptance criteria above govern.]"
     )
+
+
+TICKET_HEADER = "Ticket "
+
+
+def ticket_title(context: str) -> str:
+    """The title a ticket's brief opens with (see `TicketDraft.context`), else ""."""
+    for line in context.splitlines():
+        if line.startswith(TICKET_HEADER) and ": " in line:
+            return line.split(": ", 1)[1].strip()
+    return ""
 
 
 def needs_of(item: dict[str, Json]) -> tuple[TicketNeed, ...]:
@@ -117,6 +128,24 @@ def ordered(drafts: Iterable[TicketDraft]) -> tuple[TicketDraft, ...]:
         "Ticket dependencies are cyclic or unknown",
     )
     return tuple(by_id[identifier] for layer in layers for identifier in layer)
+
+
+type ScopeOf = Callable[[TicketDraft], tuple[str, ...]]
+
+
+def one_repository(drafts: Iterable[TicketDraft], scope_of: ScopeOf) -> None:
+    """Each ticket changes one repository. Work across repositories is a chain of
+    tickets (the dependency first), so each can be committed, pinned and verified."""
+    spanning = [
+        f"{draft.id}: {', '.join(repositories)}"
+        for draft in drafts
+        if len(repositories := scope_of(draft)) > 1
+    ]
+    if spanning:
+        raise ValueError(
+            "Each ticket changes one repository; split these by repository, the dependency "
+            "first: " + "; ".join(spanning)
+        )
 
 
 def tickets_of(data: str) -> tuple[TicketDraft, ...]:

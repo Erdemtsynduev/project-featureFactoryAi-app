@@ -9,6 +9,7 @@ from sdd_core.ports import StateStore
 from sdd_core.sdk import Packet, Registry, handler_key
 
 from sdd_runtime.files import attempt_folder
+from sdd_runtime.lanes import load_lane
 
 # Receipts scanned for task memory (notes and handoff), and when looking for a session.
 MEMORY_WINDOW = 12
@@ -36,10 +37,22 @@ def build_packet(store: StateStore, registry: Registry, run_id: str) -> Packet:
         memory = brief(results).render() + "\n" + link
         context = fit(context, memory, workflow.max_input_chars)
     step = workflow.step(run.step)
+    done = delivered(store, run_id)
     resume = continuation(store, registry, run.id, run.revision, step, context)
     if resume is not None:
-        return Packet(run.id, run.active, step, str(root), str(folder), resume[1], resume[0])
-    return Packet(run.id, run.active, step, str(root), str(folder), context)
+        return Packet(run.id, run.active, step, str(root), str(folder), resume[1], resume[0], done)
+    return Packet(run.id, run.active, step, str(root), str(folder), context, delivered=done)
+
+
+def delivered(store: StateStore, run_id: str) -> tuple[str, ...]:
+    """Repositories the run's accepted prerequisites changed, from their lanes."""
+    found: set[str] = set()
+    with store.unit() as db:
+        for prerequisite in db.dependencies(run_id):
+            document = db.lane(prerequisite.id) if prerequisite.status == "accepted" else None
+            if document:
+                found.update(repo.path for repo in load_lane(document).repos if repo.path != ".")
+    return tuple(sorted(found))
 
 
 def continuation(

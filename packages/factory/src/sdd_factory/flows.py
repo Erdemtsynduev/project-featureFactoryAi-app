@@ -105,6 +105,10 @@ class FlowLibrary:
             self._ticket_checks(project, checks, repositories),
             isolated=project.get("isolation", True) is not False,
             auto_resolve=project.get("auto_resolve", True) is not False,
+            commit_messages=(
+                str(project.get("commit_message") or ""),
+                str(project.get("pin_message") or ""),
+            ),
         )
         return with_tools(flow, ("web",) if project.get("web") is True else ())
 

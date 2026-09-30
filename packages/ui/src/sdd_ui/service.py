@@ -42,11 +42,18 @@ from sdd_ui.workspace import WorkspaceCatalog
 type Action = Callable[[dict[str, Json]], object]
 
 # Actions that replace the coordinator, its handlers or the queue settings.
-SPURIOUS_BLOCK = "Run is not dispatchable"
+# Blocks earlier engine builds recorded where nothing had failed; each is released once,
+# as the operator's Retry would be, with the reason logged.
+LEGACY_BLOCKS = {
+    "Run is not dispatchable": "paused during its own dispatch",
+    "Pinned handler settings or version changed": "an upgraded agent or profile pinned per run",
+}
 # How often projects with a tracker are mirrored, in seconds.
 TRACKER_EVERY = 30.0
 # How often the quota loop wakes; each subscription is read on its own slower schedule.
 QUOTA_EVERY = 60.0
+# How often stopped tickets are checked for a plan review a busy plan postponed.
+REVIEW_EVERY = 60.0
 COORDINATOR_ACTIONS = frozenset({"queue", "budget", "profiles", "connect", "rotation", "wake"})
 # Actions whose `id` names a task (other actions use `id` for projects).
 TASK_ACTIONS = frozenset(
@@ -139,7 +146,7 @@ class WorkspaceService:
         self.versions = {"engine": engine(), "packages": found, "consistent": consistent(found)}
         # Tracker adapters installed with the application, offered in project settings.
         self.tracker_kinds = sorted(installed_trackers())
-        self._release_spurious_blocks()
+        self._release_legacy_blocks()
         self._finish_admissions()
 
     def _finish_admissions(self) -> None:
@@ -155,22 +162,23 @@ class WorkspaceService:
         if created:
             self.log.record("tickets_readmitted", tickets=list[Json](created))
 
-    def _release_spurious_blocks(self) -> None:
-        """Earlier builds blocked a task paused during its own dispatch with this
-        reason. Nothing failed, so it is released exactly once, as the operator's
-        Retry would, and logged; it stays paused."""
+    def _release_legacy_blocks(self) -> None:
+        """Release blocks an earlier engine recorded where nothing failed (see
+        LEGACY_BLOCKS), exactly once, as the operator's Retry would; logged."""
         with self.engine.store.unit() as unit:
             stuck = [
                 run
                 for run in unit.runs()
-                if run.status == "blocked" and run.active is None and run.reason == SPURIOUS_BLOCK
+                if run.status == "blocked" and run.active is None and run.reason in LEGACY_BLOCKS
             ]
         for run in stuck:
             try:
                 self.engine.command(run.id, "retry", uuid.uuid4().hex, run.version, time.time())
             except (ValueError, Conflict):
                 continue
-            self.log.record("unblocked", run=run.id, reason=run.reason)
+            self.log.record(
+                "unblocked", run=run.id, reason=run.reason, legacy=LEGACY_BLOCKS[run.reason]
+            )
 
     # Compatibility accessors used by the HTTP layer and tests.
 
@@ -237,7 +245,20 @@ class WorkspaceService:
         mirror.start()
         quotas = threading.Thread(target=self._quota_loop, name="subscription-quotas", daemon=True)
         quotas.start()
+        reviews = threading.Thread(target=self._review_loop, name="plan-reviews", daemon=True)
+        reviews.start()
         self.queue.work()
+
+    def _review_loop(self) -> None:
+        """Ask for reviews a busy plan postponed: one review runs per plan at a time, so a
+        ticket that stopped meanwhile is reviewed once the plan's review has finished."""
+        while not self.queue.quit.wait(REVIEW_EVERY):
+            try:
+                self.reviews.sweep()
+            except Exception as error:  # a review request never stops the application
+                self.log.record(
+                    "plan_review_failed", "error", error=f"{type(error).__name__}: {error}"
+                )
 
     def _quota_loop(self) -> None:
         """Read subscription windows on their own schedule, outside the queue's lock:

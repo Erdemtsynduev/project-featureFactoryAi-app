@@ -5,7 +5,7 @@ import sqlite3
 from typing import TYPE_CHECKING
 
 from sdd_core.codec import result_load, sequence, text
-from sdd_core.models import Result, Run, Transition
+from sdd_core.models import LIVE_EFFECT_STATUSES, UNPINNED_KINDS, Result, Run, Transition
 
 from sdd_storage.runtime_records import SQLiteRuntimeRecords
 
@@ -94,7 +94,8 @@ class SQLiteUnit(SQLiteRuntimeRecords):
             (str(row[0]), str(row[1]))
             for row in self.db.execute(
                 "SELECT e.kind,r.claim FROM effects e JOIN runs r ON r.id=e.run "
-                "WHERE e.status IN ('pending','running','uncertain') AND e.kind NOT IN ('human','condition')"
+                "WHERE e.status IN (?,?,?) AND e.kind NOT IN (?,?)",
+                (*LIVE_EFFECT_STATUSES, *UNPINNED_KINDS),
             )
         )
 

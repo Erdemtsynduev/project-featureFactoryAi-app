@@ -41,8 +41,11 @@ user stories and AC ids it delivers), testable acceptance criteria refined from 
 agents cannot make or obtain such as licensed recordings, `web` when the ticket's agent
 needs the internet and the agents below have none), `depends_on`
 with only the ticket ids it is truly blocked by (independent tickets run in parallel)
-and `paths` with the repository folders it owns (for example libraries/terrain,
-framework-rally). Every acceptance criterion of the PRD is covered by some ticket.
+and `paths` with the folders it owns. Each ticket changes exactly one repository. Work
+across repositories is a chain of tickets: the ticket of the dependency first, then the
+ticket of the repository that uses it, which `depends_on` it, updates its pinned version
+and verifies the integration; criteria verified in the using repository belong to that
+ticket. Every acceptance criterion of the PRD is covered by some ticket.
 Tickets the brief lists as already queued cover their scope: do not duplicate them.
 Return done with a readable summary table of the tickets in reason. No edits.
 """
@@ -50,7 +53,9 @@ Return done with a readable summary table of the tickets in reason. No edits.
 PLAN_REVIEW = """Review this approved ticket plan as its lead. The brief says why the
 review runs (a ticket its agent blocked, or a fresh breakdown), what the ticket agents can
 and cannot do, and every ticket with its state. Propose the smallest set of corrections in
-`plan_changes`: merge never-started tickets that own the same paths or duplicate scope;
+`plan_changes`: merge never-started tickets that own the same paths or duplicate scope
+(each ticket still changes one repository; split work across repositories into a chain,
+the dependency first);
 split or revise a never-started ticket too large or unclear for one run; cancel one that
 no longer serves an acceptance criterion; fix `depends_on` through revise; mark `needs`
 the agents cannot meet (a person's decision, an asset, the internet); guide a blocked or

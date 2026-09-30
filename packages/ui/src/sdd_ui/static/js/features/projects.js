@@ -116,6 +116,17 @@ export function openProjectDialog(project = null) {
     checked: true,
   });
   const web = h("input", { type: "checkbox", name: "web" });
+  // The project's commit convention for the engine's commits; empty keeps the default.
+  const commitMessage = h("input", {
+    name: "commit_message",
+    placeholder: "feat({repo}): {title}",
+    spellcheck: "false",
+  });
+  const pinMessage = h("input", {
+    name: "pin_message",
+    placeholder: "build({repo}): pin {dependency} {sha}",
+    spellcheck: "false",
+  });
   let idTouched = editing;
   id.addEventListener("input", () => (idTouched = true));
   name.addEventListener("input", () => {
@@ -164,6 +175,8 @@ export function openProjectDialog(project = null) {
       h("label", {}, isolation, h("span", {}, t("project.isolation"))),
       h("label", {}, autoResolve, h("span", {}, t("project.autoResolve"))),
       h("label", {}, web, h("span", {}, t("project.web"))),
+      h("label", { class: "field" }, h("span", {}, t("project.commitMessage")), commitMessage),
+      h("label", { class: "field" }, h("span", {}, t("project.pinMessage")), pinMessage),
     ),
   );
   const draftState = h("small", { class: "draft-state" });
@@ -195,6 +208,8 @@ export function openProjectDialog(project = null) {
     isolation.checked = project.isolation !== false;
     autoResolve.checked = project.auto_resolve !== false;
     web.checked = project.web === true;
+    commitMessage.value = project.commit_message || "";
+    pinMessage.value = project.pin_message || "";
   } else {
     language.value = window.ffaiPreferences.language;
   }
@@ -257,6 +272,8 @@ export function openProjectDialog(project = null) {
         isolation: isolation.checked,
         auto_resolve: autoResolve.checked,
         web: web.checked,
+        commit_message: commitMessage.value.trim(),
+        pin_message: pinMessage.value.trim(),
       });
       draft.clear();
       dialog.close(true);

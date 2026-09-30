@@ -158,6 +158,13 @@ using that repository's documented commit rules. Never push, rewrite history or 
 repositories outside the ticket's owned paths.
 """
 
+LANE_RULE = """
+This ticket runs in its own lane. Do not commit and do not edit the files that pin other
+repositories (such as .gitmodules): after each step the engine commits your work and
+advances the pins of dependencies that earlier tickets delivered. Dependencies are checked
+out where this repository links them; change them only through their own tickets.
+"""
+
 
 def ticket(
     checks: tuple[CheckCommand, ...],
@@ -168,6 +175,7 @@ def ticket(
     max_input_chars: int = 60000,
     isolated: bool = False,
     auto_resolve: bool = True,
+    commit_messages: tuple[str, str] = ("", ""),
 ) -> Workflow:
     """Execute one approved ticket: implement, every check as its own gate, then review.
 
@@ -177,9 +185,20 @@ def ticket(
     `isolated` runs the ticket in its own worktree lane and merges it back as a
     step: fast-forward only; a moved base means rebase and full re-verification.
     Conflicts go to an agent (`auto_resolve`, for autonomous queues) or to you.
+    In a lane the engine commits after every agent pass (`commit`), so checks and review
+    see committed work; `commit_messages` are the project's (work, pin) templates.
     """
-    first = "check_1" if checks else "review"
-    extra = COMMIT_RULE if allow_commits else ""
+    verify = "check_1" if checks else "review"
+    first = "commit" if isolated else verify
+    # An explicit commit authorization wins; a lane otherwise leaves committing to the engine.
+    extra = COMMIT_RULE if allow_commits else LANE_RULE if isolated else ""
+    lane_config = canonical(
+        {
+            key: value
+            for key, value in zip(("commit_message", "pin_message"), commit_messages, strict=True)
+            if value
+        }
+    )
     stages = tuple(
         Step(
             f"check_{index}",
@@ -233,7 +252,24 @@ def ticket(
                 timeout=1800,
                 config=recovery,
             ),
-            *(_merge_steps(first, implementer, auto_resolve) if isolated else ()),
+            *(
+                (
+                    Step(
+                        "commit",
+                        "operation",
+                        "lane-commit",
+                        transitions=(("done", verify),),
+                        required=True,
+                        mutates=True,
+                        max_visits=12,
+                        timeout=600,
+                        config=lane_config,
+                    ),
+                    *_merge_steps(first, implementer, auto_resolve, lane_config),
+                )
+                if isolated
+                else ()
+            ),
             Step(
                 "diagnose",
                 "agent",
@@ -269,7 +305,9 @@ def ticket(
     )
 
 
-def _merge_steps(first: str, implementer: str, auto_resolve: bool) -> tuple[Step, ...]:
+def _merge_steps(
+    first: str, implementer: str, auto_resolve: bool, lane_config: str = "{}"
+) -> tuple[Step, ...]:
     conflict = "resolve" if auto_resolve else "merge_conflict"
     steps = [
         Step(
@@ -289,6 +327,7 @@ def _merge_steps(first: str, implementer: str, auto_resolve: bool) -> tuple[Step
             mutates=True,
             max_visits=4,
             timeout=900,
+            config=lane_config,
         ),
         Step(
             "merge_conflict",

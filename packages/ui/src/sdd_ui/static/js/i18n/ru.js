@@ -61,6 +61,8 @@ export default {
     "Каждый тикет работает в своём git worktree и сливается fast-forward",
   "project.autoResolve": "Конфликты слияния решает агент (иначе — вы)",
   "project.web": "Агенты тикетов могут пользоваться интернетом (поиск и загрузка страниц)",
+  "project.commitMessage": "Сообщение коммита движка ({repo}, {title})",
+  "project.pinMessage": "Сообщение коммита закрепления ({repo}, {dependency}, {sha})",
   "project.saved": "Проект «{name}» сохранён",
 
   "queue.start": "Запустить очередь",

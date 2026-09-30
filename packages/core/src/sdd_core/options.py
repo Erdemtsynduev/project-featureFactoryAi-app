@@ -22,6 +22,8 @@ TEXT_OPTIONS = (
     "title",
     "cwd",
     "error_pattern",
+    "commit_message",
+    "pin_message",
 )
 # Options that are lists of text.
 LIST_OPTIONS = ("argv", "tools")
@@ -52,6 +54,9 @@ class StepOptions:
     title: str = ""
     # Command steps: an explicit executable and arguments, the folder, a failure pattern.
     argv: tuple[str, ...] = ()
+    # Commit message templates of lane steps: the project's commit convention.
+    commit_message: str = ""
+    pin_message: str = ""
     # Tools the agent may use beyond edits and commands (see `models.TOOLS`).
     tools: tuple[str, ...] = ()
     cwd: str = "."

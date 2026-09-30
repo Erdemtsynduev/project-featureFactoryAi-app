@@ -1,6 +1,7 @@
 """A plan lead reviews an approved breakdown; approved proposals change the tickets."""
 
 import sys
+from dataclasses import replace
 
 import pytest
 from sdd_core.codec import canonical
@@ -283,3 +284,80 @@ def test_revise_rewrites_only_a_never_started_run(tmp_path, backend):
     engine.dispatch("b", 5, "started")
     with pytest.raises(ValueError, match="never started"):
         engine.revise("b", "x", claim, (), "late", store.get("b").version, 6)
+
+
+def test_approval_refuses_a_ticket_that_changes_two_repositories(service, tmp_path):
+    from test_lanes import repository
+
+    root = tmp_path / "project"
+    repository(root / "libraries" / "sky")
+    repository(root / "app")
+    run = service.mutate(
+        "create",
+        {
+            "title": "Wind",
+            "project": "app",
+            "definition": service.flows.ensure("feature", "app", "ru"),
+        },
+    )
+    feature = run["id"]
+    service.mutate("resume", {"id": feature, "version": run["version"]})
+    finish(service, feature, "s1", reason="SPEC")
+    tickets = [{"id": "wind", "title": "Wind everywhere", "paths": ["libraries/sky", "app"]}]
+    finish(service, feature, "t1", tickets=tickets)
+    waiting = service.engine.dispatch(feature, 12, "h1")
+    with pytest.raises(ValueError, match="wind: app, libraries/sky"):
+        service.mutate(
+            "answer",
+            {"id": feature, "outcome": "approved", "answer": "", "version": waiting.version},
+        )
+    assert service.engine.store.get(feature).active is not None, "the approval still waits"
+
+
+def test_a_ticket_out_of_visits_asks_its_plan_for_a_review(service):
+    feature, _ = approved_plan(service)
+    first = review_of(service, feature)
+    finish(service, first, "r1", outcome="unchanged", tickets=[], plan_changes=[])
+    service.engine.dispatch(first, 12, "f1")
+    api = f"{feature}-api"
+    service.engine.block(api, 13, "Step visit limit", cause="visit_limit")
+    stuck = replace(service.engine.store.get(api), previous_attempt="w9")
+    review = service.reviews.blocked(stuck)
+    assert review is not None and service.catalog.task(review).trigger == f"limit:{api}:w9"
+
+
+def test_a_packet_names_the_repositories_accepted_prerequisites_delivered(tmp_path):
+    from sdd_runtime.application import ApplicationEngine
+    from sdd_runtime.git import GitProject
+    from sdd_runtime.lanes import Lane, LaneRepo
+    from sdd_runtime.packets import delivered
+    from sdd_runtime.workspace import LocalWorkspace
+    from sdd_storage.memory import MemoryStore
+
+    store = MemoryStore()
+    engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
+    root = tmp_path / "work"
+    root.mkdir()
+    done = store.publish(Workflow("done", "end", (Step("end", "finish"),)))
+    engine.create("lib", done, root, "", "rev", 0)
+    engine.create("app", store.publish(TICKET), root, "", "rev", 0, ("lib",))
+    lane = Lane("lib", str(root), str(root / "lane"), [LaneRepo("libraries/sky", "b", "c", "main")])
+    with store.unit() as db:
+        db.save_lane("lib", lane.document())
+    assert delivered(store, "app") == (), "not accepted yet"
+    engine.command("lib", "resume", "go", 0, 1)
+    assert engine.dispatch("lib", 2, "a").status == "accepted"
+    assert delivered(store, "app") == ("libraries/sky",)
+
+
+def test_a_review_the_busy_plan_postponed_starts_once_the_plan_is_free(service):
+    feature, _ = approved_plan(service)
+    first = review_of(service, feature)
+    api = f"{feature}-api"
+    service.mutate("resume", {"id": api, "version": service.engine.store.get(api).version})
+    blocked = finish(service, api, "w1", outcome="blocked", reason="No recordings")
+    assert service.reviews.blocked(blocked) is None, "one review per plan at a time"
+    finish(service, first, "r1", outcome="unchanged", tickets=[], plan_changes=[])
+    service.engine.dispatch(first, 12, "f1")
+    (started,) = service.reviews.sweep()
+    assert service.catalog.task(started).trigger == f"blocked:{api}:w1"

@@ -9,7 +9,15 @@ from sdd_core.models import Step, Workflow
 from sdd_core.sdk import Registry
 from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.engine import Engine
-from sdd_runtime.lanes import LANE_FILE, integrate, load_lane, open_lane, rebase, remove_lane
+from sdd_runtime.lanes import (
+    LANE_FILE,
+    LaneJob,
+    integrate,
+    load_lane,
+    open_lane,
+    rebase,
+    remove_lane,
+)
 from sdd_storage.store import Store
 
 
@@ -72,7 +80,7 @@ def test_integrate_fast_forwards_or_asks_for_rebase(workspace):
     work = Path(lane.root) / "libraries" / "alpha"
     (work / "file.txt").write_text("uncommitted\n", encoding="utf-8")
     assert integrate(lane)[0] == "behind"
-    assert rebase(lane, "ffai: t2")[0] == "done"
+    assert rebase(lane, LaneJob("t2"))[0] == "done"
     outcome, reason = integrate(lane)
     assert outcome == "merged" and "libraries/alpha" in reason
     assert git(alpha, "rev-parse", "HEAD") == git(work, "rev-parse", "HEAD")
@@ -88,7 +96,7 @@ def test_moved_base_is_rebased_then_merged(workspace):
     git(work, "commit", "-q", "-m", "feature")
     base = commit(alpha, "start\nmain moved\n")
     assert integrate(lane)[0] == "behind"
-    outcome, reason = rebase(lane, "ffai: t3")
+    outcome, reason = rebase(lane, LaneJob("t3"))
     assert outcome == "done" and base[:10] in reason
     assert integrate(lane)[0] == "merged"
     assert (alpha / "other.txt").exists() and "main moved" in (alpha / "file.txt").read_text()
@@ -100,12 +108,12 @@ def test_conflict_stops_until_resolved(workspace):
     work = Path(lane.root) / "libraries" / "alpha"
     commit(work, "lane version\n")
     commit(alpha, "main version\n")
-    outcome, reason = rebase(lane, "ffai: t4")
+    outcome, reason = rebase(lane, LaneJob("t4"))
     assert outcome == "conflict" and "file.txt" in reason
-    assert rebase(lane, "ffai: t4")[0] == "conflict"  # still unresolved
+    assert rebase(lane, LaneJob("t4"))[0] == "conflict"  # still unresolved
     (work / "file.txt").write_text("main version\nlane version\n", encoding="utf-8")
     git(work, "add", "file.txt")
-    assert rebase(lane, "ffai: t4")[0] == "done"
+    assert rebase(lane, LaneJob("t4"))[0] == "done"
     assert integrate(lane)[0] == "merged"
     assert (alpha / "file.txt").read_text() == "main version\nlane version\n"
 

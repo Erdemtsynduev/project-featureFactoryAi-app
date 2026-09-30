@@ -1,6 +1,7 @@
 """Explicit Git operations. Integration is journaled before touching the target."""
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,31 @@ from sdd_core.sdk import Manifest
 
 from sdd_runtime.files import atomic_write, revision
 from sdd_runtime.platform import NO_WINDOW
+
+
+def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+        creationflags=NO_WINDOW,
+        env={**os.environ, "GIT_EDITOR": "true", "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if check and result.returncode:
+        raise RuntimeError(
+            f"git {' '.join(args[:2])}: {result.stderr.strip() or result.stdout.strip()}"
+        )
+    return result
+
+
+def is_repository_top(path: Path) -> bool:
+    if not (path / ".git").exists():
+        return False
+    top = git(path, "rev-parse", "--show-toplevel", check=False).stdout.strip()
+    return bool(top) and Path(top).resolve() == path.resolve()
 
 
 class GitProject:
