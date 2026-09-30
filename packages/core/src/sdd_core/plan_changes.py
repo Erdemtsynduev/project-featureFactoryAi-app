@@ -11,6 +11,7 @@ what replaced it.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
+from sdd_core.editor import FlowChange, flow_changes_of
 from sdd_core.models import PLAN_CHANGE_KINDS, PlanChangeKind, Status, TicketNeed
 from sdd_core.tickets import (
     ScopeOf,
@@ -74,7 +75,15 @@ class Guide:
     retry: bool = False
 
 
-type PlanChange = Revise | Merge | Split | Cancel | Need | Guide
+@dataclass(frozen=True)
+class Reflow:
+    """Change the flow of an unfinished, idle ticket (skip a step, another profile)."""
+
+    ticket: str
+    changes: tuple[FlowChange, ...]
+
+
+type PlanChange = Revise | Merge | Split | Cancel | Need | Guide | Reflow
 
 
 def _drafts(item: Mapping[str, Json]) -> tuple[TicketDraft, ...]:
@@ -106,6 +115,7 @@ READERS: dict[PlanChangeKind, Callable[[Mapping[str, Json]], PlanChange]] = {
         text(item.get("text", ""), "text").strip(),
         flag(item.get("retry", False), "retry"),
     ),
+    "reflow": lambda item: Reflow(_ticket(item), flow_changes_of(item.get("flow", []))),
 }
 
 
@@ -129,6 +139,9 @@ class TicketState:
     status: Status
     started: bool
     reason: str = ""
+    live: bool = False  # an attempt is running now
+    step: str = ""  # where the ticket is in its flow
+    flow: tuple[str, ...] = ()  # its flow's steps in order, required ones marked `*`
 
     @property
     def finished(self) -> bool:
@@ -161,6 +174,8 @@ class PlanSnapshot:
             if draft.goal:
                 lines.append(f"  Goal: {draft.goal}")
             lines.extend(f"  AC: {item}" for item in draft.acceptance)
+            if state is not None and state.flow:
+                lines.append(f"  Flow: {' > '.join(state.flow)} (at {state.step})")
             if state is not None and state.reason:
                 lines.append(f"  Blocked: {state.reason}")
         plan = "\n".join(lines)
@@ -184,6 +199,7 @@ class Revision:
     holds: tuple[str, ...] = ()
     guidance: tuple[Guide, ...] = ()
     summary: tuple[str, ...] = ()
+    reflows: tuple[Reflow, ...] = ()
 
 
 def revise(
@@ -203,6 +219,7 @@ def revise(
     created: dict[str, TicketDraft] = {}
     holds: list[str] = []
     guidance: list[Guide] = []
+    reflows: list[Reflow] = []
     summary: list[str] = []
 
     def existing(identifier: str) -> TicketDraft:
@@ -275,6 +292,14 @@ def revise(
                     raise ValueError("Guidance needs text")
                 guidance.append(change)
                 summary.append(f"guide {ticket}")
+            case Reflow(ticket, flow):
+                unfinished(ticket)
+                if (snapshot.states.get(ticket) or _UNSTARTED).live:
+                    raise ValueError(f"Ticket {ticket} is running; change its flow after")
+                if not flow:
+                    raise ValueError("A flow change needs at least one change")
+                reflows.append(change)
+                summary.append(f"reflow {ticket}")
 
     rewired = {
         identifier: replace(draft, depends_on=_rewire(draft.depends_on, replaced, identifier))
@@ -299,6 +324,7 @@ def revise(
         tuple(holds),
         tuple(guidance),
         tuple(summary),
+        tuple(reflows),
     )
 
 

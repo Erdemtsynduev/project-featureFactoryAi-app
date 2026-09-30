@@ -474,3 +474,48 @@ def test_started_tickets_are_superseded_by_the_feature_that_plans_them_again(ser
     assert service.mutate("supersede", {"ids": [api], "by": again})["superseded"] == []
     with pytest.raises(ValueError, match="open feature"):
         service.mutate("supersede", {"ids": [api], "by": api})
+
+
+def test_a_review_reflows_an_idle_ticket_and_moves_a_revised_one_to_its_repository_flow(
+    service, tmp_path, monkeypatch
+):
+    (tmp_path / "project" / "beta" / ".git").mkdir(parents=True)
+    feature, _ = approved_plan(service)
+    engine = service.engine
+    beta = engine.store.publish(replace(TICKET, id="ticket-beta"))
+    ensure = service.flows.ensure
+    monkeypatch.setattr(
+        service.flows,
+        "ensure",
+        lambda name, project, language, repositories=(): (
+            beta if repositories == ("beta",) else ensure(name, project, language)
+        ),
+    )
+    api = f"{feature}-api"
+    service.mutate("resume", {"id": api, "version": engine.store.get(api).version})
+    finish(service, api, "w1")  # started, now idle before its finish
+    snapshot, _ = service.reviews.snapshot(feature)
+    assert snapshot.states["api"].flow == ("work",) and snapshot.states["api"].step == "end"
+    review = review_of(service, feature)
+    changes = [
+        {
+            "kind": "reflow",
+            "reason": "The check cannot apply to recordings",
+            "ticket": "api",
+            "flow": [{"kind": "skip", "step": "work", "profile": "", "required": False}],
+        },
+        {
+            "kind": "revise",
+            "reason": "It changes the beta repository",
+            "drafts": [{"id": "extra", "title": "Nice to have", "paths": ["beta/src"]}],
+        },
+    ]
+    finish(service, review, "r1", tickets=[], plan_changes=changes)
+    waiting = engine.dispatch(review, 12, "d1")
+    service.mutate(
+        "answer", {"id": review, "outcome": "approved", "answer": "", "version": waiting.version}
+    )
+    reflowed = engine.store.get(api)
+    assert "work" not in {s.id for s in engine.store.workflow(reflowed.workflow_digest).steps}
+    assert engine.store.get(f"{feature}-extra").workflow_digest == beta, "its repository's flow"
+    assert service.reviews.apply(review) == [], "applying again changes nothing"

@@ -14,6 +14,7 @@ from functools import partial
 from pathlib import Path
 
 from sdd_core.codec import digest, encode, object_json, sequence, text
+from sdd_core.editor import FlowChange
 from sdd_core.machine import discardable
 from sdd_core.models import Json, Run
 from sdd_core.plan_changes import (
@@ -66,7 +67,16 @@ class PlanReviews:
                 run = self.engine.store.get(runs[draft.id])
             except KeyError:
                 continue
-            states[draft.id] = TicketState(run.id, run.status, not discardable(run), run.reason)
+            flow = self.engine.store.workflow(run.workflow_digest)
+            states[draft.id] = TicketState(
+                run.id,
+                run.status,
+                not discardable(run),
+                run.reason,
+                run.active is not None,
+                run.step,
+                tuple(s.id + "*" * s.required for s in flow.steps if s.kind != "finish"),
+            )
         return PlanSnapshot(drafts, states, self.tasks.specification(parent)), runs
 
     def reviews_of(self, parent: str) -> dict[str, TaskRecord]:
@@ -215,6 +225,13 @@ class PlanReviews:
             prerequisites = tuple(ids[p] for p in draft.depends_on)
             rewrite = partial(self._rewrite, contexts[draft.id], claim, prerequisites)
             self._on_ticket(review, ids[draft.id], "revise", rewrite)
+            # A rewritten ticket runs the flow of the repository it now changes.
+            self._on_ticket(
+                review, ids[draft.id], "reflow", partial(self._rebind, definitions[draft.id])
+            )
+        for reflow in revision.reflows:
+            change = partial(self._change_flow, reflow.changes)
+            self._on_ticket(review, ids[reflow.ticket], "change-flow", change)
         discarded = self._discard(tuple(ids[t] for t in revision.discard))
         for guide in revision.guidance:
             self._on_ticket(review, ids[guide.ticket], "guide", partial(self._advise, guide.text))
@@ -286,6 +303,14 @@ class PlanReviews:
         return self.engine.revise(
             run.id, brief, claim, prerequisites, key, run.version, time.time()
         )
+
+    def _rebind(self, definition: str, run: Run, key: str) -> Run:
+        if run.workflow_digest == definition:
+            return run
+        return self.engine.migrate(run.id, definition, {}, key, run.version, time.time())
+
+    def _change_flow(self, changes: tuple[FlowChange, ...], run: Run, key: str) -> Run:
+        return self.engine.change_flow(run.id, changes, key, run.version, time.time())
 
     def _advise(self, words: str, run: Run, key: str) -> Run:
         return self.engine.message(run.id, words, key, run.version, time.time())

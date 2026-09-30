@@ -61,7 +61,9 @@ the dependency first);
 split or revise a never-started ticket too large or unclear for one run; cancel one that
 no longer serves an acceptance criterion; fix `depends_on` through revise; mark `needs`
 the agents cannot meet (a person's decision, an asset, the internet); guide a blocked or
-unfinished ticket with concrete instructions and retry it when that unblocks it. Keep
+unfinished ticket with concrete instructions and retry it when that unblocks it; reflow
+an idle ticket whose flow does not fit its work (skip a step it cannot need, run a step
+with an agent profile that can do it). Keep
 every PRD acceptance criterion covered and never rewrite started work. Explain each
 change in its reason. Return done with the proposal summarised in reason, or unchanged
 with an empty list when the plan is sound. No edits.

@@ -40,7 +40,7 @@ type Tool = Literal["web"]
 # agents cannot make or obtain (a licensed recording, a model), or the internet.
 type TicketNeed = Literal["human", "asset", "web"]
 # Corrections a plan review may propose for an approved ticket breakdown.
-type PlanChangeKind = Literal["revise", "merge", "split", "cancel", "need", "guide"]
+type PlanChangeKind = Literal["revise", "merge", "split", "cancel", "need", "guide", "reflow"]
 type Command = Literal["stop", "pause", "resume", "auto", "manual", "retry"]
 type EventKind = Literal[
     "accepted",

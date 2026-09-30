@@ -98,7 +98,9 @@ PLAN_CHANGES_INSTRUCTION = (
     "one draft keeping one of those ids. `split`: `ticket` never started, two or more "
     "drafts with new ids. `cancel`: `ticket` never started. `need`: `ticket` and its "
     "`needs`. `guide`: `ticket`, `text` for its next attempt, `retry` to run it again. "
-    "Unused fields are empty.\n"
+    "`reflow`: `ticket` not running and its `flow` changes: `skip` a `step` of its flow "
+    "(`required` true to skip one marked *, the person approving decides), or `profile` "
+    "to run a `step` with another agent `profile`. Unused fields are empty.\n"
 )
 
 STRINGS: dict[str, Json] = {"type": "array", "items": {"type": "string"}}
@@ -156,6 +158,17 @@ PLAN_CHANGES_SCHEMA: dict[str, Json] = {
             "needs": NEEDS,
             "text": {"type": "string"},
             "retry": {"type": "boolean"},
+            "flow": {
+                "type": "array",
+                "items": _strict(
+                    {
+                        "kind": {"enum": ["skip", "profile"]},
+                        "step": {"type": "string"},
+                        "profile": {"type": "string"},
+                        "required": {"type": "boolean"},
+                    }
+                ),
+            },
         }
     ),
 }
