@@ -7,27 +7,23 @@ and maps HTTP action names to use cases. Every action is recorded in the
 flight log with its outcome, so incidents can be reconstructed afterwards.
 """
 
-import threading
 import time
 import uuid
 from collections.abc import Callable
-from functools import cache, partial
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
-from sdd_core.codec import encode, object_json, text
+from sdd_core.codec import encode, text
 from sdd_core.models import Json
 from sdd_core.ports import Conflict
-from sdd_core.questions import questions
 from sdd_core.sdk import Registry
 from sdd_factory.admission import TicketAdmission
 from sdd_factory.answers import Answers
 from sdd_factory.control import WorkControl
-from sdd_factory.diagnostics import live, record
 from sdd_factory.documents import FeatureDocuments
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
-from sdd_factory.model import ticket_places
 from sdd_factory.plans import PlanService
 from sdd_factory.reflow import FlowChanges
 from sdd_factory.reviews import PlanReviews
@@ -40,7 +36,8 @@ from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.versions import consistent, engine, installed
 
 from sdd_ui.agents import AgentSettings
-from sdd_ui.attention import attention, calls_needed, lane, outline, projection, rollup
+from sdd_ui.background import Periodic, start
+from sdd_ui.board_view import BoardView
 from sdd_ui.queue import QueueController, QueueSettings
 from sdd_ui.workspace import WorkspaceCatalog
 
@@ -163,6 +160,7 @@ class WorkspaceService:
         self.versions = {"engine": engine(), "packages": found, "consistent": consistent(found)}
         # Tracker adapters installed with the application, offered in project settings.
         self.tracker_kinds = sorted(installed_trackers())
+        self.board = BoardView(self)
         self._release_legacy_blocks()
         self._finish_admissions()
 
@@ -262,46 +260,31 @@ class WorkspaceService:
 
     def work(self) -> None:
         self.log.record("application_started")
-        mirror = threading.Thread(target=self._mirror_loop, name="tracker-mirror", daemon=True)
-        mirror.start()
-        quotas = threading.Thread(target=self._quota_loop, name="subscription-quotas", daemon=True)
-        quotas.start()
-        reviews = threading.Thread(target=self._review_loop, name="plan-reviews", daemon=True)
-        reviews.start()
+        start(
+            (
+                # Mirror projects into trackers outside the queue's lock: delivery waits
+                # on the network and must never hold up scheduling.
+                Periodic("tracker-mirror", TRACKER_EVERY, self.sync_trackers, "tracker_failed"),
+                # Subscription windows are read on their own schedule: a spent
+                # subscription rests its profiles until the window resets.
+                Periodic(
+                    "subscription-quotas",
+                    QUOTA_EVERY,
+                    lambda: self.agents.watch_quotas(time.time()),
+                    "quota_failed",
+                    "warning",
+                    at_start=True,
+                ),
+                # Reviews a busy plan postponed: one review runs per plan at a time, so a
+                # ticket that stopped meanwhile is reviewed once the plan's review ends.
+                Periodic("plan-reviews", REVIEW_EVERY, self.reviews.sweep, "plan_review_failed"),
+            ),
+            self.queue.quit,
+            self.log,
+        )
         self.queue.work()
 
-    def _review_loop(self) -> None:
-        """Ask for reviews a busy plan postponed: one review runs per plan at a time, so a
-        ticket that stopped meanwhile is reviewed once the plan's review has finished."""
-        while not self.queue.quit.wait(REVIEW_EVERY):
-            try:
-                self.reviews.sweep()
-            except Exception as error:  # a review request never stops the application
-                self.log.record(
-                    "plan_review_failed", "error", error=f"{type(error).__name__}: {error}"
-                )
-
-    def _quota_loop(self) -> None:
-        """Read subscription windows on their own schedule, outside the queue's lock:
-        a spent subscription rests its profiles until the window resets."""
-        while True:
-            try:
-                self.agents.watch_quotas(time.time())
-            except Exception as error:  # a quota probe never stops the application
-                self.log.record("quota_failed", "warning", error=f"{type(error).__name__}: {error}")
-            if self.queue.quit.wait(QUOTA_EVERY):
-                return
-
     # Trackers ------------------------------------------------------------------
-
-    def _mirror_loop(self) -> None:
-        """Mirror projects into their trackers outside the queue's lock: delivery
-        waits on the network and must never hold up scheduling."""
-        while not self.queue.quit.wait(TRACKER_EVERY):
-            try:
-                self.sync_trackers()
-            except Exception as error:  # a tracker never stops the application
-                self.log.record("tracker_failed", "error", error=f"{type(error).__name__}: {error}")
 
     def sync_trackers(self, project: str = "") -> dict[str, int]:
         """Record what changed for projects with a tracker, then deliver in order."""
@@ -319,7 +302,7 @@ class WorkspaceService:
                 str(r["attention"]["code"]),
                 str(r["attention"].get("detail") or r.get("reason") or ""),
             )
-            for r in cast(list[dict[str, Any]], self.state()["runs"])
+            for r in cast(list[dict[str, Any]], self.board.runs())
         ]
         recorded = sent = 0
         for item in projects:
@@ -333,144 +316,19 @@ class WorkspaceService:
     # Read models ---------------------------------------------------------------
 
     def state(self) -> dict[str, object]:
-        """The board's read model: one projection per run with what the views show,
-        derived on the server (lane, attention, waits, calls still needed). The task
-        drawer reads a run in full through `detail`."""
-        with self.engine.store.unit() as unit:
-            runs = unit.runs()
-            last = unit.last_transition()
-            locations = dict(unit.locations())
-            edges = unit.dependency_edges()
-        status = {run.id: run.status for run in runs}
-        prerequisites: dict[str, list[str]] = {}
-        for run_id, needed in edges:
-            prerequisites.setdefault(run_id, []).append(needed)
-        pending = {
-            run.id: tuple(d for d in prerequisites.get(run.id, ()) if status[d] != "accepted")
-            for run in runs
-            if run.status != "accepted"
-        }
-        definitions = self.engine.store.definitions()
-        workflows = dict(definitions)
-        profiles = {manifest.id for manifest in self.agents.handlers.manifests()}
-        available = cache(self.agents.available)
-        running = bool(self.queue.settings["running"]) and not self.queue.error
-        records = self.catalog.tasks()
-        own = {
-            run.id: attention(
-                run,
-                workflows[run.workflow_digest].step(run.step),
-                queue_running=running,
-                pending=pending.get(run.id, ()),
-                has_profile=profiles.__contains__,
-                available=available,
-                superseded=records[run.id].superseded if run.id in records else "",
-            )
-            for run in runs
-        }
-        # Work is a tree: a parent's reason and progress come from its children.
-        children: dict[str, list[str]] = {}
-        for run in runs:
-            parent = records[run.id].parent if run.id in records else ""
-            if parent in own:
-                children.setdefault(parent, []).append(run.id)
-        closed = frozenset(key for key, item in records.items() if item.closed)
-        places: dict[str, dict[str, Json]] = {}
-        for parent in children:
-            breakdown = self.catalog.artifacts(parent).get("tickets")
-            if breakdown is not None:
-                places.update(ticket_places(breakdown.data))
-        derived, progress = rollup(
-            own, {key: tuple(value) for key, value in children.items()}, closed
-        )
-        reasons = {key: encode(value) for key, value in derived.items()}
-        return {
-            "runs": [
-                {
-                    **projection(run),
-                    "attention": reasons[run.id],
-                    "lane": lane(str(reasons[run.id]["tone"])),
-                    "needs": calls_needed(run, workflows[run.workflow_digest]),
-                    "pending_dependencies": list(pending.get(run.id, ())),
-                    "dependencies": prerequisites.get(run.id, []),
-                    "progress": encode(progress[run.id]) if run.id in progress else None,
-                    # Its place in the parent's plan: number, wave, what it follows.
-                    "ticket": places.get(run.id),
-                }
-                for run in reversed(runs)
-            ],
-            "versions": self.versions,
-            "trackers": list(self.tracker_kinds),
-            "totals": {
-                "calls": sum(r.spend.calls for r in runs),
-                "planning_calls": sum(r.spend.planning_calls for r in runs),
-                "tokens": sum(r.spend.tokens for r in runs),
-                "usage_unknown": any(r.spend.usage_unknown for r in runs),
-                "accepted": sum(r.status == "accepted" for r in runs),
-            },
-            "settings": dict(self.queue.settings),
-            "last_transition": last,
-            # A boolean, not the tick time: unchanged state keeps its ETag between polls.
-            "worker_alive": self.queue.alive,
-            "error": self.queue.error,
-            # Step shapes for the board; prompts are read with a definition or a run.
-            "definitions": [
-                {"digest": key, "workflow": outline(flow)} for key, flow in definitions
-            ],
-            "profile_config": self.agents.document(),
-            "profiles": [encode(item) for item in self.agents.handlers.manifests()],
-            "intents": self.flows.readiness(),
-            "cooldowns": self.agents.resting(),
-            "active_processes": len(self.queue.coordinator.active()),
-            "projects": self.catalog.projects(),
-            "task_metadata": self.catalog.task_metadata(),
-            "plans": self.catalog.plans(),
-            "locations": locations,
-            "agent_discovery": self.catalog.discovery,
-            "usage": self.catalog.usage(self.agents.profile_models()),
-        }
+        return self.board.state()
 
     def definition(self, digest: str) -> dict[str, object]:
-        """One published workflow in full, prompts included (the editor opens it)."""
-        return encode(self.engine.store.workflow(digest))
+        return self.board.definition(digest)
 
     def detail(self, identifier: str) -> dict[str, object]:
-        run = self.engine.store.get(identifier)
-        with self.engine.store.unit() as unit:
-            context = unit.context(identifier)
-            results = unit.recent_results(identifier, 10)
-        return {
-            "run": encode(run),
-            "context": context,
-            "workflow": encode(self.engine.store.workflow(run.workflow_digest)),
-            "events": self.engine.store.history(identifier, limit=1000),
-            "results": [object_json(result) for result in results],
-            "metadata": self.catalog.task_metadata().get(identifier, {}),
-            "questions": self._questions(identifier),
-            "tickets": self.documents.preview(identifier),
-            "changes": self.reviews.proposal(identifier),
-            "documents": self.documents.documents(identifier),
-            "lane": self._lane(identifier),
-        }
+        return self.board.detail(identifier)
 
     def flight(self, run: str = "", level: str = "", limit: int = 300) -> list[dict[str, Json]]:
-        return self.log.read(limit=limit, run=run, level=level)
+        return self.board.flight(run, level, limit)
 
     def live(self, identifier: str) -> dict[str, object]:
-        run = self.engine.store.get(identifier)
-        hosted = run.active is not None and run.active.id in self.queue.coordinator.active()
-        return live(self.engine, identifier, hosted)
+        return self.board.live(identifier)
 
     def incident(self, identifier: str) -> dict[str, object]:
-        return record(self.engine, self.log, identifier).document()
-
-    def _lane(self, identifier: str) -> dict[str, object] | None:
-        with self.engine.store.unit() as unit:
-            document = unit.lane(identifier)
-        return None if document is None else dict(object_json(document))
-
-    def _questions(self, identifier: str) -> list[dict[str, object]]:
-        try:
-            return [encode(q) for q in questions(self.engine.asked(identifier))]
-        except ValueError:
-            return []
+        return self.board.incident(identifier)
