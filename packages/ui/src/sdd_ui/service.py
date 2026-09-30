@@ -130,6 +130,7 @@ class WorkspaceService:
             "create": self.tasks.create,
             "rename": self.tasks.rename,
             "close": self.tasks.close,
+            "supersede": self.tasks.supersede,
             "plans-sync": self.plans.sync,
             "plans-rebuild": self.plans.rebuild,
             "interactive-demo": self.tasks.demo,

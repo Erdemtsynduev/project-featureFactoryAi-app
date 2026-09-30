@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 from sdd_core.codec import canonical
 from sdd_core.models import Result, Step, Workflow
+from sdd_core.ports import Conflict
 from sdd_ui.service import WorkspaceService
 
 ARGV = [sys.executable, "-c", "pass"]
@@ -436,3 +437,43 @@ def test_a_new_breakdown_waits_for_existing_tickets_of_its_plan_through_after(se
     (cab,) = answered["admitted"]
     with service.engine.store.unit() as unit:
         assert (cab, api) in set(unit.dependency_edges())
+
+
+def test_started_tickets_are_superseded_by_the_feature_that_plans_them_again(service):
+    feature, _ = approved_plan(service)
+    catalog, engine = service.catalog, service.engine
+    for key, item in catalog.tasks().items():
+        if key == feature or item.parent == feature:
+            catalog.update_task(key, item.changed(plan="110"))
+    run = service.mutate(
+        "create",
+        {
+            "title": "Rally 2",
+            "project": "app",
+            "definition": service.flows.ensure("feature", "app", "ru"),
+        },
+    )
+    again = run["id"]
+    catalog.update_task(again, catalog.task(again).changed(plan="110", kind="feature"))
+    api, ui = f"{feature}-api", f"{feature}-ui"
+    service.mutate("resume", {"id": api, "version": engine.store.get(api).version})
+    engine.dispatch(api, 13, "w1")
+    with pytest.raises(Conflict, match="live attempt"):
+        service.mutate("supersede", {"ids": [api], "by": again})
+    finish_attempt = engine.store.get(api)
+    engine.complete(
+        api,
+        Result("w1", finish_attempt.generation, "blocked", "stuck", finish_attempt.revision),
+        14,
+    )
+    service.mutate("resume", {"id": ui, "version": engine.store.get(ui).version})
+
+    done = service.mutate("supersede", {"ids": [api, ui], "by": again})
+    assert done["superseded"] == [api, ui]
+    assert engine.store.get(ui).paused and catalog.task(api).superseded == again
+    codes = {r["id"]: r["attention"]["code"] for r in service.state()["runs"]}
+    assert codes[api] == codes[ui] == "superseded"
+    assert api not in service.tasks.known_tickets(again), "a new ticket cannot wait for it"
+    assert service.mutate("supersede", {"ids": [api], "by": again})["superseded"] == []
+    with pytest.raises(ValueError, match="open feature"):
+        service.mutate("supersede", {"ids": [api], "by": api})

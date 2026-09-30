@@ -13,6 +13,11 @@ digest they were created with.
 
 ## Unreleased
 
+- **Started work can be superseded by the feature that plans it again.** The
+  `supersede` action (`ids`, `by`) pauses unfinished runs of the same plan and shows
+  them as **Superseded**; their lanes and `ffai/<run>` branches stay for reuse. A
+  superseded ticket is no longer something new tickets may wait for, and briefs list it
+  with its branch for the planner to cover again.
 - **A breakdown can wait for existing work of its plan.** A ticket names run ids of
   the plan's queued or delivered tickets in `after` (`depends_on` stays within the
   breakdown). Approval and plan reviews refuse an `after` that is not a ticket of the

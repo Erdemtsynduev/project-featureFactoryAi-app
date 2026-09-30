@@ -43,6 +43,13 @@ from sdd_runtime.git import git, is_repository_top
 from sdd_runtime.submodules import links_of
 
 LANES = ".sdd-lanes"
+
+
+def lane_branch(run_id: str) -> str:
+    """The branch a run's lane works on in every repository of its scope."""
+    return "ffai/" + run_id
+
+
 LANE_FILE = ".sdd-lane.json"
 RESULT_FILE = "lane-result.json"
 SKIP = {".git", LANES, ENGINE_DIRECTORY}
@@ -195,7 +202,7 @@ def open_lane(workspace: Path, run_id: str, scope: tuple[Path, ...]) -> Lane:
     """Create (or finish creating) the lane; safe to repeat after a crash."""
     workspace = workspace.resolve()
     root = workspace / LANES / run_id
-    branch = "ffai/" + run_id
+    branch = lane_branch(run_id)
     scoped = {path.resolve() for path in scope} or {workspace}
     repos: list[LaneRepo] = []
     for path in sorted(scoped):

@@ -236,5 +236,13 @@ def test_a_started_per_row_requirement_is_superseded_by_the_feature_planning_its
 
 def test_a_feature_brief_names_delivered_tickets_so_they_are_not_redone():
     plan = parse_plan("plans/110_RALLY_PLAN.md", PLAN)
-    brief = feature_brief(plan, list(plan.rows[1:]), [], {}, ["110-T50 — Брод"])
+    brief = feature_brief(
+        plan,
+        list(plan.rows[1:]),
+        [],
+        {},
+        ["110-T50 — Брод"],
+        ["110-T28 — Удары (branch ffai/110-T28)"],
+    )
     assert "do not redo them" in brief and "110-T50 — Брод" in brief
+    assert "plan their scope again" in brief and "ffai/110-T28" in brief

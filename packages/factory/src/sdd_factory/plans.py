@@ -25,12 +25,14 @@ from sdd_core import machine
 from sdd_core.models import Json, Run
 from sdd_core.tracking import WorkItem, WorkRow, WorkSource
 from sdd_runtime.engine import Engine
+from sdd_runtime.lanes import lane_branch
 
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import TaskRecord, language_rule, unfinished
 from sdd_factory.sources.markdown import MarkdownPlans, row_run_id
+from sdd_factory.tasks import supersede
 
 # Sections of a per-row brief that carry recorded work worth keeping in the feature.
 RECORDED = re.compile(
@@ -113,7 +115,7 @@ class PlanService:
             previous = [key for key, item in features.items() if item.plan == plan.key]
             identifier = f"feature_{plan.key}" + (f"_{len(previous) + 1}" if previous else "")
             flow = flow or self.flows.ensure("feature", project_id, language)
-            queued, delivered = self._tickets(plan, records, runs)
+            queued, delivered, dropped = self._tickets(plan, records, runs)
             recorded = {
                 row.id: carried.get(key) or recorded_work(contexts.get(key, ""))
                 for row in scope
@@ -123,7 +125,8 @@ class PlanService:
                 identifier,
                 flow,
                 workspace,
-                language_rule(language) + feature_brief(plan, scope, queued, recorded, delivered),
+                language_rule(language)
+                + feature_brief(plan, scope, queued, recorded, delivered, dropped),
                 None,
                 time.time(),
                 (),
@@ -187,18 +190,22 @@ class PlanService:
     @staticmethod
     def _tickets(
         plan: WorkItem, records: dict[str, TaskRecord], runs: dict[str, Run]
-    ) -> tuple[list[str], list[str]]:
-        """The plan's tickets still queued (with their state), and those delivered."""
+    ) -> tuple[list[str], list[str], list[str]]:
+        """The plan's tickets still queued (with their state), those delivered, and those
+        superseded (their scope is planned again; their lane branch keeps their work)."""
         queued: list[str] = []
         delivered: list[str] = []
+        superseded: list[str] = []
         for key, item in records.items():
             if key in runs and item.plan == plan.key and item.kind == "ticket":
                 status = runs[key].status
                 if status == "accepted":
                     delivered.append(f"{key} — {item.title}")
+                elif item.superseded:
+                    superseded.append(f"{key} — {item.title} (branch {lane_branch(key)})")
                 else:
                     queued.append(f"{key} — {item.title} ({status})")
-        return queued, delivered
+        return queued, delivered, superseded
 
     def _supersede(self, plans: list[WorkItem]) -> list[str]:
         """Per-row requirements of the earlier import whose row a feature now plans:
@@ -225,14 +232,10 @@ class PlanService:
                     or run is None
                     or item.kind != "feature"
                     or item.rows
-                    or item.superseded
-                    or run.status == "accepted"
                 ):
                     continue
-                self.catalog.update_task(key, item.changed(superseded=feature))
-                if run.active is None and not run.paused and run.status != "blocked":
-                    self.engine.command(key, "pause", f"{key}:superseded", run.version, time.time())
-                superseded.append(key)
+                if supersede(self.engine, self.catalog, key, feature):
+                    superseded.append(key)
         return superseded
 
     # Rebuilding the board ----------------------------------------------------------
@@ -343,6 +346,7 @@ def feature_brief(
     queued: list[str],
     recorded: dict[str, str],
     delivered: list[str] | None = None,
+    superseded: list[str] | None = None,
 ) -> str:
     if plan.path:
         lines = [
@@ -374,6 +378,13 @@ def feature_brief(
     if delivered:
         lines += ["", "Delivered tickets of this plan (done; build on them, do not redo them):"]
         lines += [f"- {item[:200]}" for item in delivered]
+    if superseded:
+        lines += [
+            "",
+            "Superseded tickets of this plan (plan their scope again, one repository per"
+            " ticket; reuse the partial work on their lane branch):",
+        ]
+        lines += [f"- {item[:240]}" for item in superseded]
     drafts = {key: value for key, value in recorded.items() if value}
     if drafts:
         lines += ["", "Recorded specification drafts and decisions (reuse, do not weaken):"]

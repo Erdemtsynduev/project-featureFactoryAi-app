@@ -22,6 +22,7 @@ from sdd_core.tickets import (
     ScopeOf,
     TicketDraft,
     one_repository,
+    strings,
     tickets_of,
     waits_for_known,
 )
@@ -42,6 +43,19 @@ from sdd_factory.model import (
     ticket_places,
     unfinished,
 )
+
+
+def supersede(engine: Engine, catalog: ProjectCatalog, key: str, by: str) -> bool:
+    """Mark unfinished work `key` as taken over by `by` and pause it; False when it
+    already was. Its lane stays: the successor's tickets may reuse its work."""
+    item, run = catalog.task(key), engine.store.get(key)
+    if item.superseded or run.status == "accepted":
+        return False
+    catalog.update_task(key, item.changed(superseded=by))
+    if run.active is None and not run.paused and run.status != "blocked":
+        engine.command(key, "pause", f"{key}:superseded", run.version, time.time())
+    return True
+
 
 # Input a ticket's brief leaves free for task memory, handoffs and operator guidance.
 TICKET_MEMORY_CHARS = 8000
@@ -194,6 +208,25 @@ class TaskService:
         self.catalog.update_task(identifier, record)
         self.log.record("task_renamed", run=identifier)
         return record.document()
+
+    def supersede(self, doc: dict[str, Json]) -> dict[str, object]:
+        """Hand unfinished work (`ids`) over to the feature `by` that plans its scope
+        again: each run is paused and shown as superseded; its lane and branch stay, so
+        the new tickets can reuse the partial work. Nothing is removed."""
+        by = text(doc.get("by"), "by")
+        successor = self.catalog.task(by)
+        if successor.kind != "feature" or successor.closed:
+            raise ValueError("Work is superseded by an open feature")
+        identifiers = strings(doc.get("ids"), "id")
+        for identifier in identifiers:
+            item, run = self.catalog.task(identifier), self.engine.store.get(identifier)
+            if item.plan != successor.plan or item.reviews:
+                raise ValueError(f"{identifier} is not work of the plan {by} plans")
+            if run.status == "accepted" or run.active is not None:
+                raise Conflict(f"{identifier} is accepted or has a live attempt")
+        superseded = [key for key in identifiers if supersede(self.engine, self.catalog, key, by)]
+        self.log.record("work_superseded", by=by, runs=list[Json](superseded))
+        return {"by": by, "superseded": list[Json](superseded)}
 
     def close(self, doc: dict[str, Json]) -> dict[str, object]:
         """Close a parent before all its children are done: it counts as delivered
@@ -415,7 +448,11 @@ class TaskService:
         return {
             key
             for key, item in self.catalog.tasks().items()
-            if key in runs and item.kind == "ticket" and plan and item.plan == plan
+            if key in runs
+            and item.kind == "ticket"
+            and plan
+            and item.plan == plan
+            and not item.superseded
         }
 
     def scope_of(self, run_id: str) -> ScopeOf:

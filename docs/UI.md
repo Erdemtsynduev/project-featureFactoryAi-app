@@ -157,7 +157,10 @@ touches one plan. Nothing edits plan files or starts work. A feature's brief lis
 plan's queued tickets with their state and its delivered tickets, so neither is
 planned twice. A started per-row requirement of the earlier import whose row a feature
 now plans is marked superseded by that feature (**Заменено**, in the done column) and
-paused; its recorded work is already in the feature's brief.
+paused; its recorded work is already in the feature's brief. Started tickets that cannot finish
+(for example ones spanning repositories) are handed to the feature that plans them
+again with the `supersede` action: they pause, show as **Заменено**, and keep their
+lane and `ffai/<run>` branch so the new tickets can reuse the work.
 
 The specification and the tickets belong to the factory, not to the project: they are
 recorded results in its database, shown in the feature's drawer under **Документы
