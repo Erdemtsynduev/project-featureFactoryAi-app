@@ -2,7 +2,7 @@
  *
  * One screen answers "what needs me, what is running, is anything stuck, and
  * can the queue keep going": key numbers, the Needs-you list, live running
- * steps, the team office, recent events, agent health and plan progress.
+ * steps, the team office, recent events, agent health and the drafts.
  * Every row links to its canonical home (task drawer, board, agents, log). */
 
 import * as api from "../core/api.js";
@@ -12,11 +12,9 @@ import { recall, remember } from "../core/storage.js";
 import {
   hasScope,
   kindOf,
-  meta,
+  laneOf,
   needsElsewhere,
   needsYou,
-  planInfo,
-  planTitle,
   runnerOf,
   runs,
   selectProject,
@@ -24,7 +22,6 @@ import {
   store,
   titleOf,
 } from "../core/store.js";
-import { showPlan } from "./board.js";
 import { openBulkResume } from "./bulk.js";
 import { primaryAction } from "./commands.js";
 import { welcome } from "./onboarding.js";
@@ -309,69 +306,30 @@ function agentsPanel() {
   );
 }
 
-function plansPanel(list) {
-  const plans = new Map();
-  for (const run of list) {
-    const plan = meta(run).plan;
-    if (!plan) continue;
-    const entry = plans.get(plan) || { total: 0, done: 0, needs: 0 };
-    entry.needs += needsYou(run) ? 1 : 0;
-    entry.total++;
-    entry.done += run.status === "accepted" ? 1 : 0;
-    plans.set(plan, entry);
-  }
-  if (!plans.size) return null;
-  // Plans that need you first, then the ones with the most work left.
-  const top = [...plans.entries()]
+const LANE_ORDER = ["needs", "running", "queue", "done"];
+
+/** Drafts: what waits to be cut into features, and how far the cut ones are. */
+function draftsPanel(list) {
+  const drafts = list.filter((r) => kindOf(r) === "draft");
+  if (!drafts.length) return null;
+  // What needs you or moves first; delivered drafts last.
+  const top = [...drafts]
     .sort(
       (a, b) =>
-        b[1].needs - a[1].needs ||
-        b[1].total - b[1].done - (a[1].total - a[1].done),
+        LANE_ORDER.indexOf(laneOf(a)) - LANE_ORDER.indexOf(laneOf(b)),
     )
     .slice(0, 8);
   return panel(
-    t("overview.plans"),
+    t("overview.drafts", { count: drafts.length }),
     h(
       "button",
-      {
-        type: "button",
-        class: "ghost",
-        onclick: () => showPlan(""),
-      },
-      t("overview.plansAll"),
+      { type: "button", class: "ghost", onclick: () => go("board") },
+      t("overview.all"),
     ),
     h(
       "ul",
       { class: "rows" },
-      top.map(([plan, runsOf]) => {
-        // The plan file's own progress when known, else the board's.
-        const file = planInfo(plan);
-        const { total, done } = file?.requirements
-          ? { total: file.requirements, done: file.accepted || 0 }
-          : runsOf;
-        return h(
-          "li",
-          { class: "row compact plan-row" },
-          h(
-            "button",
-            {
-              type: "button",
-              class: "link row-title",
-              title: planTitle(plan),
-              onclick: () => showPlan(plan),
-            },
-            planTitle(plan),
-          ),
-          h(
-            "span",
-            { class: "progress-track" },
-            h("span", {
-              style: { width: Math.round((100 * done) / total) + "%" },
-            }),
-          ),
-          h("small", { class: "mono" }, `${done}/${total}`),
-        );
-      }),
+      top.map((draft) => row(draft, attentionText(draft))),
     ),
   );
 }
@@ -413,7 +371,6 @@ function draw() {
   const inputs = [
     list,
     needsElsewhere(),
-    store.state.plans,
     events,
     store.state.cooldowns,
     store.state.usage,
@@ -472,7 +429,7 @@ function draw() {
         { class: "overview-grid three" },
         eventsPanel(),
         agentsPanel(),
-        plansPanel(list),
+        draftsPanel(list),
       ),
     );
     window.scrollTo(0, scroll);

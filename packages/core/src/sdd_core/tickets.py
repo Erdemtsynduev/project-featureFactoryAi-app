@@ -1,9 +1,11 @@
-"""Ticket drafts: bounded slices a planning step declares in its result data.
+"""Breakdown drafts: bounded slices a planning step declares in its result data.
 
-The application turns an approved breakdown into child runs; each draft carries
-everything a fresh ticket agent needs, without the planner's transcript.
+A feature is broken into tickets, and a draft into features, by the same kind of
+step. The application turns an approved breakdown into child runs; each draft
+carries everything a fresh agent needs, without the planner's transcript.
 """
 
+import re
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from typing import cast
@@ -19,8 +21,27 @@ def strings(raw: Json, label: str) -> tuple[str, ...]:
     return tuple(value for value in values if value)
 
 
+# A label is a short lowercase tag: letters of any script, digits and hyphens.
+LABEL = re.compile(r"[\w-]{1,32}")
+MAX_LABELS = 3
+
+
+def labels_of(raw: Json) -> tuple[str, ...]:
+    """Labels as people write them, normalised: lowercase, hyphens for spaces, unique."""
+    labels = tuple(
+        dict.fromkeys("-".join(label.lower().split()) for label in strings(raw, "label"))
+    )
+    if invalid := [label for label in labels if not LABEL.fullmatch(label)]:
+        raise ValueError(f"Labels are short words without punctuation: {', '.join(invalid)}")
+    if len(labels) > MAX_LABELS:
+        raise ValueError(f"At most {MAX_LABELS} labels: {', '.join(labels)}")
+    return labels
+
+
 @dataclass(frozen=True)
 class TicketDraft:
+    """One slice of its parent: a ticket of a feature, or a feature of a draft."""
+
     id: str
     title: str
     goal: str = ""
@@ -29,8 +50,12 @@ class TicketDraft:
     paths: tuple[str, ...] = ()
     # What the ticket needs besides an agent run (see `models.TicketNeed`).
     needs: tuple[TicketNeed, ...] = ()
-    # Existing work of the same plan (run ids, not in this breakdown) it waits for.
+    # Existing work from the same source (run ids, not in this breakdown) it waits for.
     after: tuple[str, ...] = ()
+    # Short tags people filter and start work by.
+    labels: tuple[str, ...] = ()
+    # Ids of the parent's source rows this slice covers.
+    covers: tuple[str, ...] = ()
 
     @property
     def held(self) -> bool:
@@ -113,6 +138,8 @@ def draft_of(raw: Json) -> TicketDraft:
         strings(item.get("paths"), "path"),
         needs_of(item),
         strings(item.get("after"), "dependency"),
+        labels_of(item.get("labels")),
+        strings(item.get("covers"), "row"),
     )
     if not draft.id or not draft.title:
         raise ValueError("Ticket needs an id and a title")
@@ -134,7 +161,8 @@ def ordered(drafts: Iterable[TicketDraft]) -> tuple[TicketDraft, ...]:
 
 
 def waits_for_known(drafts: Iterable[TicketDraft], known: Collection[str]) -> None:
-    """Every `after` names existing work of the plan; a guess is refused with the list."""
+    """Every `after` names existing work from the same source; a guess is refused with
+    the list."""
     unknown = [
         f"{draft.id}: {', '.join(missing)}"
         for draft in drafts
@@ -142,8 +170,8 @@ def waits_for_known(drafts: Iterable[TicketDraft], known: Collection[str]) -> No
     ]
     if unknown:
         raise ValueError(
-            "Tickets wait for work that is not a ticket of this plan (use the run ids the "
-            "brief lists): " + "; ".join(unknown)
+            "Tickets wait for work that is not a ticket from this source (use the run ids "
+            "the brief lists): " + "; ".join(unknown)
         )
 
 
@@ -165,6 +193,35 @@ def one_repository(drafts: Iterable[TicketDraft], scope_of: ScopeOf) -> None:
         )
 
 
+def covers_rows(drafts: Iterable[TicketDraft], rows: Collection[str]) -> None:
+    """A breakdown of a parent with source rows covers each row exactly once: nothing
+    is dropped, planned twice or invented."""
+    covered: dict[str, list[str]] = {}
+    for draft in drafts:
+        for row in draft.covers:
+            covered.setdefault(row, []).append(draft.id)
+    problems = [
+        *(f"{row} is not a row of this draft" for row in sorted(set(covered) - set(rows))),
+        *(f"{row} is covered by no feature" for row in sorted(set(rows) - set(covered))),
+        *(
+            f"{row} is covered by {', '.join(owners)}"
+            for row, owners in sorted(covered.items())
+            if len(owners) > 1
+        ),
+    ]
+    if problems:
+        raise ValueError("Every open row belongs to exactly one feature: " + "; ".join(problems))
+
+
+def drafts_of(data: str, product: str) -> tuple[TicketDraft, ...]:
+    """The drafts a planning step declared under `product` in its result data, in
+    dependency order."""
+    return ordered(draft_of(raw) for raw in sequence(object_json(data or "{}").get(product, [])))
+
+
 def tickets_of(data: str) -> tuple[TicketDraft, ...]:
-    """Ticket drafts a planning step declared in its result data, in dependency order."""
-    return ordered(draft_of(raw) for raw in sequence(object_json(data or "{}").get("tickets", [])))
+    return drafts_of(data, "tickets")
+
+
+def features_of(data: str) -> tuple[TicketDraft, ...]:
+    return drafts_of(data, "features")

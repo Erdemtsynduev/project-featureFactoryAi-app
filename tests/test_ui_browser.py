@@ -178,7 +178,7 @@ def test_new_task_dialog_keeps_its_draft_and_closes(page, workshop, tmp_path):
     expect(page.locator("#project-select")).to_have_value("alpha-app")
     expect(page.locator(".tree")).to_be_visible()
     page.locator("#new-task").click()
-    expect(page.get_by_text("Нужны профили: codex.")).to_be_visible()
+    expect(page.get_by_text("Нужны профили: codex.").first).to_be_visible()
     expect(page.locator(".next-steps")).to_contain_text("Планировщик режет спецификацию")
     page.get_by_label("Название").fill("Экспорт отчётов")
     page.get_by_role("button", name="Закрыть").click()
@@ -214,10 +214,9 @@ def test_search_filters_persist_and_mobile_fits(page, workshop):
     expect(page.locator("#task-search")).to_have_value("missing")
     page.locator("#task-search").fill("")
     expect(page.locator("#board .card")).to_have_count(1)
-    page.get_by_role("button", name="По планам", exact=True).click()
     page.reload()
-    expect(page.locator("#plans-board")).to_have_class("active")
-    page.get_by_role("button", name="Канбан", exact=True).click()
+    expect(page.locator("#live-board")).to_have_class("active"), "the view is remembered"
+    expect(page.get_by_role("button", name="По планам")).to_have_count(0)
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     Path("reports/ui").mkdir(parents=True, exist_ok=True)
@@ -396,7 +395,7 @@ def test_back_navigation_opens_and_closes_task(page, workshop):
     assert sys.executable
 
 
-def test_plan_starts_with_outside_dependencies_and_lanes_page(page, workshop, tmp_path):
+def test_a_label_starts_with_outside_dependencies_and_lanes_page(page, workshop, tmp_path):
     from playwright.sync_api import expect
 
     url, service = workshop
@@ -408,13 +407,12 @@ def test_plan_starts_with_outside_dependencies_and_lanes_page(page, workshop, tm
     flow = Workflow("empty", "done", (Step("done", "finish"),))
     definition = service.engine.store.publish(flow)
 
-    def create(identifier, plan, title, dependencies=()):
+    def create(identifier, label, title, dependencies=()):
         service.engine.create(
             identifier, definition, root, "", "rev", time.time(), tuple(dependencies)
         )
-        service.catalog.save_task(
-            identifier, TaskRecord(project="delta", kind="ticket", title=title, plan=plan)
-        )
+        record = TaskRecord(project="delta", kind="ticket", title=title, labels=(label,))
+        service.catalog.save_task(identifier, record)
 
     create("base", "p2", "Base contract")
     create("feature", "p1", "Feature on top", ["base"])
@@ -428,13 +426,14 @@ def test_plan_starts_with_outside_dependencies_and_lanes_page(page, workshop, tm
     queue.get_by_role("button", name="Показать ещё 5").click()
     expect(queue.locator(".card")).to_have_count(45)
 
-    page.locator("#plans-board").click()
-    row = page.locator('.plan[data-plan="p1"]')
-    expect(row).to_contain_text("ждёт 1 задачу вне плана")
-    row.get_by_role("button", name="Запустить план").click()
+    # A label narrows the board, and the bulk start with it.
+    page.locator("#label-filter").select_option("p1")
+    expect(page.locator("#board .card")).to_have_count(1)
+    expect(page.locator('.card[data-run="feature"] .label-chip')).to_have_text("p1")
+    page.locator("#resume-many").click()
     dialog = page.locator("dialog[open]")
-    expect(dialog).to_contain_text("Запустить и 1 задачу, от которой они зависят")
     expect(dialog).to_contain_text("Base contract")
+    dialog.get_by_label("Запустить и 1 задачу, от которой они зависят").check()
     dialog.get_by_label("Сразу запустить очередь").uncheck()
     dialog.get_by_role("button", name="Запустить", exact=True).click()
     expect(page.locator(".toast-success")).to_contain_text("Запущено 2 задачи")
@@ -443,8 +442,7 @@ def test_plan_starts_with_outside_dependencies_and_lanes_page(page, workshop, tm
     assert service.engine.store.get("filler-00").paused
     assert service.settings["running"] is False
 
-    row.locator(".plan-name").click()
-    row.locator('.card[data-run="feature"]').click()
+    page.locator('.card[data-run="feature"]').click()
     panel = page.locator(".waiting-panel")
     expect(panel).to_contain_text("Ждёт приёмки 1 задачи")
     panel.get_by_role("button", name="Base contract").click()
@@ -642,3 +640,79 @@ def test_answer_opens_the_answer_from_any_remembered_tab(page, workshop):
     page.locator("dialog[open] .attention").get_by_role("button", name="Ответить").click()
     expect(page.locator(".answer-panel")).to_be_visible()
     expect(page.locator(".answer-panel textarea")).to_be_focused()
+
+
+def test_a_draft_is_imported_cut_into_features_and_filtered_by_label(
+    page, workshop, tmp_path, monkeypatch
+):
+    from playwright.sync_api import expect
+    from test_drafts import FLOWS, PLAN, SOURCE, finish, start
+
+    url, service = workshop
+    errors = []
+    page.on("pageerror", lambda error: errors.append(error))
+    root = tmp_path / "rally"
+    (root / "plans").mkdir(parents=True)
+    (root / SOURCE).write_text(PLAN, encoding="utf-8")
+    project = {"id": "rally", "name": "Rally", "workspace": str(root), "plans_folder": "plans"}
+    service.mutate("project", project)
+    digests = {name: service.engine.store.publish(flow) for name, flow in FLOWS.items()}
+    monkeypatch.setattr(
+        service.flows, "ensure", lambda name, project, language, repositories=(): digests[name]
+    )
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    ready(page, url)
+    page.locator("#project-select").select_option("rally")
+
+    # Intake explains the path and imports the project's sources; nothing starts.
+    page.locator(".intake > summary").click()
+    expect(page.locator(".intake-steps li")).to_have_count(5)
+    page.get_by_role("button", name="Импортировать черновики").click()
+    expect(page.locator(".toast-success")).to_contain_text("Новых черновиков: 1")
+    draft = page.locator('.tree-row[data-run="draft_110"]')
+    expect(draft).to_have_class("tree-row kind-draft tone-idle")
+    expect(draft).to_contain_text("На паузе")
+    page.locator(".intake > summary").click()
+
+    # The lead's cut waits for a person: features with their rows, labels and order.
+    start(service, "draft_110")
+    cut = [
+        {"id": "F1", "title": "Tiling", "covers": ["FH-02"], "labels": ["shaders"]},
+        {
+            "id": "F2",
+            "title": "Cabin",
+            "covers": ["FH-03"],
+            "depends_on": ["F1"],
+            "labels": ["cabin"],
+        },
+    ]
+    finish(service, "draft_110", "g1", features=cut)
+    service.engine.dispatch("draft_110", 12, "h1")
+    draft.get_by_role("button", name="Ответить").click()
+    panel = page.locator(".answer-panel")
+    expect(panel).to_contain_text("Лид предлагает 2 фичи")
+    expect(panel.locator(".ticket-list .label-chip")).to_have_text(["shaders", "cabin"])
+    expect(panel).to_contain_text("строки: FH-02")
+    Path("reports/ui").mkdir(parents=True, exist_ok=True)
+    page.screenshot(path="reports/ui/draft-approval.png", full_page=True)
+    panel.get_by_role("button", name="Одобрить и создать 2 фичи").click()
+    expect(page.locator(".toast-success").last).to_contain_text("Создано 2 фичи")
+    page.keyboard.press("Escape")
+    # The queue finishes the draft's own run; its features then say where it stands.
+    assert service.engine.dispatch("draft_110", 13, "f1").status == "accepted"
+
+    first = page.locator('.tree-row[data-run="draft_110-F1"]')
+    expect(first).to_have_attribute("aria-level", "2")
+    expect(first.locator(".label-chip")).to_have_text("shaders")
+    expect(draft.locator(".plan-progress")).to_have_text("0/2")
+    expect(draft.get_by_role("button", name="Запустить фичи")).to_be_visible()
+    page.screenshot(path="reports/ui/board-drafts.png", full_page=True)
+
+    # A label narrows the board; the draft stays as dimmed context.
+    page.locator("#label-filter").select_option("cabin")
+    expect(page.locator('.tree-row[data-run="draft_110-F2"]')).to_be_visible()
+    expect(first).to_have_count(0)
+    expect(draft).to_have_class("tree-row kind-draft tone-idle context")
+    page.locator("#label-filter").select_option("")
+    assert service.state()["totals"]["calls"] == 0
+    assert not errors

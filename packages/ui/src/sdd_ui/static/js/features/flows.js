@@ -33,6 +33,7 @@ import { stepName } from "./vocabulary.js";
 
 const TEMPLATES = [
   "main-flow",
+  "draft",
   "feature",
   "ticket",
   "approved-feature",

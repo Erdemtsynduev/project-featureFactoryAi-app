@@ -777,9 +777,6 @@ details[open] > summary {
   gap: 14px;
   align-items: start;
 }
-.board.as-plans {
-  display: block;
-}
 .lane {
   display: grid;
   gap: 10px;
@@ -876,12 +873,17 @@ details[open] > summary {
 .kind-ticket .kind-tag {
   color: var(--tix);
 }
-.plan-chip {
+.label-chip {
   font: 11px var(--mono);
   padding: 0 6px;
-  border-radius: 4px;
-  background: var(--sunken);
-  color: var(--muted);
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.kind-draft .kind-tag,
+.kind-draft .tree-kind {
+  color: var(--accent);
 }
 .card-title {
   font-size: 14px;
@@ -1108,32 +1110,21 @@ details[open] > summary {
   }
 }
 
-/* Plans: one row per plan with its own columns --------------------------------- */
+/* Intake: how work enters the board, and the actions over a project's sources ---- */
 
-.plans {
-  display: grid;
-  gap: 8px;
-}
-.plans-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 10px;
-}
-.plans-about {
-  flex: 1 1 420px;
-  min-width: 0;
+.intake {
+  margin-bottom: 12px;
   padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
 }
-.plans-about > summary {
+.intake > summary {
   font-weight: 650;
   font-size: 13.5px;
 }
-.plans-about-steps {
-  margin: 8px 0 0;
+.intake-steps {
+  margin: 8px 0 10px;
   padding-left: 20px;
   display: grid;
   gap: 4px;
@@ -1141,65 +1132,15 @@ details[open] > summary {
   line-height: 1.45;
   color: var(--ink-2);
 }
-.plans-tools {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-}
-.plan {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  min-width: 0;
-}
-.plan[open] {
-  padding-bottom: 12px;
-}
-.plan > summary {
+.intake-actions {
   display: flex;
   flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
-  gap: 8px 12px;
-  min-height: 36px;
-  min-width: 0;
 }
-.plan-name {
-  flex: 1 1 220px;
-  min-width: 0;
-  font-weight: 650;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.plan-lanes {
-  display: inline-flex;
-  gap: 10px;
-  font: 600 12px var(--mono);
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-}
-.plan-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.plan-count i {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--muted);
-}
-.plan-count.lane-running i {
-  background: var(--run);
-}
-.plan-count.lane-needs i {
-  background: var(--accent);
-}
-.plan-count.lane-done i {
-  background: var(--ok);
-}
+
+/* Progress of a parent: children done out of all ------------------------------- */
+
 .plan-bar {
   width: 120px;
   height: 6px;
@@ -1216,18 +1157,6 @@ details[open] > summary {
   font: 12px var(--mono);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-.plan > summary button {
-  min-height: 28px;
-  padding: 3px 10px;
-  font-size: 12.5px;
-}
-.plan-board {
-  margin-top: 10px;
-}
-.plan-board .lane {
-  min-height: 120px;
-  max-height: 60vh;
 }
 .lane-more {
   display: grid;
@@ -1325,15 +1254,6 @@ details[open] > summary {
   color: var(--ink);
   opacity: 1;
   cursor: default;
-}
-.row.plan-row {
-  grid-template-columns: minmax(0, 1fr) 90px auto;
-}
-.plan-row .row-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Welcome and help ------------------------------------------------------------ */
@@ -2591,7 +2511,7 @@ button.tile {
 
 /* Board: lanes scroll sideways instead of stacking ------------------------------ */
 
-.board:not(.as-plans) {
+.board {
   grid-template-columns: repeat(4, minmax(260px, 1fr));
   overflow-x: auto;
   padding-bottom: 6px;
@@ -2659,12 +2579,6 @@ button.link {
 .team-panel .office {
   max-width: 100%;
   overflow-x: auto;
-}
-.plans-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: flex-start;
 }
 .kind-plan-review .kind-tag {
   color: var(--warn);

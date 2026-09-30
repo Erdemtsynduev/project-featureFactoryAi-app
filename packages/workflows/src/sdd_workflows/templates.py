@@ -12,7 +12,7 @@ from sdd_workflows import prompts
 class Roles:
     """The agent profile that plays each role in a project's flows."""
 
-    # Revises a feature's tickets when one is stuck.
+    # Cuts a draft into features and revises a feature's tickets when one is stuck.
     lead: str = "codex"
     # Writes specifications and ticket breakdowns.
     analyst: str = "codex"
@@ -408,6 +408,48 @@ def with_tools(flow: Workflow, tools: tuple[str, ...]) -> Workflow:
     )
 
 
+def draft(roles: Roles = DEFAULT_ROLES) -> Workflow:
+    """Cut one draft into features: the lead proposes them, a person approves.
+
+    The application admits the approved features as paused child runs of the feature
+    flow, never from the agent's own decision. Nothing here writes a specification.
+    """
+    return Workflow(
+        "draft",
+        "groom",
+        (
+            Step(
+                "groom",
+                "agent",
+                roles.lead,
+                prompts.GROOM,
+                (("done", "approve"), ("questions", "interview")),
+                required=True,
+                config='{"produces":"features","purpose":"planning"}',
+            ),
+            Step(
+                "interview",
+                "human",
+                prompt="Resolve the lead's questions about this draft.",
+                transitions=(("answered", "groom"),),
+            ),
+            Step(
+                "approve",
+                "human",
+                prompt="Approve the features cut from this draft. "
+                "Approved features appear on the board as paused feature tasks.",
+                transitions=(("approved", "accepted"), ("rework", "groom")),
+                required=True,
+            ),
+            Step("accepted", "finish"),
+        ),
+        max_calls=4,
+        # A draft's brief lists every open row of its source.
+        max_input_chars=60000,
+        max_planning_calls=4,
+    )
+
+
 def feature(roles: Roles = DEFAULT_ROLES, agents: str = "") -> Workflow:
     """Turn one feature into an approved specification (PRD) and ticket breakdown.
 
@@ -583,6 +625,10 @@ HUMAN_PROMPTS_RU = {
     "approve": "Подтвердите задачу и критерии приёмки.",
     "decide": "Решите по предложенным изменениям плана. Одобренные применяются к тикетам "
     "плана; отклонённые оставляют его как есть.",
+    # A flow's own wording of a step, as `<flow>.<step>`, wins over the shared one.
+    "draft.interview": "Ответьте на вопросы лида по черновику.",
+    "draft.approve": "Одобрите фичи, нарезанные из черновика. Одобренные появятся на доске "
+    "как фичи на паузе.",
 }
 
 
@@ -590,12 +636,15 @@ def localized(flow: Workflow, language: str) -> Workflow:
     """Human step prompts in the operator's language; agent prompts stay unchanged."""
     if language != "ru":
         return flow
+
+    def prompt(step: Step) -> str:
+        own = HUMAN_PROMPTS_RU.get(f"{flow.id}.{step.id}")
+        return own or HUMAN_PROMPTS_RU.get(step.id, step.prompt)
+
     return replace(
         flow,
         steps=tuple(
-            replace(step, prompt=HUMAN_PROMPTS_RU.get(step.id, step.prompt))
-            if step.kind == "human"
-            else step
+            replace(step, prompt=prompt(step)) if step.kind == "human" else step
             for step in flow.steps
         ),
     )

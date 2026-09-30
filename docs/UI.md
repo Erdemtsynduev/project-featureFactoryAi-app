@@ -16,7 +16,7 @@ outside task workspaces and do not run a second coordinator against it.
 
 The rail holds the project switcher and six sections: **Overview** (the default:
 key numbers, Needs you, Running now, the team office, recent events, agent health
-and plan progress), **Board**, **Workflows**, **Agents**, **Usage and limits** and
+and the drafts), **Board**, **Workflows**, **Agents**, **Usage and limits** and
 **Log**. Design rules and the latest review are in [DESIGN.md](DESIGN.md). The top bar shows the
 section, the queue state with its start/pause button, three meters (calls against
 the queue budget, measured tokens, API-equivalent cost) and **New task**.
@@ -36,16 +36,16 @@ to the previous place; the drawer closes with ×, Escape or a click on the backd
 A queue only takes resumed tasks. **Запустить** on a card or in the drawer resumes
 the task and, when the queue is paused, starts it too; if other resumed tasks would
 start with it, a dialog asks first (**Только разрешить задачу** resumes this one
-alone). **Запустить задачи…** on the board, **Запустить план** on a plan row and
-**Запустить вместе с зависимостями** in the drawer open one dialog for many tasks:
-the board filter, one plan or one task. It offers tasks ready to start (all
-dependencies accepted) or every paused task (the rest wait for their dependencies),
-lists the paused prerequisites outside the selection (other plans, no plan) with a
-switch to start them too, names blocked prerequisites it cannot start, and warns
-when the tasks outnumber the calls left in the queue budget. The server applies the
-same selection (`resume-many` with `kind`, `plan`, `ids`, `with_dependencies`);
-prerequisites are followed transitively within the project. **Пауза всем** and a
-plan's **Пауза** ask before pausing. Starting the queue while no task of the
+alone). **Запустить задачи…** on the board, **Запустить фичи** or **Запустить тикеты**
+on a parent's row and **Запустить вместе с зависимостями** in the drawer open one
+dialog for many tasks: the board filter (a label), everything cut from one parent,
+or one task. It offers tasks ready to start (all dependencies accepted) or every
+paused task (the rest wait for their dependencies), lists the paused prerequisites
+outside the selection with a switch to start them too, names blocked prerequisites
+it cannot start, and warns when the tasks outnumber the calls left in the queue
+budget. The server applies the same selection (`resume-many` with `kind`, `label`,
+`under`, `ids`, `with_dependencies`); prerequisites are followed transitively
+within the project. **Пауза всем** asks before pausing. Starting the queue while no task of the
 project is resumed opens the dialog instead of silently running an idle queue.
 Dragging a card to In progress only resumes it and says what happens next (queued,
 waiting for a dependency, queue paused).
@@ -70,7 +70,8 @@ and flags a mixed installation.
 
 | Kind | Workflow | What happens |
 |---|---|---|
-| Large feature | `requirement` | Specification (the agent may ask structured questions) → ticket breakdown → your approval. Approving creates each ticket as a paused child task with its dependencies. |
+| Draft | `draft` | An idea without clear edges. The lead cuts it into features (it may ask structured questions) → your approval. Approving creates each feature as a paused child task; you start the ones you need. |
+| Large feature | `feature` | Specification (the agent may ask structured questions) → ticket breakdown → your approval. Approving creates each ticket as a paused child task with its dependencies. |
 | Whole task | `main-flow` | Specification, plan, implementation, checks and review in one run; no child tasks. |
 | Ready ticket | `ticket` | Implementation, project checks, independent review and fast-forward merge of its lane. |
 | Custom | any published version | As drawn in the workflow. |
@@ -123,57 +124,72 @@ the records are application metadata, so the engine's history is unchanged.
 Dependencies between runs still mean "run accepted": work that depends on a
 feature waits for its planning, not its delivery.
 
-## Features, plans and where artifacts live
+## Drafts, features and where artifacts live
 
-The factory's input is a **feature**. Every feature takes the same path, as in
-mobile-sdd-factory (a Jira task → proposal, requirements, acceptance, constraints →
-decomposition → subtasks) and AI Hero (grill me → PRD → PRD to issues → TDD per issue):
+Work enters as a **draft** and is broken down twice, as in mobile-sdd-factory (a Jira
+task → proposal, requirements, acceptance → decomposition → subtasks) and AI Hero
+(grill me → PRD → PRD to issues → TDD per issue):
 
-1. **Specification** — a PRD: problem, solution, numbered user stories,
-   implementation and testing decisions, acceptance criteria `AC-n` traced to the
-   source, out of scope. When a decision only you can make is missing, the agent
+1. **Draft** — the intake: an idea typed under **New task → Черновик**, a numbered
+   Markdown file `NNN_*.md` in the project's **drafts folder**, or an item of the
+   project's tracker. A source item is imported once, over its open and partial rows.
+2. **The cut** — the lead (`groom`) proposes features: title, goal, the rows each
+   covers, dependencies and up to three **labels**. You approve the cut; the factory
+   refuses one that drops a row, covers it twice or invents one. Each feature appears
+   under its draft, paused.
+3. **Specification** — a feature you start gets a PRD: problem, solution, numbered user
+   stories, implementation and testing decisions, acceptance criteria `AC-n` traced to
+   the source, out of scope. When a decision only you can make is missing, the agent
    asks structured questions first.
-2. **Tickets** — tracer-bullet vertical slices with goal, acceptance, `depends_on`
+4. **Tickets** — tracer-bullet vertical slices with goal, acceptance, `depends_on`
    (only real blockers, so independent tickets run in parallel) and the repository
    folders each owns; `HITL:` marks a ticket that needs a person inside it.
-3. **Your approval** of the specification and tickets as a whole.
-4. **Ticket runs** — implementation on its own lane, project checks, independent
+5. **Your approval** of the specification and tickets as a whole.
+6. **Ticket runs** — implementation on its own lane, project checks, independent
    review, merge. A ticket claims only the repositories it owns.
 
-A feature comes from **New task → Большая фича**, or from a **plan**: a plan file
-`NNN_*.md` in the project's **plans folder** (a project setting; none by default)
-becomes one feature `feature_<NNN>` whose scope is the plan's
-open and partial rows (closed and rejected rows are context). **Обновить планы из файлов** (`plans-sync`) creates a feature per
-plan that has uncovered open rows, and a follow-up feature `feature_<NNN>_<n>` for rows
-added later (research adds rows). **Пересоздать доску из планов** (`plans-rebuild`)
-backs the database up and plans again everything that never started, under the
-current rules (one repository per ticket, chains across repositories): never-started
-features and tickets leave the board; a feature whose tickets left is closed, its started
-tickets keep running as top-level work and its rows are planned again. With `plan` it
-touches one plan. Nothing edits plan files or starts work. A feature's brief lists the
-plan's queued tickets with their state and its delivered tickets, so neither is
-planned twice. Started tickets that cannot finish
-(for example ones spanning repositories) are handed to the feature that plans them
-again with the `supersede` action: they pause, show as **Заменено**, and keep their
-lane and `ffai/<run>` branch so the new tickets can reuse the work.
+Everything is created paused, so a draft costs one planning call when you start it and
+each feature is planned only when you start it. A feature that `depends_on` another of
+the same cut is planned after that one is approved, and is then told its tickets, so
+its own tickets can wait for them (`after`).
 
-The specification and the tickets belong to the factory, not to the project: they are
-recorded results in its database, shown in the feature's drawer under **Документы
-фичи** (with **Скачать spec.md**) and written on approval to
-`<data folder>/artifacts/<project>/<feature>/spec.md` and `tickets.md`. The project
-repository receives only the tickets' code. Read-only runs (specifications) do not
-hold their folder between attempts, so many features advance side by side.
+**Labels** are short lowercase tags. The lead proposes them, the brief lists the labels
+the project already uses so they are reused, and a ticket keeps its feature's labels.
+The board filters by a label and **Запустить задачи…** starts what the filter shows.
+
+The board's folded panel **Как работа попадает на доску** explains this path and holds
+the actions over a project's sources. **Импортировать черновики** (`drafts-import`)
+creates a draft per source item that has uncovered open rows, and a follow-up draft
+`draft_<key>_<n>` for rows added later (research adds rows); an item without rows is
+taken once. After the import nothing follows the source: no progress is read from it and
+nothing is written to it. **Пересобрать незапущенное** (`drafts-rebuild`) backs the
+database up and takes in again everything that never started: never-started drafts,
+features and tickets leave the board; a parent that lost children is closed, its started
+children keep running as top-level work, and the rows nothing covers any more become
+fresh drafts. With `item` it touches one source item. Nothing starts work. A brief
+lists the tickets that already came from the same source, with their state, so nothing
+is planned twice. Started tickets that cannot finish (for example ones spanning
+repositories) are handed to the feature that plans them again with the `supersede`
+action: they pause, show as **Заменено**, and keep their lane and `ffai/<run>` branch
+so the new tickets can reuse the work.
+
+The cut, the specification and the tickets belong to the factory, not to the project:
+they are recorded results in its database, shown in the drawer under **Документы**
+(with **Скачать spec.md**) and written on approval to
+`<data folder>/artifacts/<project>/<task>/` as `features.md`, `spec.md` and
+`tickets.md`. The project repository receives only the tickets' code. Planning runs own
+no folder of the workspace, so they never wait for tickets and edits elsewhere never
+invalidate them.
 
 ## Board, cards and the attention reason
 
-The board has three views. **Дерево** (the default) shows features with their
-tickets and sub-tickets, like sub-issues: each row has the reason line, the
-children's progress for a parent and the one-click action; needs-you and running
-work comes first. Chips narrow the tree to one lane and **Скрыть готовые** hides
-done work; a match's ancestors stay, dimmed, for context. Rows with work left start
-unfolded; folds are remembered. **Канбан** shows the columns below with only work
-that moves by itself: an approved parent is represented by its tickets there and in
-**По планам**.
+The board has two views. **Дерево** (the default) shows drafts with their features,
+features with their tickets and the lead's reviews, like sub-issues: each row has the
+reason line, the children's progress for a parent and the one-click action; needs-you
+and running work comes first. Chips narrow the tree to one lane and **Скрыть готовые**
+hides done work; a match's ancestors stay, dimmed, for context. Rows with work left
+start unfolded; folds are remembered. **Канбан** shows the columns below with only work
+that moves by itself: an approved parent is represented by what was cut from it.
 
 Columns follow one server-side derivation (`sdd_ui.attention`) that names the first
 thing blocking each task and the action that resolves it: answer, retry, reconcile,
@@ -181,22 +197,16 @@ connect a profile, resume, start the queue — or why it waits (a limit reset, a
 resting profile, dependencies, folders that unfinished work still holds, named by
 title). **Queue** holds paused and waiting tasks,
 **In progress** running and queued ones, **Needs you** answers and blockers,
-**Done** accepted ones. Every card shows kind, plan, title, step and runner, the
-reason line and its one-click action; requirements show ticket progress, tickets
+**Done** accepted ones. Every card shows kind, labels, title, step and runner, the
+reason line and its one-click action; parents show their children's progress, children
 their parent. A task waiting for dependencies names them by title. The nav badge
 counts tasks that need you; tasks that need you in another project (or without a
 project) are listed above the board and in Overview with a link there.
 
 Columns show 40 cards and **Показать ещё** pages further. Drag cards between Queue
 and In progress to pause or resume. Nothing can be dragged into Done: acceptance
-belongs to gates and review. The view, search, lane chips and the plan filter
+belongs to gates and review. The view, search, lane chips and the label filter
 persist per browser.
-
-**По планам** shows one collapsible row per plan (Epic-style swimlanes): counts per
-column, progress, how many tasks outside the plan it waits for, **Запустить план**
-and **Пауза**; an open row holds the same four columns for that plan only. Rows
-render their cards only when open, so a hundred plans stay cheap; the open rows are
-remembered. Overview's plan list opens the plan's row.
 
 ## Task drawer
 
@@ -238,8 +248,8 @@ and existing tasks stay pinned.
 
 A task's drawer shows **Флоу этой задачи** while it is unfinished and idle: **Пропустить**
 a step (a required step, marked `*`, asks first), choose another agent profile for an agent
-step, or **Обновить до текущего шаблона**. The plans header's **Обновить флоу незавершённой
-работы** reports how many unfinished tasks run an older template version and moves the idle
+step, or **Обновить до текущего шаблона**. The board's intake panel has **Обновить флоу
+незавершённой работы**: it reports how many unfinished tasks run an older template version and moves the idle
 ones. Each change publishes a new version and migrates the task; progress stays where steps
 are unchanged.
 
@@ -323,7 +333,7 @@ Plain ES modules, no build step and no Node.js at runtime:
 | `js/core/` | `dom` (element builder), `api` (HTTP client, ETag polling), `store` (snapshot, project scope, selectors), `i18n`, `storage` |
 | `js/ui/` | `dialog` (modal/drawer, confirm), `toast`, `draft` (form drafts) |
 | `js/features/` | One module per screen or concern: `shell`, `board`, `task-drawer`, `answers`, `new-task`, `projects`, `flows`, `agents`, `usage`, `journal`, `team`, `onboarding`, `notifications`, `commands`, `vocabulary`, `bulk`, `dashboard`, `work` (parents: finish, close) |
-| `js/board/` | The board's parts: `state` (filters, open plans, folds, paging), `tree` (the work tree), `cards` (cards and columns), `plans` (plan rows and actions) |
+| `js/board/` | The board's parts: `state` (filters, folds, paging), `tree` (the work tree), `cards` (cards and columns), `intake` (how work enters the board; import and rebuild) |
 | `js/drawer/` | The task drawer's tabs: `discussion`, `details` (dependencies, documents), `log`, `live`, shared `parts` |
 | `js/flows/` | The workflow editor's `state` (draft, mode, elements) and `inspector` |
 | `js/graph/` | `pipeline` (SVG workflow drawing) and `office` (canvas scene) |
@@ -347,6 +357,8 @@ nesting, partial progress, folds, lane focus, closing partly done) was added; on
 September 28 the eleven scenarios passed in installed
 Edge on Windows (welcome, answer drafts, read-only view and pipeline editing,
 new-task drafts, filters and mobile width, budgets, drag and drop with
-theme/language and the question picker, notifications, bulk start, starting a plan
-with an outside dependency and column paging, back navigation). Firefox and WebKit
+theme/language and the question picker, notifications, bulk start, starting a label
+with an outside dependency and column paging, back navigation). On September 30 the
+draft scenario was added (import, the lead's cut and its approval, label filter) and
+the plan view's scenario was rewritten for labels: seventeen scenarios pass in Edge. Firefox and WebKit
 are not qualified.

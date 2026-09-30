@@ -21,7 +21,7 @@ import { bindDraft } from "../ui/draft.js";
 import { toast, toastError } from "../ui/toast.js";
 import { go, openTask } from "./shell.js";
 
-const INTENTS = ["feature", "main-flow", "ticket", "custom"];
+const INTENTS = ["draft", "feature", "main-flow", "ticket", "custom"];
 
 function intentCard(intent, selected, missing) {
   const input = h("input", {

@@ -4,9 +4,28 @@ Protocol keys belong to this engine, not the legacy portfolio packet format.
 User-facing prose follows the response language recorded in the task context.
 """
 
-SPEC = """Write the specification (a PRD) of this feature. Read the brief, every source
-document it names (for a plan: the plan file, whose open rows are the scope and whose
-closed rows are context), recorded decisions, applicable AGENTS.md and the owning code.
+GROOM = """Cut this draft into features as its lead. The brief carries the draft: its goals
+and rules, its open rows (the scope, each with an id) and the work already started from
+it. A feature is one coherent outcome a person can see, specified on its own and
+delivered by about three to eight tickets. Keep in one feature the rows that must be
+designed together; separate what can be specified and delivered by itself. Research
+that other features wait for is a feature of its own, and they depend on it.
+For each feature give a short stable id (F1, F2 ...), a title, the `goal` (the outcome,
+what is in and out, the started work it continues), `covers` with the ids of the rows
+it covers, `depends_on` with only the features it truly needs first (independent
+features are planned side by side) and one to three `labels`: short lowercase tags for
+the area or kind of work, reusing the labels the brief lists where they fit.
+Every open row belongs to exactly one feature; a draft without rows has empty `covers`.
+Do not write specifications or tickets, and do not drop, weaken or reinterpret scope.
+Ask in `questions` only what blocks the cut (id, question, 2-4 options, your
+recommended option). Return done with a readable summary table of the features in
+reason. No edits.
+"""
+
+SPEC = """Write the specification (a PRD) of this feature. Read the brief (it carries the
+feature's scope: the rows it covers, with the goals and rules of the draft they came
+from), every source document it names, recorded decisions, applicable AGENTS.md and the
+owning code.
 Establish repository facts yourself. Ask only product or architecture decisions that
 block the specification: return them in `questions` (id, question, 2-4 options, your
 recommended option) and explain each recommendation in reason; never invent an answer.

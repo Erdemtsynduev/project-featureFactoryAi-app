@@ -4,11 +4,11 @@
 publication of each item and records only what changed:
 
 - a feature's approved specification;
-- the tickets approved for it, created in the tracker as children of the feature;
-- the state of the feature and of each mirrored ticket (queued, working, needs a
-  person, blocked, done).
+- the children approved for an item (a draft's features, a feature's tickets),
+  created in the tracker as children of the item;
+- the state of each mirrored item (queued, working, needs a person, blocked, done).
 
-Only items that came from the tracker (they carry a `link`) are mirrored; tickets
+Only items that came from the tracker (they carry a `link`) are mirrored; children
 get their link when the tracker created them. `deliver` sends recorded publications
 oldest first. A failure keeps the order: that publication is retried later with a
 growing delay, and nothing newer of the project jumps ahead of it. Observing never
@@ -81,7 +81,6 @@ class TrackerSync:
                 recorded += self._record(
                     project_id, TrackerUpdate("state", view.id, item.link, reason, state)
                 )
-            if item.link and item.kind == "feature":
                 recorded += self._documents(project_id, view.id, item, records)
         return recorded
 
@@ -95,14 +94,12 @@ class TrackerSync:
                 project_id,
                 TrackerUpdate("specification", run, item.link, stored["specification"].content),
             )
-        breakdown = stored.get("tickets")
-        if breakdown is not None:
-            children = {key for key, child in records.items() if child.parent == run}
-            tickets = mirrors(breakdown.data, children)
-            if tickets and any(not records[t.run].link for t in tickets):
-                recorded += self._record(
-                    project_id, TrackerUpdate("tickets", run, item.link, tickets=tickets)
-                )
+        children = {key for key, child in records.items() if child.parent == run}
+        tickets = mirrors(list[Json](self.catalog.breakdown(run)), children)
+        if tickets and any(not records[t.run].link for t in tickets):
+            recorded += self._record(
+                project_id, TrackerUpdate("tickets", run, item.link, tickets=tickets)
+            )
         return recorded
 
     def _record(self, project_id: str, update: TrackerUpdate) -> int:
@@ -183,7 +180,7 @@ class TrackerSync:
 
 
 def mirrors(breakdown: Json, admitted: set[str]) -> tuple[TicketMirror, ...]:
-    """The admitted tickets of a feature's breakdown, as a tracker shows them."""
+    """The admitted children of a breakdown, as a tracker shows them."""
     places = ticket_places(breakdown)
     found: list[TicketMirror] = []
     for item in breakdown if isinstance(breakdown, list) else []:

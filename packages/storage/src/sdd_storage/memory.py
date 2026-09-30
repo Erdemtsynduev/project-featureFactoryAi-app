@@ -354,7 +354,6 @@ class MemoryCatalog:
             "tasks": {},
             "preferences": {},
         }
-        self.plan_documents: dict[tuple[str, str], str] = {}
         self.artifact_documents: dict[tuple[str, str], str] = {}
         self.outbox: dict[str, OutboxEntry] = {}  # insertion order is delivery order
 
@@ -370,13 +369,6 @@ class MemoryCatalog:
 
     def save_project(self, identifier: str, document: str) -> None:
         self.documents["projects"][identifier] = document
-
-    def plans(self) -> tuple[tuple[str, str], ...]:
-        return tuple((key[0], value) for key, value in sorted(self.plan_documents.items()))
-
-    def save_plans(self, project: str, plans: tuple[tuple[str, str], ...]) -> None:
-        for identifier, document in plans:
-            self.plan_documents[project, identifier] = document
 
     def tasks(self) -> tuple[tuple[str, str], ...]:
         return tuple(self.documents["tasks"].items())

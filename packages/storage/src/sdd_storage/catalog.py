@@ -10,13 +10,11 @@ from sdd_core.codec import object_json
 type Transaction = Callable[[], AbstractContextManager[sqlite3.Connection]]
 
 # The catalog's tables, created by the store's schema migrations in their order.
-# Application metadata (projects, plans, task labels, preferences); earlier releases
+# Application metadata (projects, task records, preferences); earlier releases
 # created these from the UI, and IF NOT EXISTS adopts them unchanged.
 METADATA_TABLES = """
 CREATE TABLE IF NOT EXISTS ui_projects(id TEXT PRIMARY KEY, document TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ui_tasks(id TEXT PRIMARY KEY REFERENCES runs(id), document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ui_plans(project TEXT NOT NULL, id TEXT NOT NULL,
-    document TEXT NOT NULL, PRIMARY KEY(project, id));
 CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY, document TEXT NOT NULL);
 """
 # A feature's specification and ticket breakdown, kept by the factory.
@@ -60,21 +58,6 @@ class SQLiteCatalog:
                 "INSERT INTO ui_projects VALUES(?,?) "
                 "ON CONFLICT(id) DO UPDATE SET document=excluded.document",
                 (identifier, document),
-            )
-
-    def plans(self) -> tuple[tuple[str, str], ...]:
-        with self.transaction() as db:
-            return tuple(
-                (str(row[0]), str(row[1]))
-                for row in db.execute("SELECT project, document FROM ui_plans ORDER BY project, id")
-            )
-
-    def save_plans(self, project: str, plans: tuple[tuple[str, str], ...]) -> None:
-        with self.transaction() as db:
-            db.executemany(
-                "INSERT INTO ui_plans VALUES(?,?,?) ON CONFLICT(project, id) "
-                "DO UPDATE SET document=excluded.document",
-                [(project, identifier, document) for identifier, document in plans],
             )
 
     def tasks(self) -> tuple[tuple[str, str], ...]:

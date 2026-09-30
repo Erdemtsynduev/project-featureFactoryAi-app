@@ -31,6 +31,7 @@ const TONE = {
   revived: "waiting",
   accepted: "done",
   tickets_admitted: "done",
+  features_admitted: "done",
   plan_review_requested: "attention",
   plan_revised: "done",
   bulk_resume: "working",

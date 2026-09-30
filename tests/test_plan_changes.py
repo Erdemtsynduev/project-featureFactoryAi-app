@@ -28,6 +28,7 @@ from sdd_core.tickets import TicketDraft, needs_of, tickets_of
 from sdd_providers.dialects import Claude, Codex, Invocation
 from sdd_providers.handlers import PRODUCT_OUTPUTS, instructions, result_schema, shared_data
 from sdd_workflows.templates import capabilities, plan_review, ticket, with_tools
+from sdd_workflows.templates import draft as draft_flow
 
 
 def draft(identifier: str, *depends_on: str, **fields: object) -> TicketDraft:
@@ -257,8 +258,23 @@ def test_each_product_declares_its_output_schema_and_instruction(tmp_path):
         assert output.instruction in instructions(packet)
     tickets = PRODUCT_OUTPUTS["tickets"].schema["items"]  # type: ignore[index]
     assert "needs" in tickets["required"]  # type: ignore[index]
+    features = PRODUCT_OUTPUTS["features"].schema["items"]  # type: ignore[index]
+    assert features["required"] == ["id", "title", "goal", "covers", "depends_on", "labels"]  # type: ignore[index]
     plain = result_schema(product_packet(tmp_path, "specification"))
     assert "tickets" not in plain["properties"] and "plan_changes" not in plain["properties"]  # type: ignore[operator]
+
+
+def test_a_groom_step_returns_features_and_a_bad_cut_is_refused(tmp_path):
+    packet = product_packet(tmp_path, "features")
+    cut = [{"id": "F1", "title": "Tiling", "covers": ["R1"], "labels": ["Shaders"]}]
+    assert shared_data({"features": cut, "tickets": [{"id": "x"}]}, packet) == {"features": cut}
+    with pytest.raises(ValueError, match="cyclic or unknown"):
+        shared_data({"features": [{"id": "F1", "title": "A", "depends_on": ["F9"]}]}, packet)
+    with pytest.raises(ValueError, match="At most 3 labels"):
+        shared_data({"features": [{**cut[0], "labels": ["a", "b", "c", "d"]}]}, packet)
+    validate(draft_flow())
+    assert draft_flow().step("groom").options.produces == "features"
+    assert not draft_flow().step("groom").mutates, "the lead only reads"
 
 
 def test_a_step_keeps_only_its_own_product_and_checks_it(tmp_path):

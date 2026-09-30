@@ -14,7 +14,7 @@ from sdd_core.models import PLAN_CHANGE_KINDS, TICKET_NEEDS, Artifact, Json, Res
 from sdd_core.plan_changes import plan_changes_of
 from sdd_core.questions import questions
 from sdd_core.sdk import STDERR_LOG, STDOUT_LOG, Launch, Manifest, Packet
-from sdd_core.tickets import tickets_of
+from sdd_core.tickets import features_of, tickets_of
 
 from sdd_providers import budget
 from sdd_providers.dialects import DIALECTS, SCHEMA_FILE, STDOUT_FILE, Invocation, ReportedError
@@ -91,6 +91,12 @@ TICKETS_INSTRUCTION = (
     "only; `after` names run ids of existing tickets the brief lists that it waits for, [] "
     "otherwise.\n"
 )
+FEATURES_INSTRUCTION = (
+    "Return the cut in `features`: each feature has a short unique id, a title, the goal "
+    "(the outcome, what is in and out), `covers` with the ids of the draft's rows it covers "
+    "([] when the draft has no rows), `depends_on` with the ids of features of this cut it "
+    "needs first ([] otherwise) and one to three `labels`.\n"
+)
 PLAN_CHANGES_INSTRUCTION = (
     "Return proposed corrections in `plan_changes`, [] when the plan is sound. Each has "
     "`kind` and `reason` (why, for the person approving). `revise`: one draft replacing a "
@@ -146,6 +152,19 @@ TICKET: dict[str, Json] = _strict(
     }
 )
 TICKETS_SCHEMA: dict[str, Json] = {"type": "array", "items": TICKET}
+FEATURES_SCHEMA: dict[str, Json] = {
+    "type": "array",
+    "items": _strict(
+        {
+            "id": {"type": "string"},
+            "title": {"type": "string"},
+            "goal": {"type": "string"},
+            "covers": STRINGS,
+            "depends_on": STRINGS,
+            "labels": STRINGS,
+        }
+    ),
+}
 PLAN_CHANGES_SCHEMA: dict[str, Json] = {
     "type": "array",
     "items": _strict(
@@ -187,6 +206,7 @@ class ProductOutput:
 # One row per product whose result carries structured output beyond the common fields.
 PRODUCT_OUTPUTS: dict[str, ProductOutput] = {
     "tickets": ProductOutput("tickets", TICKETS_SCHEMA, TICKETS_INSTRUCTION, tickets_of),
+    "features": ProductOutput("features", FEATURES_SCHEMA, FEATURES_INSTRUCTION, features_of),
     "plan_changes": ProductOutput(
         "plan_changes", PLAN_CHANGES_SCHEMA, PLAN_CHANGES_INSTRUCTION, plan_changes_of
     ),

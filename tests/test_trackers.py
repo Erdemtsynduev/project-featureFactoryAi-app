@@ -1,7 +1,10 @@
 """Trackers: work items come from them, and the factory's progress goes back in order."""
 
+import sys
+
 import pytest
 from sdd_core.catalog import OutboxEntry
+from sdd_core.codec import canonical
 from sdd_core.models import Step, Workflow
 from sdd_core.tracking import (
     TrackerReceipt,
@@ -86,7 +89,15 @@ class FakeTracker:
         return TrackerReceipt()
 
 
-def test_a_tracker_item_becomes_a_feature_and_its_progress_is_mirrored(tmp_path, monkeypatch):
+def grooming_flow() -> Workflow:
+    # A check stands in for the lead: the test supplies the features it cuts.
+    config = canonical({"argv": [sys.executable, "-c", "pass"], "produces": "features"})
+    approve = Step("approve", "human", prompt="Approve", transitions=(("approved", "accepted"),))
+    groom = Step("groom", "check", "command", transitions=(("done", "approve"),), config=config)
+    return Workflow("draft", "groom", (groom, approve, Step("accepted", "finish")))
+
+
+def test_a_tracker_item_becomes_a_draft_and_its_progress_is_mirrored(tmp_path, monkeypatch):
     service = WorkspaceService(tmp_path / "ui.db")
     tracker = FakeTracker({})
     service.sources.factories = lambda: {"fake": lambda settings: tracker}
@@ -97,25 +108,40 @@ def test_a_tracker_item_becomes_a_feature_and_its_progress_is_mirrored(tmp_path,
             "project",
             {"id": "app", "name": "App", "workspace": str(root), "tracker": {"kind": "fake"}},
         )
-        planning = service.engine.store.publish(planning_flow())
-        ticket = service.engine.store.publish(Workflow("ticket", "done", (Step("done", "finish"),)))
+        store = service.engine.store
+        flows = {
+            "draft": store.publish(grooming_flow()),
+            "feature": store.publish(planning_flow()),
+            "ticket": store.publish(Workflow("ticket", "done", (Step("done", "finish"),))),
+        }
         monkeypatch.setattr(
-            service.flows,
-            "ensure",
-            lambda name, project, language, repositories=(): (
-                planning if name == "feature" else ticket
-            ),
+            service.flows, "ensure", lambda name, project, language, repositories=(): flows[name]
         )
-        created = service.mutate("plans-sync", {"project": "app"})["created"]
-        assert created == ["feature_eng-1"]
-        record = service.catalog.task("feature_eng-1")
-        assert record.link == "fake:ENG-1" and record.source == "https://t/1"
+        created = service.mutate("drafts-import", {"project": "app"})["created"]
+        assert created == ["draft_eng-1"]
+        record = service.catalog.task("draft_eng-1")
+        assert record.link == "fake:ENG-1" and record.source == "fake:ENG-1"
         with service.engine.store.unit() as unit:
-            assert "Pay online" in unit.context("feature_eng-1"), (
+            assert "Pay online" in unit.context("draft_eng-1"), (
                 "the description travels in the brief"
             )
 
-        run = service.engine.store.get("feature_eng-1")
+        # The lead cuts the item into a feature; the tracker gets it as the item's child.
+        draft = service.engine.store.get("draft_eng-1")
+        service.mutate("resume", {"id": draft.id, "version": draft.version})
+        cut = [{"id": "F1", "title": "Card payments", "covers": ["ENG-2"]}]
+        complete(service, draft.id, "One feature", "g1", features=cut)
+        waiting = service.engine.dispatch(draft.id, 12, "h0")
+        approval = {"id": draft.id, "outcome": "approved", "version": waiting.version}
+        (feature,) = service.mutate("answer", approval)["admitted"]
+        assert service.sync_trackers("app")["sent"] == 2
+        assert [u.kind for u in tracker.published] == ["state", "tickets"]
+        assert [(t.run, t.key) for t in tracker.published[1].tickets] == [(feature, "F1")]
+        assert service.catalog.task(feature).link == "fake:F1"
+        service.sync_trackers("app")  # the feature is linked now: its state follows
+        tracker.published.clear()
+
+        run = service.engine.store.get(feature)
         service.mutate("resume", {"id": run.id, "version": run.version})
         complete(service, run.id, "SPEC: pay by card", "s1")
         tickets = [
@@ -129,15 +155,15 @@ def test_a_tracker_item_becomes_a_feature_and_its_progress_is_mirrored(tmp_path,
         # The tracker is down: nothing is lost and the order is kept.
         tracker.failures = 1
         first = service.sync_trackers("app")
-        assert first["recorded"] >= 3 and first["sent"] == 0 and tracker.published == []
+        assert first["recorded"] >= 2 and first["sent"] == 0 and tracker.published == []
         pending = service.catalog.records.pending_updates("app")
         assert pending[0].attempts == 1 and pending[0].error.startswith("ConnectionError")
         for entry in pending:
             service.catalog.records.settle_update(OutboxEntry(**{**entry.__dict__, "next_at": 0.0}))
         second = service.sync_trackers("app")
-        assert second["sent"] >= 3
+        assert second["sent"] >= 2
         kinds = [u.kind for u in tracker.published]
-        assert kinds[:1] == ["state"] and "specification" in kinds and "tickets" in kinds
+        assert "specification" in kinds and "tickets" in kinds
         mirrored = next(u for u in tracker.published if u.kind == "tickets")
         assert [(t.key, t.wave, t.depends_on) for t in mirrored.tickets] == [
             ("T1", 1, ()),

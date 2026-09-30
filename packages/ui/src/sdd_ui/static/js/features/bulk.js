@@ -2,10 +2,10 @@
  *
  * "Start" only allows a task to work; the queue takes it when a process slot
  * is free and its dependencies are accepted. A target narrows the tasks: the
- * board filter by default, one plan (its row on the board) or given task ids
- * (a task with its dependencies). The dialog lists prerequisites outside the
- * target and offers to start them too, because a plan whose tasks wait on
- * paused work elsewhere never moves. Starting the queue while nothing is
+ * board filter by default, or given task ids (a task with its dependencies,
+ * everything cut from a parent). The dialog lists prerequisites outside the
+ * target and offers to start them too, because tasks that wait on paused work
+ * elsewhere never move. Starting the queue while nothing is
  * resumed offers to resume the startable tasks first. */
 
 import * as api from "../core/api.js";
@@ -16,7 +16,7 @@ import {
   callsNeeded,
   currentProject,
   kindOf,
-  meta,
+  labelsOf,
   outsidePrerequisites,
   refresh,
   runs,
@@ -33,15 +33,15 @@ const resumable = (r) =>
   r.status !== "accepted" &&
   !r.active;
 
-/** What a bulk action applies to: explicit ids, one plan, or the board filter. */
+/** What a bulk action applies to: explicit ids, or the board filter. */
 function selection(target) {
   const filter = target
-    ? { kind: "", plan: target.plan || "", ids: target.ids || [] }
-    : { kind: boardFilter.kind, plan: boardFilter.plan, ids: [] };
+    ? { kind: "", label: "", ids: target.ids || [] }
+    : { kind: boardFilter.kind, label: boardFilter.label, ids: [] };
   const list = runs().filter(
     (run) =>
       (!filter.kind || kindOf(run) === filter.kind) &&
-      (!filter.plan || meta(run).plan === filter.plan) &&
+      (!filter.label || labelsOf(run).includes(filter.label)) &&
       (!filter.ids.length || filter.ids.includes(run.id)),
   );
   return { filter, list };
@@ -99,8 +99,6 @@ function dialogTitle(target, project) {
       task: task.length > 60 ? task.slice(0, 59) + "…" : task,
     });
   }
-  if (target?.plan)
-    return t("bulk.planTitle", { plan: target.title || target.plan });
   return t("bulk.title", { project: project.name });
 }
 
@@ -116,14 +114,14 @@ export function openBulkResume(reason = "", target = null) {
   const dependencies = h("div", { class: "wide" });
   const budget = h("ul", { class: "wide facts-list" });
   const scopeNote =
-    !target && (boardFilter.kind || boardFilter.plan)
+    !target && (boardFilter.kind || boardFilter.label)
       ? h(
           "p",
           { class: "wide attention tone-idle" },
           t("bulk.filtered", {
             filter: [
               boardFilter.kind && t("kind.plural." + boardFilter.kind),
-              boardFilter.plan,
+              boardFilter.label,
             ]
               .filter(Boolean)
               .join(" · "),
@@ -208,19 +206,7 @@ export function openBulkResume(reason = "", target = null) {
               o.startable
                 .slice(0, 5)
                 .map((r) =>
-                  h(
-                    "li",
-                    {},
-                    meta(r).plan
-                      ? h(
-                          "span",
-                          { class: "plan-chip" },
-                          t("card.plan", { id: meta(r).plan }),
-                        )
-                      : null,
-                    " ",
-                    titleOf(r),
-                  ),
+                  h("li", {}, titleOf(r)),
                 ),
               o.startable.length > 5
                 ? h(
@@ -360,7 +346,7 @@ export function openBulkResume(reason = "", target = null) {
   };
 }
 
-/** Pause the board filter's tasks, or one plan's (`target.plan`). */
+/** Pause the board filter's tasks, or the given ones (`target.ids`). */
 export async function pauseAll(target = null) {
   const project = currentProject();
   const { filter, list } = selection(target);
@@ -372,7 +358,7 @@ export async function pauseAll(target = null) {
       count: c.moving,
       scope: target?.title || project.name,
     }),
-    confirm: target ? t("plans.pause") : t("bulk.pause"),
+    confirm: t("bulk.pause"),
   });
   if (!ok) return;
   try {

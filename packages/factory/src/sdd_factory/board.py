@@ -4,7 +4,7 @@ Services read runs and task records, call a rule here, and apply what it decides
 no rule here reads or writes anything.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 
 from sdd_core import machine
@@ -15,7 +15,7 @@ from sdd_factory.model import TaskRecord
 
 @dataclass(frozen=True)
 class Replan:
-    """What rebuilding a board removes, and the features whose rows are planned again."""
+    """What rebuilding a board removes, and the parents whose rows are taken in again."""
 
     removed: frozenset[str]
     reopened: frozenset[str]
@@ -26,30 +26,31 @@ def replan(
     runs: Mapping[str, Run],
     edges: Iterable[tuple[str, str]],
     project: str,
-    plan: str = "",
+    sources: Collection[str] | None = None,
 ) -> Replan:
-    """Never-started plan work of `project` (or of one `plan`) to plan again.
+    """Never-started work of `project` that came from a source (from one of `sources`,
+    when given), to take in again.
 
-    Removed: a plan's never-started features and the tickets of an open plan feature;
-    never anything a kept run depends on. A feature losing tickets is reopened: its rows
-    are planned again, and its never-started reviews go with it.
+    Removed: never-started drafts and features, and the tickets of an open feature;
+    never anything a kept run depends on. A parent losing children is reopened: its
+    rows are taken in again, and its never-started reviews go with it.
     """
     edges = tuple(edges)
 
     def planned(item: TaskRecord) -> bool:
-        """A plan's feature, or a ticket of an open plan feature."""
-        if item.kind == "feature":
+        """A draft, a feature, or a ticket of a feature."""
+        if item.kind in ("draft", "feature"):
             return True
         parent = records.get(item.parent)
-        return item.kind == "ticket" and parent is not None and bool(parent.rows)
+        return item.kind == "ticket" and parent is not None and parent.kind == "feature"
 
     candidates = {
         key
         for key, item in records.items()
         if key in runs
         and item.project == project
-        and item.plan
-        and (not plan or item.plan == plan)
+        and item.source
+        and (sources is None or item.source in sources)
         and planned(item)
         and not item.reviews
         and not records.get(item.parent, item).closed
@@ -63,9 +64,9 @@ def replan(
     reopened = frozenset(
         item.parent
         for key, item in records.items()
-        if key in candidates and item.kind == "ticket" and item.parent not in candidates
+        if key in candidates and item.parent and item.parent not in candidates
     )
-    # A review that never started goes with its plan; nothing depends on reviews.
+    # A review that never started goes with its feature; nothing depends on reviews.
     candidates |= {
         key
         for key, item in records.items()
@@ -86,16 +87,33 @@ def review_trigger(run: Run, blocked_by_agent: bool) -> tuple[str, str] | None:
     return None
 
 
-def plan_tickets(records: Mapping[str, TaskRecord], runs: Iterable[str], plan: str) -> set[str]:
-    """The plan's existing tickets a new ticket may wait for (`after`): superseded work is
-    not carried on, so nothing may wait for it."""
+def source_tickets(records: Mapping[str, TaskRecord], runs: Iterable[str], source: str) -> set[str]:
+    """The existing tickets that came from `source`: what a brief lists."""
     existing = set(runs)
     return {
         key
         for key, item in records.items()
-        if key in existing
-        and plan
-        and item.kind == "ticket"
-        and item.plan == plan
-        and not item.superseded
+        if key in existing and source and item.kind == "ticket" and item.source == source
     }
+
+
+def live_tickets(records: Mapping[str, TaskRecord], runs: Iterable[str], source: str) -> set[str]:
+    """The tickets from `source` a new ticket may wait for (`after`): superseded work is
+    not carried on, so nothing may wait for it."""
+    found = source_tickets(records, runs, source)
+    return {key for key in found if not records[key].superseded}
+
+
+def below(records: Mapping[str, TaskRecord], root: str) -> set[str]:
+    """Everything cut from `root`, at any depth."""
+    children: dict[str, list[str]] = {}
+    for key, item in records.items():
+        children.setdefault(item.parent, []).append(key)
+    found: set[str] = set()
+    frontier = [root]
+    while frontier:
+        for child in children.get(frontier.pop(), ()):
+            if child not in found:
+                found.add(child)
+                frontier.append(child)
+    return found

@@ -8,6 +8,7 @@ from sdd_core.models import Json, Run
 from sdd_core.ports import Conflict
 from sdd_runtime.engine import Engine
 
+from sdd_factory.board import below
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.diagnostics import record
 from sdd_factory.journal import FlightLog
@@ -44,13 +45,13 @@ class WorkControl:
 
         `scope` "startable" resumes paused tasks whose dependencies are accepted;
         "all" resumes every paused task (the rest wait for their dependencies).
-        Optional `kind`, `plan` and `ids` narrow it to what the operator selected
-        (the board filter, a plan row, one task). `with_dependencies` also resumes
+        Optional `kind`, `label`, `under` and `ids` narrow it to what the operator
+        selected (the board filter, everything cut from one task, one task). `with_dependencies` also resumes
         the paused prerequisites of every unfinished selected task, transitively
         within the project, so work that waits on other work moves.
         Each task is commanded at its own current version; moved tasks are skipped.
-        A ticket its plan marks HITL resumes only when named in `ids`: a person takes
-        part in it, so it never starts as part of a whole plan.
+        A ticket its breakdown marks HITL resumes only when named in `ids`: a person
+        takes part in it, so it never starts as part of a whole feature.
         """
         if command not in ("resume", "pause"):
             raise ValueError("Bulk command must be resume or pause")
@@ -59,16 +60,19 @@ class WorkControl:
         if scope not in ("startable", "all"):
             raise ValueError("Unknown scope")
         kind = text(doc.get("kind", ""), "kind")
-        plan = text(doc.get("plan", ""), "plan")
+        label = text(doc.get("label", ""), "label")
+        under = text(doc.get("under", ""), "under")
         ids = {text(x, "id") for x in sequence(doc.get("ids", []))}
         with_dependencies = flag(doc.get("with_dependencies", False), "with_dependencies")
         records = self.catalog.tasks()
+        inside = below(records, under) if under else set()
 
         def wanted(run: Run) -> bool:
             item = records.get(run.id, TaskRecord())
             return (
                 (not kind or item.kind == TaskRecord.load({"kind": kind}).kind)
-                and (not plan or item.plan == plan)
+                and (not label or label in item.labels)
+                and (not under or run.id in inside)
                 and (not ids or run.id in ids)
             )
 
@@ -96,7 +100,8 @@ class WorkControl:
             project=project_id,
             scope=scope,
             task_kind=kind,
-            plan=plan,
+            label=label,
+            under=under,
             tasks=len(ids),
             with_dependencies=with_dependencies,
             count=len(done),
@@ -105,13 +110,11 @@ class WorkControl:
         return {"changed": list[Json](done), "skipped": skipped, "held": list[Json](held)}
 
     def hitl(self, records: dict[str, TaskRecord]) -> frozenset[str]:
-        """Tickets whose approved plan says a person must take part in them."""
+        """Tickets whose approved breakdown says a person must take part in them."""
         found: set[str] = set()
         for parent in {item.parent for item in records.values() if item.parent}:
-            breakdown = self.catalog.artifacts(parent).get("tickets")
-            if breakdown is not None:
-                places = ticket_places(breakdown.data)
-                found.update(run for run, place in places.items() if place["hitl"] is True)
+            places = ticket_places(list[Json](self.catalog.breakdown(parent)))
+            found.update(run for run, place in places.items() if place["hitl"] is True)
         return frozenset(found)
 
     def _prerequisites(self, selected: list[Run], project: set[str]) -> list[Run]:

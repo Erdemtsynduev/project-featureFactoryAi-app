@@ -50,6 +50,10 @@ REVIEW = Workflow(
     ),
 )
 TICKET = Workflow("ticket", "work", (check("work", "", (("done", "end"),)), Step("end", "finish")))
+DRAFT = Workflow(
+    "draft", "groom", (check("groom", "features", (("done", "end"),)), TICKET.steps[1])
+)
+SOURCE = "plans/110_RALLY_PLAN.md"
 
 
 @pytest.fixture
@@ -60,7 +64,12 @@ def service(tmp_path, monkeypatch):
     service.mutate("project", {"id": "app", "name": "App", "workspace": str(root)})
     digests = {
         name: service.engine.store.publish(flow)
-        for name, flow in (("plan-review", REVIEW), ("ticket", TICKET), ("feature", FEATURE))
+        for name, flow in (
+            ("plan-review", REVIEW),
+            ("ticket", TICKET),
+            ("feature", FEATURE),
+            ("draft", DRAFT),
+        )
     }
     monkeypatch.setattr(
         service.flows, "ensure", lambda name, project, language, repositories=(): digests[name]
@@ -418,45 +427,46 @@ def test_a_review_the_busy_plan_postponed_starts_once_the_plan_is_free(service):
     assert service.catalog.task(started).trigger == f"blocked:{api}:w1"
 
 
-def test_rebuilding_plans_again_what_never_started_and_keeps_started_work(service, tmp_path):
+def test_rebuilding_takes_in_again_what_never_started_and_keeps_started_work(service, tmp_path):
     root = tmp_path / "project"
     (root / "plans").mkdir()
-    (root / "plans" / "110_RALLY_PLAN.md").write_text(
+    (root / SOURCE).write_text(
         "# Rally\n\n- [ ] **FH-02** — Мосты.\n- [ ] **FH-03** — Кабина.\n", encoding="utf-8"
     )
     project = {"id": "app", "name": "App", "workspace": str(root), "plans_folder": "plans"}
     service.mutate("project", project)
     feature, admitted = approved_plan(service)
     catalog = service.catalog
-    catalog.update_task(feature, catalog.task(feature).changed(plan="110", rows=("FH-02",)))
+    sourced = catalog.task(feature).changed(kind="feature", source=SOURCE, rows=("FH-02",))
+    catalog.update_task(feature, sourced)
     for key in admitted:
-        catalog.update_task(key, catalog.task(key).changed(plan="110"))
+        catalog.update_task(key, catalog.task(key).changed(source=SOURCE))
     api = f"{feature}-api"
     service.mutate("resume", {"id": api, "version": service.engine.store.get(api).version})
     service.engine.dispatch(api, 13, "w1")
 
     review = review_of(service, feature)  # a review that never started
-    rebuilt = service.mutate("plans-rebuild", {"project": "app", "plan": "110"})
+    rebuilt = service.mutate("drafts-rebuild", {"project": "app", "item": "110"})
     assert rebuilt["removed"] == len(admitted) and rebuilt["reopened"] == [feature]
-    assert rebuilt["created"] == ["feature_110"]
+    assert rebuilt["created"] == ["draft_110"]
     runs = {r["id"] for r in service.state()["runs"]}
-    assert {feature, api, "feature_110"} <= runs and not {f"{feature}-ui", review} & runs
+    assert {feature, api, "draft_110"} <= runs and not {f"{feature}-ui", review} & runs
     closed, started = catalog.task(feature), catalog.task(api)
     assert closed.closed and (started.parent, started.origin) == ("", feature)
-    assert catalog.task("feature_110").rows == ("FH-02", "FH-03"), "its rows are planned again"
+    assert catalog.task("draft_110").rows == ("FH-02", "FH-03"), "its rows are taken in again"
     with service.engine.store.unit() as unit:
-        brief = unit.context("feature_110")
+        brief = unit.context("draft_110")
     assert f"{api} — Engine core (running)" in brief, "started work is not duplicated"
-    assert service.mutate("plans-sync", {"project": "app"})["created"] == []
-    assert service.reviews.request(feature, "blocked:api", "stuck") is None, "a closed plan"
+    assert service.mutate("drafts-import", {"project": "app"})["created"] == []
+    assert service.reviews.request(feature, "blocked:api", "stuck") is None, "a closed feature"
 
 
-def test_a_new_breakdown_waits_for_existing_tickets_of_its_plan_through_after(service):
+def test_a_new_breakdown_waits_for_existing_tickets_from_its_source_through_after(service):
     feature, _ = approved_plan(service)
     catalog = service.catalog
     for key, item in catalog.tasks().items():
         if key == feature or item.parent == feature:
-            catalog.update_task(key, item.changed(plan="110"))
+            catalog.update_task(key, item.changed(source=SOURCE))
     run = service.mutate(
         "create",
         {
@@ -466,7 +476,7 @@ def test_a_new_breakdown_waits_for_existing_tickets_of_its_plan_through_after(se
         },
     )
     again = run["id"]
-    catalog.update_task(again, catalog.task(again).changed(plan="110"))
+    catalog.update_task(again, catalog.task(again).changed(source=SOURCE))
     service.mutate("resume", {"id": again, "version": run["version"]})
     finish(service, again, "s2", reason="SPEC")
     api = f"{feature}-api"
@@ -476,7 +486,7 @@ def test_a_new_breakdown_waits_for_existing_tickets_of_its_plan_through_after(se
         return service.engine.dispatch(again, 12, "h" + attempt).version
 
     version = breakdown("t2", ["T1"])
-    with pytest.raises(ValueError, match="not a ticket of this plan.*cab: T1"):
+    with pytest.raises(ValueError, match="not a ticket from this source.*cab: T1"):
         service.mutate(
             "answer", {"id": again, "outcome": "approved", "answer": "", "version": version}
         )
@@ -498,7 +508,7 @@ def test_started_tickets_are_superseded_by_the_feature_that_plans_them_again(ser
     catalog, engine = service.catalog, service.engine
     for key, item in catalog.tasks().items():
         if key == feature or item.parent == feature:
-            catalog.update_task(key, item.changed(plan="110"))
+            catalog.update_task(key, item.changed(source=SOURCE))
     run = service.mutate(
         "create",
         {
@@ -508,7 +518,7 @@ def test_started_tickets_are_superseded_by_the_feature_that_plans_them_again(ser
         },
     )
     again = run["id"]
-    catalog.update_task(again, catalog.task(again).changed(plan="110", kind="feature"))
+    catalog.update_task(again, catalog.task(again).changed(source=SOURCE, kind="feature"))
     api, ui = f"{feature}-api", f"{feature}-ui"
     service.mutate("resume", {"id": api, "version": engine.store.get(api).version})
     engine.dispatch(api, 13, "w1")

@@ -115,7 +115,7 @@ export function titleOf(run) {
   return meta(run).title || run.id;
 }
 
-export const KINDS = ["feature", "ticket", "task"];
+export const KINDS = ["draft", "feature", "ticket", "task"];
 export function kindOf(run) {
   const kind = meta(run).kind;
   return KINDS.includes(kind) ? kind : "task";
@@ -134,19 +134,19 @@ export function childrenOf(run) {
   return (store.state?.runs || []).filter((r) => meta(r).parent === run.id);
 }
 
-/** The board's kind and plan filter; bulk actions apply to the same tasks. */
-export const boardFilter = { kind: "", plan: "" };
+/** The board's kind and label filter; bulk actions apply to the same tasks. */
+export const boardFilter = { kind: "", label: "" };
 
-/** A plan's catalog entry: title, file path and row counts from the file. */
-export function planInfo(id) {
-  const plans = store.state?.plans || {};
-  const list = plans[store.project] || Object.values(plans).flat();
-  return list.find((p) => p.id === id) || null;
+/** A task's labels: the short tags people filter and start work by. */
+export function labelsOf(run) {
+  return meta(run).labels || [];
 }
 
-/** A plan's display name: "105 · Physics assemblies", or its id. */
-export function planTitle(id) {
-  return planInfo(id)?.title || id;
+/** Every label the current project's tasks carry, sorted. */
+export function projectLabels() {
+  return [...new Set(runs().flatMap(labelsOf))].sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 /** Tasks this one waits for (every prerequisite, accepted or not). */

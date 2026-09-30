@@ -1,21 +1,23 @@
 # Trackers: work in, progress out
 
-A project's work comes from a **work source**. Without a tracker it is the numbered
-Markdown plans in the project's plans folder. With one (Linear today) the tracker
-supplies the work items **and** receives the factory's progress back:
+A project's drafts come from its **work sources**: the numbered Markdown files in its
+drafts folder, and the tracker it names (Linear today). Both may be set at once; a
+tracker is one more source. A tracker also receives the factory's progress back:
 
 | Direction | What | How |
 |---|---|---|
-| In | Work items → features; their open rows → the feature's scope | `WorkSource.items(workspace)` during **plans sync** |
+| In | Work items → drafts; their open rows → the draft's scope | `WorkSource.items(workspace)` during **drafts import** |
+| Out | The features cut from an item | issues in the project, or sub-issues, with "blocks" relations along dependencies |
 | Out | Approved specification | a comment (issue) or a project update (project) |
-| Out | Approved tickets | issues in the project, or sub-issues, with "blocks" relations along dependencies |
+| Out | Approved tickets | sub-issues of the feature's issue, with "blocks" relations along dependencies |
 | Out | States: queued, working, needs a person, blocked, done | issue workflow state; project update health |
 
 ## Contracts (`sdd_core.tracking`)
 
 - `WorkItem(key, title, body, rows, path="", link="", url="")` and `WorkRow(id, mark,
-  text, detail, link)`: neutral types every source returns. `key` names the feature
-  (`feature_<key>`); `link` is the tracker reference used to mirror it.
+  text, detail, link)`: neutral types every source returns. `key` names the draft
+  (`draft_<key>`); `link` is the tracker reference used to mirror it, and `source`
+  (the path, else the link) is what work cut from the item remembers.
 - `WorkSource.items(workspace) -> list[WorkItem]`: read-only.
 - `Tracker(WorkSource)`: adds `id` and `publish(TrackerUpdate) -> TrackerReceipt`.
   `publish` must be safe to repeat: delivery is retried until it succeeds.
@@ -40,8 +42,9 @@ goes first, and after 12 attempts it is given up with its error kept. Mirroring
 runs on its own thread, never under the queue's lock, so a slow tracker never
 holds up scheduling. The flight log records `tracker_published` and `tracker_failed`.
 
-Only items that came from the tracker (they carry a `link`) are mirrored. Tickets
-get their link when the tracker created them.
+Only items that came from the tracker (they carry a `link`) are mirrored. Features
+and tickets get their link when the tracker created them, so a draft imported from a
+Markdown file, or typed in, is not mirrored.
 
 ## Configuring a project
 
@@ -61,8 +64,8 @@ the environment variable that holds the token in `token_env`. Through the HTTP A
 | Setting | Meaning | Default |
 |---|---|---|
 | `team` | Team key, for example `ENG` | required |
-| `source` | `projects`: each unfinished project is a feature, its top-level issues the rows. `issues`: each unfinished issue with `label` is a feature, its sub-issues the rows | `projects` |
-| `label` | Label that marks feature issues (`source: issues`) | `factory` |
+| `source` | `projects`: each unfinished project is a draft, its top-level issues the rows. `issues`: each unfinished issue with `label` is a draft, its sub-issues the rows | `projects` |
+| `label` | Label that marks draft issues (`source: issues`) | `factory` |
 | `states` | Workflow state names per mirror state, e.g. `{"needs_person": "In Review", "blocked": "Blocked"}` | first state of the matching type |
 | `token_env` | Environment variable with a personal API key | `LINEAR_API_KEY` |
 | `language` | Language of the text shown in Linear | the project's |

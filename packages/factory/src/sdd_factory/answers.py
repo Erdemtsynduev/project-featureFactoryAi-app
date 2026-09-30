@@ -9,7 +9,7 @@ from collections.abc import Callable
 from sdd_core.codec import text
 from sdd_core.models import Json
 
-from sdd_factory.admission import TicketAdmission
+from sdd_factory.admission import BreakdownAdmission
 from sdd_factory.catalog import ProjectCatalog
 from sdd_factory.reviews import PlanReviews
 
@@ -18,7 +18,7 @@ type Policy = Callable[[dict[str, Json]], dict[str, object]]
 
 class Answers:
     def __init__(
-        self, catalog: ProjectCatalog, admission: TicketAdmission, reviews: PlanReviews
+        self, catalog: ProjectCatalog, admission: BreakdownAdmission, reviews: PlanReviews
     ) -> None:
         self.catalog, self.admission, self.reviews = catalog, admission, reviews
         self.policies: dict[str, Policy] = {"review": self._review, "work": admission.answer}

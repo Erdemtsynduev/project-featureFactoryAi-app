@@ -59,18 +59,32 @@ def test_dynamic_key_families_are_complete():
             "partial",
             "delivery_paused",
         ],
+        "attention.draft.": [
+            "delivered",
+            "children_need",
+            "delivery_waiting",
+            "partial",
+            "delivery_paused",
+        ],
         "tone.": ["done", "working", "waiting", "attention", "blocked", "idle"],
         "board.lane.": ["queue", "running", "needs", "done"],
         "board.empty.": ["queue", "running", "needs", "done"],
         "command.done.": ["resume", "start", "pause", "stop", "retry", "recover"],
-        "board.mode.": ["tree", "live", "plans"],
-        "board.modeHint.": ["tree", "live", "plans"],
+        "board.mode.": ["tree", "live"],
+        "board.modeHint.": ["tree", "live"],
+        "kind.": ["draft", "feature", "ticket", "task"],
+        "detail.breakdown.": ["tickets", "features"],
+        "log.": ["tickets", "features"],
+        "log.kind.": ["tickets_admitted", "features_admitted", "drafts_imported"],
         "flows.mode.": ["view", "edit"],
         "intent.": [
             f"{i}.{p}"
-            for i in ("feature", "main-flow", "ticket", "custom")
-            for p in ("title", "text", "path")
+            for i in ("draft", "feature", "main-flow", "ticket", "custom")
+            for p in ("title", "text", "path", "steps")
         ],
+        # A breakdown's texts are keyed by what it consists of.
+        "tickets.": ["preview", "creating", "approve", "created"],
+        "features.": ["preview", "creating", "approve", "created", "covers"],
         "help.": [
             f"{s}.{p}"
             for s in ("flows", "queue", "answers", "stuck", "limits", "usage", "memory", "log")
@@ -79,10 +93,18 @@ def test_dynamic_key_families_are_complete():
         "welcome.": [f"{s}.{p}" for s in ("agents", "project", "task") for p in ("title", "text")],
         "project.role.": ["lead", "analyst", "implementer", "reviewer"],
         "project.roleHint.": ["lead", "analyst", "implementer", "reviewer"],
-        "role.": ["replan"],
-        "step.": ["replan", "decide"],
+        "role.": ["replan", "groom"],
+        "step.": ["replan", "decide", "groom"],
         "nav.": ["overview", "board", "team", "flows", "agents", "usage", "journal"],
-        "template.": ["main-flow", "feature", "ticket", "approved-feature", "interview", "demo"],
+        "template.": [
+            "main-flow",
+            "draft",
+            "feature",
+            "ticket",
+            "approved-feature",
+            "interview",
+            "demo",
+        ],
     }
     missing = {prefix + name for prefix, names in families.items() for name in names} - russian
     assert missing == set()

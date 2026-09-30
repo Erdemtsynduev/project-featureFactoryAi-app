@@ -1,4 +1,4 @@
-"""Creating work: a task, a feature or a ticket from a person's request, and its title."""
+"""Creating work: a draft, a feature, a ticket or a task from a person's request, and its title."""
 
 import re
 import time
@@ -8,17 +8,21 @@ from pathlib import Path
 
 from sdd_core.codec import encode, sequence, text
 from sdd_core.models import Json
+from sdd_core.tracking import WorkItem
 from sdd_runtime.engine import Engine
 from sdd_runtime.files import revision
 from sdd_workflows.templates import question_example
 
-from sdd_factory.catalog import ProjectCatalog
+from sdd_factory.briefs import NO_WORK, draft_brief
+from sdd_factory.catalog import Artifact, ProjectCatalog
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import (
     INTENT_KIND,
     INTENTS,
     LANGUAGES,
+    PLANNING_KINDS,
+    PLANNING_SCOPE,
     TaskRecord,
     language_rule,
 )
@@ -76,25 +80,36 @@ class WorkCreation:
             definition = self.flows.ensure(intent, project_id, language)
         else:
             definition = text(doc.get("definition"), "definition")
+        kind = INTENT_KIND.get(intent, "task")
+        planning = kind in PLANNING_KINDS
+        words = text(doc.get("context", ""), "context")
+        # A typed draft is a work item like any other: the lead cuts features from it.
+        item = WorkItem(identifier, title or identifier, words, ()) if kind == "draft" else None
+        if item is not None:
+            words = draft_brief(item, NO_WORK, self.catalog.labels(project_id))
         run = self.engine.create(
             identifier,
             definition,
             workspace,
-            language_rule(language) + text(doc.get("context", ""), "context"),
-            revision(workspace),
+            language_rule(language) + words,
+            # Work that only plans owns no folder: edits elsewhere never invalidate it.
+            None if planning else revision(workspace),
             time.time(),
             tuple(text(x, "dependency") for x in sequence(doc.get("dependencies", []))),
+            (PLANNING_SCOPE,) if planning else (),
         )
         self.catalog.save_task(
             run.id,
             TaskRecord(
                 project=project_id,
                 title=title or run.id,
-                kind=INTENT_KIND.get(intent, "task"),
+                kind=kind,
                 language=language,
                 intent=intent,
             ),
         )
+        if item is not None:
+            self.catalog.save_artifact(Artifact(run.id, "draft", item.body, encode(item)))
         self.bind(run.id)
         self.log.record("task_created", run=run.id, intent=intent or "definition")
         return encode(run)

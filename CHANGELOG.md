@@ -13,6 +13,21 @@ digest they were created with.
 
 ## Unreleased
 
+- **Drafts replace plans.** A source item (a numbered Markdown file, a tracker item,
+  an idea typed under New task) is imported once as a **draft**. The lead cuts it
+  into features, a person approves the cut, and each feature gets its own
+  specification and tickets when it is started. A cut must cover every open row
+  exactly once. Features carry up to three **labels**; the board filters and starts
+  work by a label or by everything cut from one parent. A feature that depends on
+  another is planned after it and told its tickets. A project takes drafts from its
+  folder and its tracker together.
+  **Breaking:** the `plans-sync` and `plans-rebuild` actions are `drafts-import` and
+  `drafts-rebuild` (`item` instead of `plan`); `resume-many`/`pause-many` take `label`
+  and `under` instead of `plan`; the board state has no `plans`; the "By plan" view
+  is gone. Schema version 7 (backed up first) replaces `plan` on task records by
+  `source` and drops the plan summaries. Existing boards: **Пересобрать незапущенное**
+  turns never-started plan features into drafts and keeps started work.
+
 - **Roles are a project setting, and the lead is named.** A project names the agent
   profile of its lead, analyst, implementer and reviewer (`roles`); before, the profiles
   were fixed in the templates. The lead's review of a feature's tickets runs only when a

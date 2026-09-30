@@ -76,9 +76,7 @@ class BoardView:
         closed = frozenset(key for key, item in records.items() if item.closed)
         places: dict[str, dict[str, Json]] = {}
         for parent in children:
-            breakdown = self.catalog.artifacts(parent).get("tickets")
-            if breakdown is not None:
-                places.update(ticket_places(breakdown.data))
+            places.update(ticket_places(list[Json](self.catalog.breakdown(parent))))
         derived, progress = rollup(
             own, {key: tuple(value) for key, value in children.items()}, closed
         )
@@ -92,7 +90,7 @@ class BoardView:
                 "pending_dependencies": list(pending.get(run.id, ())),
                 "dependencies": prerequisites.get(run.id, []),
                 "progress": encode(progress[run.id]) if run.id in progress else None,
-                # Its place in the parent's plan: number, wave, what it follows.
+                # Its place in the parent's breakdown: number, wave, what it follows.
                 "ticket": places.get(run.id),
             }
             for run in reversed(runs)
@@ -133,7 +131,6 @@ class BoardView:
             "projects": self.catalog.projects(),
             "role_defaults": ROLE_DEFAULTS,
             "task_metadata": self.catalog.task_metadata(),
-            "plans": self.catalog.plans(),
             "locations": locations,
             "agent_discovery": self.catalog.discovery,
             "usage": self.catalog.usage(self.agents.profile_models()),

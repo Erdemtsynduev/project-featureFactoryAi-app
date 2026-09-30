@@ -59,4 +59,34 @@ def version_6(db: sqlite3.Connection) -> None:
     feature_kinds(db)
 
 
-DATA_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {6: version_6}
+def sources_instead_of_plans(db: sqlite3.Connection) -> None:
+    """Version 7: work remembers the source it came from, not a plan.
+
+    `plan` leaves every task record, whose `source` becomes the plan's file when it
+    names none. A closed feature covers no rows any more: they were planned again.
+    The plan summaries go; nothing follows a plan file after it is imported.
+    """
+    exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='ui_plans'").fetchone()
+    paths: dict[tuple[str, str], str] = {}
+    for project, identifier, document in (
+        db.execute("SELECT project,id,document FROM ui_plans").fetchall() if exists else ()
+    ):
+        summary = object_json(str(document))
+        paths[str(project), str(identifier)] = str(summary.get("path") or summary.get("url") or "")
+    for identifier, document in db.execute("SELECT id,document FROM ui_tasks").fetchall():
+        record = object_json(str(document))
+        before = canonical(record)
+        plan = str(record.pop("plan", ""))
+        if plan and not record.get("source"):
+            record["source"] = paths.get((str(record.get("project", "")), plan)) or "plan:" + plan
+        if record.get("closed") is True:
+            record.pop("rows", None)
+        if canonical(record) != before:
+            db.execute("UPDATE ui_tasks SET document=? WHERE id=?", (canonical(record), identifier))
+    db.execute("DROP TABLE IF EXISTS ui_plans")
+
+
+DATA_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    6: version_6,
+    7: sources_instead_of_plans,
+}

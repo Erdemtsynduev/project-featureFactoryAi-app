@@ -17,13 +17,13 @@ from sdd_core.codec import encode, text
 from sdd_core.models import Json
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Registry
-from sdd_factory.admission import TicketAdmission
+from sdd_factory.admission import BreakdownAdmission
 from sdd_factory.answers import Answers
 from sdd_factory.control import WorkControl
 from sdd_factory.documents import FeatureDocuments
+from sdd_factory.drafts import DraftIntake
 from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
-from sdd_factory.plans import PlanService
 from sdd_factory.reflow import FlowChanges
 from sdd_factory.reviews import PlanReviews
 from sdd_factory.supersession import Supersession
@@ -101,17 +101,17 @@ class WorkspaceService:
         self.control = WorkControl(self.engine, self.catalog, self.log)
         self.supersession = Supersession(self.engine, self.catalog, self.log)
         self.documents = FeatureDocuments(self.engine, self.catalog)
-        self.admission = TicketAdmission(
+        self.admission = BreakdownAdmission(
             self.engine, self.catalog, self.flows, self.log, self._bind, self.documents
         )
         # The lead revises a feature's tickets when one is stuck; approved proposals apply.
         self.reviews = PlanReviews(self.engine, self.catalog, self.flows, self.admission, self.log)
         self.answers = Answers(self.catalog, self.admission, self.reviews)
-        # A project's work comes from its plans folder or its tracker, which also
+        # A project's drafts come from its plans folder and its tracker, which also
         # receives the factory's progress through the outbox.
         self.sources = ProjectSources()
-        self.plans = PlanService(
-            self.engine, self.catalog, self.flows, self.log, self.sources.source
+        self.drafts = DraftIntake(
+            self.engine, self.catalog, self.flows, self.log, self.sources.sources
         )
         self.mirror = TrackerSync(self.catalog, self.sources.tracker, self.log)
         self.reflow = FlowChanges(self.engine, self.catalog, self.flows, self.log)
@@ -135,8 +135,8 @@ class WorkspaceService:
             "rename": self.creation.rename,
             "close": self.supersession.close,
             "supersede": self.supersession.supersede,
-            "plans-sync": self.plans.sync,
-            "plans-rebuild": self.plans.rebuild,
+            "drafts-import": self.drafts.collect,
+            "drafts-rebuild": self.drafts.rebuild,
             "flow-change": self.reflow.change,
             "flow-update": self.reflow.update,
             "flows-update": self.reflow.update_many,

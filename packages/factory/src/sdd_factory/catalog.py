@@ -1,12 +1,11 @@
-"""Projects, plans, task records and artifacts: the factory's metadata beside the engine.
+"""Projects, task records and artifacts: the factory's metadata beside the engine.
 
 Everything is stored through the `CatalogRecords` port as canonical JSON. Task
 records are typed (`TaskRecord`) and may be corrected after creation; artifacts
-(a feature's specification and ticket breakdown) are versioned by replacement.
+(a draft's source item, a specification, a breakdown) are versioned by replacement.
 """
 
 import re
-from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,12 +15,13 @@ from sdd_core.models import Json
 from sdd_core.ports import Conflict
 from sdd_runtime.lane_model import CommitMessages
 
-from sdd_factory.model import TaskRecord
+from sdd_factory.model import BREAKDOWNS, TaskRecord
 from sdd_factory.settings import roles_of
 from sdd_factory.trackers import tracker_settings
 
-# A feature's documents, and on a plan review the changes it applied.
-ARTIFACT_KINDS = ("specification", "tickets", "plan_changes")
+# A draft's source item, a feature's specification, a parent's approved breakdown,
+# and on a plan review the changes it applied.
+ARTIFACT_KINDS = ("draft", "specification", *BREAKDOWNS, "plan_changes")
 
 
 @dataclass(frozen=True)
@@ -107,9 +107,9 @@ class ProjectCatalog:
             "language": language,
             "checks": list[Json](checks),
             "repository_checks": repository_checks,
-            # Where the project keeps plan documents that become features; optional.
+            # Where the project keeps plan documents imported as drafts; optional.
             "plans_folder": plans_folder,
-            # Where work comes from and where progress is shown, when not Markdown plans.
+            # A tracker drafts also come from, and where progress is shown; optional.
             "tracker": tracker_settings(doc.get("tracker")),
             # Tickets run in their own worktree lane; conflicts go to an agent when autonomous.
             "isolation": doc.get("isolation", True) is not False,
@@ -126,20 +126,6 @@ class ProjectCatalog:
         self.records.save_project(identifier, canonical(result))
         return result
 
-    # Plans ---------------------------------------------------------------------
-
-    def save_plans(self, project: str, plans: list[dict[str, Json]]) -> None:
-        """Plan summaries shown on the board; they are metadata, not runs."""
-        self.records.save_plans(
-            project, tuple((text(plan.get("id"), "id"), canonical(plan)) for plan in plans)
-        )
-
-    def plans(self) -> dict[str, list[dict[str, Json]]]:
-        found: dict[str, list[dict[str, Json]]] = defaultdict(list)
-        for project, document in self.records.plans():
-            found[project].append(object_json(document))
-        return dict(found)
-
     # Task records ----------------------------------------------------------------
 
     def tasks(self) -> dict[str, TaskRecord]:
@@ -155,12 +141,21 @@ class ProjectCatalog:
         """Task records as served to the UI, in their current spelling."""
         return {identifier: record.document() for identifier, record in self.tasks().items()}
 
+    def labels(self, project: str) -> set[str]:
+        """The labels a project's tasks carry: a lead is told to reuse them."""
+        return {
+            label
+            for record in self.tasks().values()
+            if record.project == project
+            for label in record.labels
+        }
+
     def save_task(self, identifier: str, record: TaskRecord) -> None:
         """Record a new task; an existing record is kept (creation is idempotent)."""
         self.records.save_task(identifier, canonical(record.document()))
 
     def update_task(self, identifier: str, record: TaskRecord) -> None:
-        """Correct a task's record (title, plan, parent) after creation."""
+        """Correct a task's record (title, parent, labels) after creation."""
         self.records.update_task(identifier, canonical(record.document()))
 
     def close_task(self, identifier: str, detached: list[str]) -> list[str]:
@@ -189,3 +184,11 @@ class ProjectCatalog:
             value = object_json(document)
             found[kind] = Artifact(run, kind, str(value.get("content", "")), value.get("data"))
         return found
+
+    def breakdown(self, parent: str) -> list[dict[str, Json]]:
+        """The approved breakdown of `parent` as stored: each draft with the run it
+        became. Empty when nothing was approved."""
+        stored = self.artifacts(parent)
+        found = next((stored[kind] for kind in BREAKDOWNS if kind in stored), None)
+        items = found.data if found is not None and isinstance(found.data, list) else []
+        return [item for item in items if isinstance(item, dict)]

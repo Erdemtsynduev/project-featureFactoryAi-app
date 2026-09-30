@@ -1,13 +1,12 @@
-/* Work as a tree: a parent (a feature, or a ticket split further) is delivered
- * when all its children are. Its planning ends when the specification and the
- * tickets are approved; after that the server derives its state from the
- * children. A partly done parent is finished (resume the rest) or closed early:
+/* Work as a tree: a parent (a draft, a feature, or a ticket split further) is
+ * delivered when all its children are. Its planning ends when its breakdown is
+ * approved; after that the server derives its state from the children. A partly done parent is finished (resume the rest) or closed early:
  * its unfinished children become top-level work of their own. */
 
 import * as api from "../core/api.js";
 import { h } from "../core/dom.js";
 import { t } from "../core/i18n.js";
-import { childrenOf, refresh, titleOf } from "../core/store.js";
+import { childrenOf, kindOf, refresh, titleOf } from "../core/store.js";
 import { confirmDialog } from "../ui/dialog.js";
 import { attempt } from "../ui/toast.js";
 import { openBulkResume } from "./bulk.js";
@@ -63,7 +62,11 @@ export async function closeWork(run) {
 /** The one-click action of a parent waiting on paused children. */
 export function resumeChildrenButton(run) {
   const label =
-    run.attention?.code === "partial" ? "work.finish" : "work.startTickets";
+    run.attention?.code === "partial"
+      ? t("work.finish")
+      : kindOf(run) === "draft"
+        ? t("work.startFeatures")
+        : t("work.startTickets");
   return h(
     "button",
     {
@@ -71,7 +74,7 @@ export function resumeChildrenButton(run) {
       class: "primary-soft",
       onclick: (e) => (e.stopPropagation(), finishWork(run)),
     },
-    t(label),
+    label,
   );
 }
 

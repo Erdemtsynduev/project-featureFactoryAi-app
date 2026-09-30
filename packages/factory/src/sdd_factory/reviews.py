@@ -30,7 +30,7 @@ from sdd_core.ports import Conflict
 from sdd_core.tickets import draft_of, ordered, waits_for_known
 from sdd_runtime.engine import Engine
 
-from sdd_factory.admission import TicketAdmission, ticket_scope
+from sdd_factory.admission import BreakdownAdmission, ticket_scope
 from sdd_factory.board import review_trigger
 from sdd_factory.catalog import Artifact, ProjectCatalog
 from sdd_factory.flows import FlowLibrary
@@ -53,7 +53,7 @@ class PlanReviews:
         engine: Engine,
         catalog: ProjectCatalog,
         flows: FlowLibrary,
-        admission: TicketAdmission,
+        admission: BreakdownAdmission,
         log: FlightLog,
     ) -> None:
         self.engine, self.catalog, self.flows = engine, catalog, flows
@@ -63,8 +63,8 @@ class PlanReviews:
 
     def snapshot(self, parent: str) -> tuple[PlanSnapshot, dict[str, str]]:
         """The approved plan of `parent` with each ticket's state, and ticket -> run ids."""
-        drafts = ordered(draft_of(item) for item in self.admission.breakdown(parent))
-        runs = self.admission.ticket_runs(parent, drafts)
+        drafts = ordered(draft_of(item) for item in self.catalog.breakdown(parent))
+        runs = self.admission.child_runs(parent, drafts)
         states: dict[str, TicketState] = {}
         for draft in drafts:
             try:
@@ -119,7 +119,6 @@ class PlanReviews:
                 project=feature.project,
                 title=f"{feature.title or parent} · {TITLE.get(feature.language, TITLE['en'])}",
                 language=feature.language,
-                plan=feature.plan,
                 intent="plan-review",
                 reviews=parent,
                 trigger=trigger,
@@ -194,14 +193,14 @@ class PlanReviews:
         parent = self.catalog.task(review).reviews
         revision = self.revision(review)
         _, runs = self.snapshot(parent)
-        ids = {**runs, **self.admission.ticket_runs(parent, revision.create)}
+        ids = {**runs, **self.admission.child_runs(parent, revision.create)}
         briefed = revision.create + revision.update
-        definitions = self.admission.ticket_definitions(parent, briefed)
-        contexts = self.admission.ticket_contexts(parent, briefed, definitions)
+        definitions = self.admission.child_definitions(parent, briefed)
+        contexts = self.admission.child_contexts(parent, briefed, definitions)
         created = [
             ids[draft.id]
             for draft in revision.create
-            if self.admission.admit_ticket(
+            if self.admission.admit_child(
                 parent, draft, ids, definitions[draft.id], contexts[draft.id]
             )
         ]

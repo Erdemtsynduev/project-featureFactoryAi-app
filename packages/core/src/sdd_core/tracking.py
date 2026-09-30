@@ -1,8 +1,8 @@
-"""Work outside the engine: where features come from and where their progress is shown.
+"""Work outside the engine: where drafts come from and where their progress is shown.
 
 A **work source** supplies work items: numbered Markdown plans in the project, the
-projects of a Linear team, the milestones of a repository. Each item becomes one
-feature over its open rows. A **tracker** is a work source that also mirrors back
+projects of a Linear team, the milestones of a repository. Each item is imported once
+as a draft over its open rows; the factory then cuts it into features. A **tracker** is a work source that also mirrors back
 what the factory decided and did: the approved specification, the tickets it
 admitted and the state of each item. Adapters are trusted installed code chosen by
 explicit project configuration; they never run from workflow text.
@@ -45,11 +45,11 @@ class WorkRow:
 
 @dataclass(frozen=True)
 class WorkItem:
-    """A source of one feature: its scope is the open and partial rows.
+    """A source of one draft: its scope is the open and partial rows.
 
-    `key` is stable across reads and names the feature (`feature_<key>`); `body`
-    holds the goals, rules and findings people wrote. `path` is set when the item
-    is a file in the workspace, `link` and `url` when it lives in a tracker.
+    `key` is stable across reads and names the draft (`draft_<key>`); `body` holds
+    the goals, rules and findings people wrote. `path` is set when the item is a
+    file in the workspace, `link` and `url` when it lives in a tracker.
     """
 
     key: str
@@ -60,14 +60,11 @@ class WorkItem:
     link: str = ""
     url: str = ""
 
-    def counts(self) -> dict[str, int]:
-        return {
-            "requirements": len(self.rows),
-            "accepted": sum(row.mark == "x" for row in self.rows),
-            "partial": sum(row.mark == "~" for row in self.rows),
-            "open": sum(row.mark == " " for row in self.rows),
-            "rejected": sum(row.mark == "-" for row in self.rows),
-        }
+    @property
+    def source(self) -> str:
+        """Where the item came from: what work cut from it remembers, and what keeps
+        an import from taking the same rows twice."""
+        return self.path or self.link or self.url or self.key
 
 
 class WorkSource(Protocol):

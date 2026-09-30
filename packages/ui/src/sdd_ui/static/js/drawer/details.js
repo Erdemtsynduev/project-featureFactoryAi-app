@@ -1,5 +1,5 @@
 /* Details tab and the dependency panel: facts, parent and children, waits, the
- * feature's documents, memory, brief, lane, instruction and raw results. */
+ * parent's documents, memory, brief, lane, instruction and raw results. */
 
 import { h } from "../core/dom.js";
 import { money, t } from "../core/i18n.js";
@@ -14,12 +14,14 @@ import {
   store,
   titleOf,
 } from "../core/store.js";
+import { childrenNoun } from "../features/answers.js";
 import { openBulkResume } from "../features/bulk.js";
 import { flowSection } from "../features/flow-change.js";
 import { openTask } from "../features/shell.js";
 import {
   attentionText,
   kindLabel,
+  labelChips,
   statusPill,
   stepName,
 } from "../features/vocabulary.js";
@@ -62,7 +64,7 @@ export function waitingPanel(run) {
   );
 }
 
-/** A feature's specification (PRD) and ticket breakdown, as the factory keeps them. */
+/** A parent's specification (PRD) and breakdown, as the factory keeps them. */
 function documentsSection(detail) {
   const docs = detail.documents || {};
   if (!docs.specification && !docs.tickets?.length) return null;
@@ -96,7 +98,13 @@ function documentsSection(detail) {
       ? h(
           "details",
           { class: "spec-doc", open: true },
-          h("summary", {}, t("detail.breakdown", { count: docs.tickets.length })),
+          h(
+            "summary",
+            {},
+            t("detail.breakdown." + childrenNoun(detail.metadata?.kind), {
+              count: docs.tickets.length,
+            }),
+          ),
           h(
             "ol",
             { class: "ticket-list" },
@@ -159,7 +167,9 @@ export function details(detail, step) {
     ],
     [t("detail.cost"), money(store.state.usage?.per_run_usd?.[run.id])],
     [t("detail.workspace"), store.state.locations?.[run.id] || "—"],
-  ];
+    m.source ? [t("detail.source"), m.source] : null,
+    m.labels?.length ? [t("detail.labels"), labelChips(run)] : null,
+  ].filter(Boolean);
   return [
     section(
       "",

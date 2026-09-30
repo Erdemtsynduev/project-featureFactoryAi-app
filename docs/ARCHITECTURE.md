@@ -112,7 +112,7 @@ continued), visits and completed steps stay with the steps that remain, and a ga
 passed only where its step does the same work. Storage accepts a new workflow digest only as a
 recorded `workflow_migrated` transition, and the project's mandatory gates still hold.
 A person changes one task's flow from its drawer or moves unfinished work onto the current
-versions of its templates (`flows-update`); a plan lead may propose `reflow` for an idle
+versions of its templates (`flows-update`); the lead may propose `reflow` for an idle
 ticket, and a revised ticket moves to the flow of the repository it now changes.
 
 ## Scoped runs in multi-repository workspaces
@@ -373,28 +373,44 @@ core, runtime and workflows; the UI (`sdd-ui`) is an HTTP adapter and console ov
 
 | Module | Responsibility |
 |---|---|
-| `model` | The vocabulary, typed: `TaskRecord` (feature, ticket, task), intents, the language rule |
-| `catalog` | `ProjectCatalog`: projects (with checks per repository), plan summaries, task records (correctable), artifacts |
+| `model` | The vocabulary, typed: `TaskRecord` (draft, feature, ticket, task), `Children` (what a parent's breakdown becomes), intents, the language rule |
+| `catalog` | `ProjectCatalog`: projects (with checks per repository), task records (correctable), artifacts, a parent's stored breakdown |
 | `work` | `WorkCreation`: creating work by intent, renaming, the question demo |
 | `control` | `WorkControl`: operator commands, bulk start/pause with prerequisites, messages, recovery |
-| `admission` | `TicketAdmission`: approving a breakdown (one repository per ticket, `after`), admitting each ticket with its flow and brief, finishing an interrupted approval |
-| `documents` | `FeatureDocuments`: a feature's specification, the breakdown awaiting approval, exported documents |
+| `admission` | `BreakdownAdmission`: approving a breakdown (a draft's features cover every row once; a feature's tickets change one repository each, `after`), admitting each child with its flow and brief, finishing an interrupted approval |
+| `briefs` | What a draft's lead and a feature's analyst are given: pure text builders |
+| `documents` | `FeatureDocuments`: a parent's specification, the breakdown awaiting approval, exported documents |
 | `supersession` | `Supersession`: closing a parent early, handing work to the feature that plans it again |
 | `reviews` | `PlanReviews`: the plan lead's reviews, from trigger to applied revision |
 | `reflow` | `FlowChanges`: changing a task's flow, moving outdated work to current templates |
-| `plans` | A plan document becomes one feature; follow-up features for new rows; rebuilding a board from plans |
-| `sources` | `FeatureSource` port and `MarkdownPlans` (numbered `NNN_*.md` in the folder a project names) |
-| `flows` | Templates for a project (feature, ticket with its repositories' checks, main flow), validation, publication |
+| `drafts` | `DraftIntake`: a source item becomes one draft, once; follow-up drafts for new rows; taking in again what never started |
+| `sources` | `MarkdownPlans` (numbered `NNN_*.md` in the folder a project names); `trackers` lists every source a project names |
+| `flows` | Templates for a project (draft, feature, ticket with its repositories' checks, main flow), validation, publication |
 | `journal`, `diagnostics` | Append-only flight log and per-task incident records |
 
-A feature takes one path: a specification step (`produces: specification`), a
-breakdown step (`produces: tickets`, structured tickets validated by
-`sdd_core.memory.tickets_of`), the operator's approval, then its tickets run. Only the
-approval admits tickets: each ticket's workflow (with the checks of the repositories it
-owns) is published first, then the answer is applied, then each ticket becomes a paused
-dependent run scoped to its repositories. The specification and the tickets are stored
-as the feature's artifacts (`ui_artifacts`, schema version 4) and exported to
-`<data>/artifacts/<project>/<feature>/`; the project repository only receives code.
+Work is broken down twice by the same mechanism. A **draft** (an idea, a Markdown
+plan, a tracker item; imported once) has a `groom` step (`produces: features`): the
+lead cuts it into features, each covering some of the draft's rows. A **feature** has a
+specification step (`produces: specification`) and a breakdown step (`produces:
+tickets`). Both breakdowns are the same drafts (`sdd_core.tickets.TicketDraft`,
+validated by `drafts_of`), approved by the operator and admitted by
+`BreakdownAdmission`; `model.Children` says what a parent's children are (their kind,
+which names their flow template, and the result key) and the admission holds one brief
+builder per kind of child.
+Only the approval admits children: each child's workflow is published first, then the
+answer is applied, then each child becomes a paused dependent run. A ticket is scoped
+to the repositories it owns; a draft and a feature only plan and own no folder
+(`PLANNING_SCOPE`). The rules are pure (`sdd_core.tickets`): a draft's cut covers every
+open row exactly once (`covers_rows`), a ticket changes one repository
+(`one_repository`), and `after` names existing tickets from the same source.
+
+A task record remembers its `source` (the file or tracker item it came from; children
+keep it) and its `labels`. The source is provenance and keeps an import from taking
+the same rows twice; nothing else follows it. A feature that depends on another is
+told, once, which tickets that one planned, so its own tickets can wait for them.
+The cut, the specification and the tickets are stored as artifacts (`ui_artifacts`)
+and exported to `<data>/artifacts/<project>/<task>/`; the project repository only
+receives code.
 The engine finds a product by the step option that declares it (`Engine.outputs`),
 not by guessing from result shapes.
 

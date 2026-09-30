@@ -188,12 +188,10 @@ def test_catalog_port_contract(tmp_path):
         store.create(Run("task", store.publish(flow), "finish", "rev"), str(tmp_path), "", "c", 0)
     for records in (sqlite.catalog(), MemoryCatalog(memory)):
         records.save_project("p", '{"id":"p"}')
-        records.save_plans("p", (("b", "2"), ("a", "1")))
         records.save_task("task", "first")
         records.save_task("task", "second")
         records.save_preference("discovery", "[]")
         assert records.projects() == ('{"id":"p"}',)
-        assert records.plans() == (("p", "1"), ("p", "2"))
         assert records.tasks() == (("task", "first"),)
         assert records.preference("discovery") == "[]" and records.preference("x") is None
         assert records.agent_calls() == () and records.daily_dispatches(14) == ()

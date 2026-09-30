@@ -93,7 +93,7 @@ export function flowSection(detail) {
   );
 }
 
-/** Plans header: move the project's unfinished idle work onto current templates. */
+/** Board intake: move the project's unfinished idle work onto current templates. */
 export async function updateProjectFlows() {
   const project = store.project;
   const report = await attempt(() => api.post("flows-update", { project, dry: true }));

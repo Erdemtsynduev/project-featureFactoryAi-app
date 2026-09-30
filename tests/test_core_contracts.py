@@ -231,6 +231,45 @@ def test_a_feature_stored_as_a_requirement_is_rewritten_once(tmp_path):
     assert object_json(Store(path).catalog().tasks()[0][1])["kind"] == "feature"
 
 
+def test_work_stored_with_a_plan_remembers_its_source_instead(tmp_path):
+    import sqlite3
+
+    from sdd_storage.store import Store
+
+    path = tmp_path / "old.db"
+    store = Store(path)
+    flow = store.publish(Workflow("w", "s", (Step("s", "finish"),)))
+    records = {
+        "feature": {"kind": "feature", "plan": "110", "rows": ["R1"], "source": "plans/110.md"},
+        "closed": {"kind": "feature", "plan": "110", "rows": ["R1"], "closed": True},
+        "ticket": {"kind": "ticket", "plan": "110", "parent": "feature"},
+        "orphan": {"kind": "ticket", "plan": "999"},
+        "manual": {"kind": "task", "title": "T"},
+    }
+    for identifier, record in records.items():
+        store.create(Run(identifier, flow, "s", "v"), "w", "", "w", 0)
+        store.catalog().save_task(identifier, canonical({"project": "p", **record}))
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE ui_plans(project TEXT NOT NULL, id TEXT NOT NULL, "
+            "document TEXT NOT NULL, PRIMARY KEY(project, id))"
+        )
+        db.execute("""INSERT INTO ui_plans VALUES('p','110','{"path":"plans/110.md"}')""")
+        db.execute("UPDATE meta SET version=6")
+
+    stored = {key: object_json(doc) for key, doc in Store(path).catalog().tasks()}
+    assert all("plan" not in record for record in stored.values())
+    assert stored["ticket"]["source"] == "plans/110.md", "a ticket takes its plan's file"
+    assert stored["feature"]["source"] == "plans/110.md" and stored["feature"]["rows"] == ["R1"]
+    assert "rows" not in stored["closed"], "a closed feature's rows were planned again"
+    assert stored["orphan"]["source"] == "plan:999", "a plan whose file is unknown"
+    assert stored["manual"] == {"kind": "task", "project": "p", "title": "T"}
+    assert list(tmp_path.glob("old.db.pre-v7-*.bak")), "backed up before the rewrite"
+    with sqlite3.connect(path) as db:
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='ui_plans'").fetchone()
+    assert Store(path).catalog().tasks(), "opening again rewrites nothing"
+
+
 def test_rewording_a_reason_does_not_change_behaviour():
     limited = machine.block(Run("r", "d", "s", "v"), 1, "Calls used up", cause="call_limit")
     granted = machine.control(limited.state, "retry", 2, call_grant=3).state

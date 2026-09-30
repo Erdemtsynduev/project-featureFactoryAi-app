@@ -7,9 +7,9 @@ preamble (goals, rules such as "research first", findings) and rows
           continuation lines with acceptance and notes
 
 The mark is the plan author's status: `x` done, `~` partially done, a space for
-open and `-` for rejected. A plan is the source of one feature whose scope is its
-open and partial rows; research rows may add new rows to the file, so plans are
-re-read, never imported once. Parsing is pure; `MarkdownPlans` reads the folder.
+open and `-` for rejected. A plan is imported as a draft over its open and partial
+rows; research may add rows to the file, and the next import takes those as a
+follow-up draft. Parsing is pure; `MarkdownPlans` reads the folder.
 """
 
 import re

@@ -1,14 +1,14 @@
-"""A feature's documents: its specification, the breakdown awaiting approval, and the files written on approval."""
+"""A parent's documents: its specification, the breakdown awaiting approval, and the files written on approval."""
 
 from pathlib import Path
 
 from sdd_core.codec import encode
-from sdd_core.tickets import (
-    tickets_of,
-)
+from sdd_core.models import Json
+from sdd_core.tickets import drafts_of
 from sdd_runtime.engine import Engine
 
 from sdd_factory.catalog import ProjectCatalog
+from sdd_factory.model import BREAKDOWNS, children_of
 
 
 class FeatureDocuments:
@@ -26,14 +26,16 @@ class FeatureDocuments:
         return found.reason if found is not None else ""
 
     def preview(self, run_id: str) -> list[dict[str, object]]:
-        """Tickets awaiting approval on a feature, for the approval dialog."""
+        """The breakdown awaiting approval (a feature's tickets, a draft's features),
+        for the approval dialog."""
+        product = children_of(self.catalog.task(run_id).kind).product
         try:
-            return [encode(draft) for draft in tickets_of(self.engine.facts(run_id))]
+            return [encode(draft) for draft in drafts_of(self.engine.facts(run_id), product)]
         except ValueError:
             return []
 
     def artifacts_folder(self, run_id: str) -> Path:
-        """Where the factory exports a feature's documents for people to read."""
+        """Where the factory exports a parent's documents for people to read."""
         project = self.catalog.task(run_id).project or "_"
         return self.engine.store.path.parent / "artifacts" / project / run_id
 
@@ -45,18 +47,23 @@ class FeatureDocuments:
         if "specification" in stored:
             text = f"# {title}\n\n{stored['specification'].content}\n"
             (folder / "spec.md").write_text(text, encoding="utf-8")
-        if "tickets" in stored:
-            (folder / "tickets.md").write_text(stored["tickets"].content, encoding="utf-8")
+        for kind in BREAKDOWNS:
+            if kind in stored:
+                (folder / f"{kind}.md").write_text(stored[kind].content, encoding="utf-8")
 
     def documents(self, run_id: str) -> dict[str, object]:
-        """The feature's specification (PRD) and ticket breakdown: approved or in progress."""
+        """The parent's specification (PRD) and breakdown: approved or in progress."""
         stored = self.catalog.artifacts(run_id)
-        approved = "specification" in stored
-        specification = stored["specification"].content if approved else self.specification(run_id)
-        tickets = stored["tickets"].data if "tickets" in stored else self.preview(run_id)
+        approved = any(kind in stored for kind in BREAKDOWNS)
+        specification = (
+            stored["specification"].content
+            if "specification" in stored
+            else self.specification(run_id)
+        )
+        breakdown: Json = list[Json](self.catalog.breakdown(run_id))
         return {
             "specification": specification,
-            "tickets": tickets,
+            "tickets": breakdown if approved else self.preview(run_id),
             "approved": approved,
             "folder": str(self.artifacts_folder(run_id)) if approved else "",
         }

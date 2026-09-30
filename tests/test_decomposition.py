@@ -301,8 +301,9 @@ def test_bulk_resume_respects_dependencies_and_project(tmp_path):
         service.coordinator.close()
 
 
-def test_bulk_resume_by_plan_ids_and_dependencies(tmp_path):
-    """A plan starts as a unit: its filter is honoured and outside prerequisites can follow."""
+def test_bulk_resume_by_label_ids_and_dependencies(tmp_path):
+    """Labelled work starts as a unit: its filter is honoured and outside prerequisites can
+    follow."""
     service = WorkspaceService(tmp_path / "ui.db")
     try:
         root = tmp_path / "app"
@@ -311,13 +312,13 @@ def test_bulk_resume_by_plan_ids_and_dependencies(tmp_path):
         flow = Workflow("empty", "done", (Step("done", "finish"),))
         definition = service.engine.store.publish(flow)
 
-        def create(identifier, plan, dependencies=()):
+        def create(identifier, label, dependencies=()):
             service.engine.create(
                 identifier, definition, root, "", "rev", time.time(), tuple(dependencies)
             )
             service.catalog.save_task(
                 identifier,
-                TaskRecord(project="app", kind="ticket", title=identifier, plan=plan),
+                TaskRecord(project="app", kind="ticket", title=identifier, labels=(label,)),
             )
 
         create("root", "p0")
@@ -328,14 +329,14 @@ def test_bulk_resume_by_plan_ids_and_dependencies(tmp_path):
         state = {r["id"]: r for r in service.state()["runs"]}
         assert state["second"]["dependencies"] == ["first"]
 
-        result = service.mutate("resume-many", {"project": "app", "scope": "all", "plan": "p1"})
+        result = service.mutate("resume-many", {"project": "app", "scope": "all", "label": "p1"})
         assert sorted(result["changed"]) == ["first", "second"]
         assert service.engine.store.get("base").paused
-        service.mutate("pause-many", {"project": "app", "plan": "p1"})
+        service.mutate("pause-many", {"project": "app", "label": "p1"})
 
         result = service.mutate(
             "resume-many",
-            {"project": "app", "scope": "all", "plan": "p1", "with_dependencies": True},
+            {"project": "app", "scope": "all", "label": "p1", "with_dependencies": True},
         )
         assert sorted(result["changed"]) == ["base", "first", "root", "second"]
         assert service.engine.store.get("other").paused

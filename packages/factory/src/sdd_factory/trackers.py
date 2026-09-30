@@ -1,8 +1,8 @@
-"""Choose each project's work source and tracker from its settings.
+"""Choose each project's work sources and tracker from its settings.
 
-A project without a tracker reads numbered Markdown plans from its plans folder. A
-project that names one (`{"kind": "linear", ...}`) reads its work items from that
-tracker and mirrors the factory's progress back to it. Trackers are trusted
+A project's drafts come from every source it names: numbered Markdown plans in its
+plans folder, and the tracker it names (`{"kind": "linear", ...}`), which also gets
+the factory's progress mirrored back. Trackers are trusted
 installed code registered under the `sdd.trackers` entry-point group; a project can
 only choose among installed ones, never import code by name. Settings never hold
 secrets: an adapter reads its token from the environment variable the settings name.
@@ -79,9 +79,18 @@ class ProjectSources:
             self._trackers[key] = tracker
         return self._trackers[key]
 
-    def source(self, project: dict[str, Json]) -> WorkSource:
-        """The project's tracker when it names one, else its Markdown plans folder."""
+    def sources(self, project: dict[str, Json]) -> list[WorkSource]:
+        """Every source the project names: its Markdown plans folder and its tracker."""
+        found: list[WorkSource] = []
+        folder = str(project.get("plans_folder", ""))
+        if folder:
+            found.append(MarkdownPlans(folder))
         tracker = self.tracker(project)
         if tracker is not None:
-            return tracker
-        return MarkdownPlans(str(project.get("plans_folder", "")))
+            found.append(tracker)
+        if not found:
+            raise ValueError(
+                "The project has no source of drafts; set a plans folder or a tracker in "
+                "its settings"
+            )
+        return found

@@ -1,47 +1,49 @@
-/* Board: the project's work as a tree, as status columns or as plan rows.
+/* Board: the project's work as a tree or as status columns.
  *
- * "Tree" (the default) shows work as it is broken down: features hold their
- * tickets, a ticket split further holds its own, and a parent is done only when
+ * "Tree" (the default) shows work as it is broken down: a draft holds the
+ * features cut from it, a feature its tickets, and a parent is done only when
  * its children are. Focus chips narrow it to one lane (what needs you, what
  * runs). "Kanban" shows what does work itself in columns that follow the
  * server's attention reason: Queue (paused, waiting), In progress, Needs you
  * (answers, blockers) and Done; a parent past its planning is left to its
- * tickets there. "By plan" shows one collapsible row per plan with the same
- * columns inside and the plan's own Start and Pause. Columns page by PAGE
- * cards. Dragging between Queue and In progress pauses or resumes; nothing can
- * be dragged into Done. */
+ * children there. A label narrows both views, and the bulk actions with them.
+ * Columns page by PAGE cards. Dragging between Queue and In progress pauses or
+ * resumes; nothing can be dragged into Done. */
 
 import { h, memo, replace } from "../core/dom.js";
 import { t } from "../core/i18n.js";
 import { remember } from "../core/storage.js";
 import {
   boardFilter,
+  currentProject,
   hasScope,
+  labelsOf,
   laneOf,
   meta,
   needsElsewhere,
-  planTitle,
+  projectLabels,
   runs,
   selectProject,
   store,
 } from "../core/store.js";
 import { openBulkResume, pauseAll } from "./bulk.js";
 import { lanes } from "../board/cards.js";
-import { plansView } from "../board/plans.js";
-import { filters, LANES, MODES, openPlans, shown, view } from "../board/state.js";
+import { intakePanel } from "../board/intake.js";
+import { filters, LANES, MODES, shown, view } from "../board/state.js";
 import { laneCounts, treeView } from "../board/tree.js";
 import { welcome } from "./onboarding.js";
-import { go, registerView } from "./shell.js";
+import { registerView } from "./shell.js";
 
 function syncBoardFilter() {
   boardFilter.kind = "";
-  boardFilter.plan = filters.plan;
+  boardFilter.label = filters.label;
 }
 syncBoardFilter();
 let root = null;
 let body = null;
 let toolbar = null;
 let notice = null;
+let intake = null;
 const render = memo();
 
 function setFilter(key, value, storageKey) {
@@ -52,34 +54,11 @@ function setFilter(key, value, storageKey) {
   draw(true);
 }
 
-/** Show one plan's row on the board (from the overview's plan list). */
-export function showPlan(id) {
-  filters.mode = "plans";
-  filters.plan = "";
-  shown.clear();
-  syncBoardFilter();
-  remember("board-mode", "plans");
-  remember("plan-filter", "");
-  if (id) {
-    openPlans.add(id);
-    remember("open-plans", [...openPlans]);
-  }
-  go("board");
-  draw(true);
-  if (id)
-    requestAnimationFrame(() =>
-      root
-        ?.querySelector(`.plan[data-plan="${CSS.escape(id)}"]`)
-        ?.scrollIntoView({ block: "start" }),
-    );
-}
-
-/** The plan and search filters every view applies. */
+/** The label and search filters every view applies. */
 function matches(run) {
-  const m = meta(run);
   return (
-    (!filters.plan || m.plan === filters.plan) &&
-    [run.id, m.title, run.reason]
+    (!filters.label || labelsOf(run).includes(filters.label)) &&
+    [run.id, meta(run).title, run.reason]
       .join(" ")
       .toLowerCase()
       .includes(filters.query.toLowerCase())
@@ -96,15 +75,18 @@ function inFocus(run) {
   );
 }
 
-/** A parent past its planning moves through its tickets, not by itself. */
+/** A parent past its planning moves through its children, not by itself. */
 const delivers = (run) => !!run.progress && run.status === "accepted";
 
 /* Toolbar -------------------------------------------------------------------- */
 
 function renderToolbar(all) {
-  const plans = [
-    ...new Set(all.map((r) => meta(r).plan).filter(Boolean)),
-  ].sort();
+  const labels = projectLabels();
+  // A label that left the project no longer narrows anything.
+  if (filters.label && !labels.includes(filters.label)) {
+    filters.label = "";
+    syncBoardFilter();
+  }
   const segmented = h(
     "div",
     { class: "segmented", role: "group", "aria-label": t("board.view") },
@@ -165,17 +147,17 @@ function renderToolbar(all) {
     "aria-label": t("board.search"),
     oninput: (e) => setFilter("query", e.target.value, "task-search"),
   });
-  const plan = plans.length
+  const label = labels.length
     ? h(
         "select",
         {
-          id: "plan-filter",
-          "aria-label": t("board.plan"),
-          onchange: (e) => setFilter("plan", e.target.value, "plan-filter"),
+          id: "label-filter",
+          "aria-label": t("board.label"),
+          onchange: (e) => setFilter("label", e.target.value, "label-filter"),
         },
-        h("option", { value: "" }, t("board.allPlans")),
-        plans.map((p) =>
-          h("option", { value: p, selected: p === filters.plan }, planTitle(p)),
+        h("option", { value: "" }, t("board.allLabels")),
+        labels.map((name) =>
+          h("option", { value: name, selected: name === filters.label }, name),
         ),
       )
     : null;
@@ -199,7 +181,7 @@ function renderToolbar(all) {
     segmented,
     chips,
     search,
-    plan,
+    label,
     h("span", { class: "spacer" }),
     bulk,
   );
@@ -259,7 +241,7 @@ function draw(force = false) {
     store.state.settings,
     store.state.profile_config,
     store.project,
-    store.state.plans,
+    currentProject(),
     needsElsewhere(),
     window.ffaiPreferences.language,
   ];
@@ -268,25 +250,29 @@ function draw(force = false) {
     if (!toolbar || !root.contains(toolbar)) {
       toolbar = h("div", { class: "board-toolbar" });
       notice = h("div", { class: "board-notice" });
+      intake = h("div", { class: "board-intake" });
       body = h("div", { id: "board", class: "board" });
-      replace(root, toolbar, notice, body);
+      replace(root, toolbar, notice, intake, body);
     }
     renderToolbar(all);
     renderNotice();
-    body.classList.toggle("as-plans", filters.mode === "plans");
+    // A project is what has sources; loose tasks have nothing to import.
+    replace(intake, currentProject() ? intakePanel() : null);
     body.classList.toggle("as-tree", filters.mode === "tree");
-    const working = items.filter((r) => !delivers(r));
-    if (filters.mode === "plans") replace(body, plansView(working));
-    else if (filters.mode === "tree")
+    if (filters.mode === "tree")
       replace(
         body,
         treeView(
           all,
           inFocus,
-          !!(filters.query || filters.plan || filters.focus || filters.hideDone),
+          !!(filters.query || filters.label || filters.focus || filters.hideDone),
         ),
       );
-    else replace(body, lanes(working, ""));
+    else
+      replace(
+        body,
+        lanes(items.filter((r) => !delivers(r))),
+      );
   });
 }
 

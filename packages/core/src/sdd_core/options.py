@@ -27,7 +27,7 @@ TEXT_OPTIONS = (
 )
 # Options that are lists of text.
 LIST_OPTIONS = ("argv", "tools")
-PRODUCTS = ("", "specification", "tickets", "plan_changes")
+PRODUCTS = ("", "specification", "tickets", "features", "plan_changes")
 AUTO_ANSWERS = ("", "recommended")
 
 
@@ -41,7 +41,8 @@ def _text(value: Json, name: str) -> str:
 class StepOptions:
     # Planning calls count against the separate planning budgets.
     purpose: str = ""
-    # What the step's result is for the factory: a specification or a ticket breakdown.
+    # What the step's result is for the factory: a specification, a breakdown into
+    # tickets or features, or changes to a breakdown.
     produces: str = ""
     # The read-only agent step that reconciles this step after an interruption.
     recovery_step: str = ""

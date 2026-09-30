@@ -1,6 +1,6 @@
-"""Where features come from: numbered Markdown plans, or a tracker (`sdd.trackers`).
+"""Where drafts come from: numbered Markdown plans and a tracker (`sdd.trackers`).
 
-A project names its source in its settings. The factory reads work items through
+A project names its sources in its settings. The factory reads work items through
 `sdd_core.tracking.WorkSource`; a source that is also a `Tracker` receives the
 factory's progress through the tracker outbox.
 """

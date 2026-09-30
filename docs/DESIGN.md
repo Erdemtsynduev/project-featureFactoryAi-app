@@ -202,3 +202,38 @@ Open items:
   of roles with their current task is needed for large flows.
 - Dark theme contrast of muted text on raised surfaces should be measured, not
   judged by eye.
+
+## Review 6, September 30 (drafts instead of plans)
+
+One plan had become one feature: plan 110 (43 rows) produced one specification, 81
+tickets, a 60,000-character brief and an approval nobody could read. The plan stayed a
+lasting entity after its import (sync, rebuild, progress by the file's checkboxes, a
+"By plan" view, a `plan` on every task), which neither mobile-sdd-factory nor AI Hero
+has. Its lead was unnamed, fixed to one profile, and reviewed a breakdown right after a
+person approved it.
+
+1. **A plan is a draft.** A source item is imported once; nothing follows the file
+   afterwards. The lead cuts a draft into features and a person approves the cut, which
+   must cover every open row exactly once. Each feature gets its own specification and
+   about three to eight tickets, planned when the person starts it.
+2. **One breakdown mechanism.** A draft's features and a feature's tickets are the same
+   drafts, the same approval and the same admission; a table says what a parent's
+   children are. The tree, the progress roll-up and the tracker mirror did not change.
+3. **Labels and one relation.** Features carry up to three labels; the board filters and
+   starts work by them. `depends_on` between features orders their planning and tells a
+   waiting feature the tickets it may wait for.
+4. **Sources are plural.** A project takes drafts from its Markdown folder, its tracker,
+   or both, and from what a person types.
+5. **The lead is a role.** A project names the profile of its lead, analyst, implementer
+   and reviewer. The lead cuts drafts and revises tickets when one is stuck; the review
+   after an approval is gone.
+6. **The "By plan" view is gone.** The tree shows drafts with their features; a label
+   filter and "everything cut from this parent" replace starting a plan.
+7. **Planning owns no folder**, so it never waits for stopped tickets and edits in the
+   workspace never invalidate it.
+
+Open items:
+
+- The Linear adapter reads items and mirrors children through a recorded conversation;
+  it is still not qualified against a live workspace.
+- A draft's rows are not written back to its source when their features are delivered.

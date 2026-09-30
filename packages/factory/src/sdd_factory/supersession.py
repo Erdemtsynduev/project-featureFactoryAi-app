@@ -51,8 +51,8 @@ class Supersession:
         identifiers = strings(doc.get("ids"), "id")
         for identifier in identifiers:
             item, run = self.catalog.task(identifier), self.engine.store.get(identifier)
-            if item.plan != successor.plan or item.reviews:
-                raise ValueError(f"{identifier} is not work of the plan {by} plans")
+            if item.source != successor.source or item.reviews:
+                raise ValueError(f"{identifier} is not work from the source {by} plans")
             if run.status == "accepted" or run.active is not None:
                 raise Conflict(f"{identifier} is accepted or has a live attempt")
         superseded = [

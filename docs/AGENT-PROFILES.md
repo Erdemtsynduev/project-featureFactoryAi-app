@@ -83,7 +83,7 @@ The bundled flows name four roles, and each project says which profile plays eac
 
 | Role | Steps | Default profile |
 |---|---|---|
-| `lead` | revising a feature's tickets when one is stuck (`plan-review`) | `codex` |
+| `lead` | cutting a draft into features (`groom`); revising a feature's tickets when one is stuck (`plan-review`) | `codex` |
 | `analyst` | specification and ticket breakdown | `codex` |
 | `implementer` | implementation, repair, conflict resolution | `claude` |
 | `reviewer` | review, diagnosis, reconciliation | `codex` |

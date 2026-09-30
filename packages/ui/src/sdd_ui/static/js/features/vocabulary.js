@@ -3,9 +3,10 @@
 
 import { h } from "../core/dom.js";
 import { formatTime, relativeTime, t } from "../core/i18n.js";
-import { run as runById, titleOf } from "../core/store.js";
+import { kindOf, labelsOf, run as runById, titleOf } from "../core/store.js";
 
 const KNOWN_STEPS = new Set([
+  "groom",
   "spec",
   "tickets",
   "implement",
@@ -55,7 +56,14 @@ export function kindLabel(kind) {
   return t("kind." + kind);
 }
 
-export const KIND_GLYPH = { feature: "◇", ticket: "▣", task: "○" };
+export const KIND_GLYPH = { draft: "✎", feature: "◇", ticket: "▣", task: "○" };
+
+/** A task's labels as chips; every view shows them through this one helper. */
+export function labelChips(run) {
+  return labelsOf(run).map((label) =>
+    h("span", { class: "label-chip", title: t("label.hint") }, label),
+  );
+}
 
 /** The server's attention reason as text, e.g. "Paused — press Resume". */
 export function attentionText(run) {
@@ -68,7 +76,10 @@ export function attentionText(run) {
   if (a.code === "dependencies")
     params.detail = namesOf(run.pending_dependencies || []);
   if (a.code === "paths_held") params.detail = namesOf(params.detail.split(", "));
-  return t("attention." + (a.code || "queued"), params);
+  const code = a.code || "queued";
+  // A kind may word a reason its own way (a draft's children are features).
+  const own = `attention.${kindOf(run)}.${code}`;
+  return t(t(own) === own ? "attention." + code : own, params);
 }
 
 /** "ASM-12 — …, ASM-15 — … и ещё 2": titles instead of raw ids. */
@@ -84,8 +95,8 @@ function namesOf(ids) {
   return names.join(", ") + more;
 }
 
-/** A ticket's place in its parent's plan: "T15 · wave 3", a HITL mark and, while
- * it still waits, which tickets must be accepted first. Null for other work. */
+/** A child's place in its parent's breakdown: "T15 · wave 3", a HITL mark and,
+ * while it still waits, what must be accepted first. Null for other work. */
 export function ticketPlace(run) {
   const place = run.ticket;
   if (!place) return null;
@@ -115,7 +126,7 @@ export function ticketPlace(run) {
   );
 }
 
-/** Tickets of one parent in plan order: by wave, then by their number. */
+/** Children of one parent in breakdown order: by wave, then by their number. */
 export function planOrder(a, b) {
   const pa = a.ticket;
   const pb = b.ticket;

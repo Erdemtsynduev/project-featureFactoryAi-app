@@ -22,6 +22,7 @@ from sdd_workflows.templates import (
     approved_feature,
     capabilities,
     command_demo,
+    draft,
     feature,
     interview,
     localized,
@@ -50,6 +51,7 @@ class FlowLibrary:
         self.handlers, self.project = handlers, project
         # One builder per template: a new template is a new row.
         self.builders: dict[str, Callable[[ProjectSettings, tuple[str, ...]], Workflow]] = {
+            "draft": lambda settings, repositories: draft(settings.roles),
             "feature": self._feature,
             "main-flow": lambda settings, repositories: main_flow(settings.roles),
             "ticket": self._ticket,

@@ -1,4 +1,4 @@
-"""Port for application-owned metadata beside the engine: projects, plans, task labels.
+"""Port for application-owned metadata beside the engine: projects, task records.
 
 Documents are canonical JSON owned by the application; the backend stores them
 opaquely and reports measured agent calls without exposing its schema.
@@ -43,14 +43,6 @@ class OutboxEntry:
 class CatalogRecords(Protocol):
     def projects(self) -> tuple[str, ...]: ...
     def save_project(self, identifier: str, document: str) -> None: ...
-    def plans(self) -> tuple[tuple[str, str], ...]:
-        """(project, document) pairs ordered by project and plan id."""
-        ...
-
-    def save_plans(self, project: str, plans: tuple[tuple[str, str], ...]) -> None:
-        """Upsert (plan id, document) pairs of one project atomically."""
-        ...
-
     def tasks(self) -> tuple[tuple[str, str], ...]: ...
     def save_task(self, identifier: str, document: str) -> None:
         """Create a task record; an existing record is kept (creation is idempotent)."""

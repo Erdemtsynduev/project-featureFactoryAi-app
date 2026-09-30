@@ -1,19 +1,20 @@
-/* Tree: work as it is broken down, like sub-issues. A feature row holds its
- * tickets, a ticket split further holds its own; each row says where the work
- * stands and offers the action that moves it. A parent shows its children's
+/* Tree: work as it is broken down, like sub-issues. A draft row holds the
+ * features cut from it, a feature its tickets and the lead's reviews of them; each
+ * row says where the work stands and offers the action that moves it. A parent shows its children's
  * progress. Filters keep the ancestors of a match, dimmed, so a ticket is never
  * shown out of context. Rows that still need something start unfolded. */
 
 import { h } from "../core/dom.js";
 import { t } from "../core/i18n.js";
 import { remember } from "../core/storage.js";
-import { kindOf, laneOf, meta, planTitle, stepOf, titleOf } from "../core/store.js";
+import { kindOf, laneOf, meta, stepOf, titleOf } from "../core/store.js";
 import { primaryAction } from "../features/commands.js";
 import { openTask } from "../features/shell.js";
 import {
   attentionText,
   KIND_GLYPH,
   kindLabel,
+  labelChips,
   planOrder,
   stepName,
   ticketPlace,
@@ -24,14 +25,15 @@ import { folds, LANES, PAGE, shown, view } from "./state.js";
 
 const ORDER = ["needs", "running", "queue", "done"];
 
-/** Children by parent within `all`: tickets in plan order (wave, then number),
- * other work oldest first (the order it was cut in). */
+/** Children by parent within `all`: a breakdown's children in its order (wave, then
+ * number), other work oldest first (the order it was cut in). A review of a
+ * feature's tickets sits under that feature. */
 function hierarchy(all) {
   const ids = new Set(all.map((r) => r.id));
   const children = new Map();
   const roots = [];
   for (const run of [...all].reverse()) {
-    const parent = meta(run).parent;
+    const parent = meta(run).parent || meta(run).reviews;
     if (parent && ids.has(parent) && parent !== run.id) {
       if (!children.has(parent)) children.set(parent, []);
       children.get(parent).push(run);
@@ -123,7 +125,6 @@ function toggle(run, open) {
 
 function row(run, depth, count, open, context) {
   const kind = kindOf(run);
-  const m = meta(run);
   const step = stepOf(run);
   const tone = run.attention?.tone || "idle";
   // Accepted work and a parent past its planning need no step: the reason says it.
@@ -179,13 +180,8 @@ function row(run, depth, count, open, context) {
         "span",
         { class: "tree-title", title: titleOf(run) },
         titleOf(run),
-        m.plan && depth === 0
-          ? h(
-              "span",
-              { class: "plan-chip", title: planTitle(m.plan) },
-              t("card.plan", { id: m.plan }),
-            )
-          : null,
+        // A ticket carries its feature's labels: showing them again is noise.
+        kind === "ticket" ? null : labelChips(run),
       ),
       ticketPlace(run),
       h(

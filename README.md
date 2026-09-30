@@ -192,7 +192,7 @@ verified evidence; a model's success claim alone is insufficient.
 | `sdd-runtime` | Application service, coordinator, executors, supervisor and CLI |
 | `sdd-providers` | CLI protocols, discovery and model catalogs |
 | `sdd-workflows` | Approved feature, full main flow and interview templates |
-| `sdd-factory` | Application layer: features, specifications, tickets, plans, artifacts |
+| `sdd-factory` | Application layer: drafts, features, specifications, tickets, artifacts |
 | `sdd-ui` | Optional local visual workspace over the factory |
 | `sdd-usage` | Dated model rate cards and API-equivalent cost of measured tokens |
 | `sdd-trackers` | Tracker adapters (Linear): work items in, specification, tickets and states out |

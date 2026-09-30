@@ -30,12 +30,13 @@ function describe(entry) {
     entry.error,
     entry.outcome,
     entry.count !== undefined && t("log.count", { count: entry.count }),
-    Array.isArray(entry.tickets) &&
-      entry.tickets.length &&
-      entry.tickets.join(", "),
-    typeof entry.tickets === "number" &&
-      entry.tickets &&
-      t("log.tickets", { count: entry.tickets }),
+    ...["tickets", "features"].map((noun) =>
+      Array.isArray(entry[noun])
+        ? entry[noun].join(", ")
+        : typeof entry[noun] === "number" &&
+          entry[noun] &&
+          t("log." + noun, { count: entry[noun] }),
+    ),
     entry.seconds !== undefined && `${entry.seconds}s`,
   ]
     .filter(Boolean)

@@ -1,8 +1,9 @@
 /* Answering a waiting human step.
  *
  * Structured questions work like a CLI picker: arrows or digits choose, Enter
- * moves on, the recommended option is marked and preselected. A feature's
- * approval shows the proposed tickets; approving creates them on the board.
+ * moves on, the recommended option is marked and preselected. Approving a
+ * breakdown shows what it proposes (a feature's tickets, a draft's features);
+ * approving creates them on the board.
  * Choices and typed text are drafts until submitted. */
 
 import * as api from "../core/api.js";
@@ -12,6 +13,9 @@ import { persistentMap } from "../core/storage.js";
 import { refresh } from "../core/store.js";
 import { toast, toastError } from "../ui/toast.js";
 import { needChips } from "./vocabulary.js";
+
+/** What a parent's breakdown consists of: the noun its texts are keyed by. */
+export const childrenNoun = (kind) => (kind === "draft" ? "features" : "tickets");
 
 const notes = persistentMap("answer-drafts");
 const picks = persistentMap("choice-drafts");
@@ -122,6 +126,9 @@ function ticketList(tickets) {
           h("code", {}, ticket.id),
           h("strong", {}, ticket.title),
           ...needChips(ticket.needs),
+          ...(ticket.labels || []).map((label) =>
+            h("span", { class: "label-chip" }, label),
+          ),
         ),
         ticket.goal ? h("p", {}, ticket.goal) : null,
         ticket.acceptance.length
@@ -131,7 +138,7 @@ function ticketList(tickets) {
               ticket.acceptance.map((a) => h("li", {}, a)),
             )
           : null,
-        ticket.depends_on.length || ticket.paths.length
+        ticket.depends_on.length || ticket.paths.length || ticket.covers?.length
           ? h(
               "small",
               { class: "hint" },
@@ -143,6 +150,9 @@ function ticketList(tickets) {
                   : "",
                 ticket.paths.length
                   ? t("tickets.paths", { paths: ticket.paths.join(", ") })
+                  : "",
+                ticket.covers?.length
+                  ? t("features.covers", { rows: ticket.covers.join(", ") })
                   : "",
               ]
                 .filter(Boolean)
@@ -162,6 +172,7 @@ export function answerPanel(detail, step, after) {
   const chosen = picks.get(key) || {};
   const save = () => picks.set(key, chosen);
   const tickets = detail.tickets || [];
+  const noun = childrenNoun(detail.metadata?.kind);
   const changes = detail.changes || [];
   const approving =
     tickets.length && step.transitions.some(([o]) => o === "approved");
@@ -197,7 +208,7 @@ export function answerPanel(detail, step, after) {
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
     if (approving && outcome === "approved")
-      button.textContent = t("tickets.creating", { count: tickets.length });
+      button.textContent = t(noun + ".creating", { count: tickets.length });
     try {
       const result = await api.post("answer", {
         id: run.id,
@@ -210,7 +221,7 @@ export function answerPanel(detail, step, after) {
       picks.delete(key);
       document.dispatchEvent(new Event("ffai-answered"));
       if (result.admitted?.length)
-        toast(t("tickets.created", { count: result.admitted.length }), {
+        toast(t(noun + ".created", { count: result.admitted.length }), {
           tone: "success",
         });
       await refresh();
@@ -239,7 +250,7 @@ export function answerPanel(detail, step, after) {
         onclick: act(outcome, () => (asked.length ? { ...chosen } : {})),
       },
       approving && outcome === "approved"
-        ? t("tickets.approve", { count: tickets.length })
+        ? t(noun + ".approve", { count: tickets.length })
         : outcomeLabel(outcome),
     ),
   );
@@ -266,7 +277,7 @@ export function answerPanel(detail, step, after) {
       ? h(
           "div",
           { class: "tickets-preview" },
-          h("p", {}, t("tickets.preview", { count: tickets.length })),
+          h("p", {}, t(noun + ".preview", { count: tickets.length })),
           ticketList(tickets),
         )
       : null,

@@ -8,7 +8,6 @@ import {
   kindOf,
   laneOf,
   meta,
-  planTitle,
   refresh,
   run as findRun,
   runnerOf,
@@ -24,6 +23,7 @@ import {
   elapsed,
   KIND_GLYPH,
   kindLabel,
+  labelChips,
   stepName,
   ticketPlace,
 } from "../features/vocabulary.js";
@@ -33,7 +33,7 @@ function shorten(text, size = 48) {
   return text.length > size ? text.slice(0, size - 1) + "…" : text;
 }
 
-export function card(run, inPlan) {
+export function card(run) {
   const kind = kindOf(run);
   const m = meta(run);
   const step = stepOf(run);
@@ -52,15 +52,9 @@ export function card(run, inPlan) {
     );
   }
   if (m.parent) {
-    // The parent's title, or its id without the plan prefix when it is absent.
     const parent = findRun(m.parent);
-    const prefix = m.plan + "_";
-    const bare =
-      m.plan && m.parent.startsWith(prefix)
-        ? m.parent.slice(prefix.length)
-        : m.parent;
     facts.push(
-      t("card.from", { title: shorten(parent ? titleOf(parent) : bare) }),
+      t("card.from", { title: shorten(parent ? titleOf(parent) : m.parent) }),
     );
   }
   if (run.calls) facts.push(t("card.calls", { count: run.calls }));
@@ -93,13 +87,7 @@ export function card(run, inPlan) {
         { class: "kind-tag" },
         KIND_GLYPH[kind] + " " + kindLabel(kind),
       ),
-      m.plan && !inPlan
-        ? h(
-            "span",
-            { class: "plan-chip", title: planTitle(m.plan) },
-            t("card.plan", { id: m.plan }),
-          )
-        : null,
+      labelChips(run),
     ),
     h("strong", { class: "card-title", title: titleOf(run) }, titleOf(run)),
     ticketPlace(run),
@@ -152,11 +140,10 @@ function grouped(key, items, limit) {
   return out;
 }
 
-export function lane(key, items, scope = "") {
-  const id = scope + ":" + key;
-  const limit = shown.get(id) || PAGE;
+export function lane(key, items) {
+  const limit = shown.get(key) || PAGE;
   const empty =
-    filters.query || filters.plan
+    filters.query || filters.label
       ? t("board.noMatches")
       : t("board.empty." + key);
   const rest = items.length - limit;
@@ -176,7 +163,7 @@ export function lane(key, items, scope = "") {
     grouped(key, items, limit).map((entry) =>
       typeof entry === "string"
         ? h("h3", { class: "lane-group" }, entry)
-        : card(entry, !!scope),
+        : card(entry),
     ),
     rest > 0
       ? h(
@@ -193,7 +180,7 @@ export function lane(key, items, scope = "") {
               type: "button",
               class: "ghost",
               onclick: () => {
-                shown.set(id, limit + PAGE);
+                shown.set(key, limit + PAGE);
                 view.redraw();
               },
             },
@@ -220,12 +207,11 @@ export function lane(key, items, scope = "") {
   return section;
 }
 
-export function lanes(items, scope) {
+export function lanes(items) {
   return LANES.map((key) =>
     lane(
       key,
       items.filter((r) => laneOf(r) === key),
-      scope,
     ),
   );
 }
