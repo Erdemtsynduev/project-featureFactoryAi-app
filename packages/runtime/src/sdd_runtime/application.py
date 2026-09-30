@@ -193,6 +193,15 @@ class ApplicationEngine:
     def outputs(self, run_id: str, product: str) -> tuple[Result, ...]:
         return self.answers.outputs(run_id, product)
 
+    def latest(self, run_id: str, product: str) -> Result | None:
+        """The newest `done` result of the step that produces `product`, if any."""
+        return next((r for r in self.outputs(run_id, product) if r.outcome == "done"), None)
+
+    def root(self, run_id: str) -> Path:
+        """The folder the run works in: its workspace, or its lane once isolated."""
+        with self.store.unit() as db:
+            return Path(db.location(run_id).workspace)
+
     def asked(self, run_id: str) -> str:
         return self.answers.asked(run_id)
 

@@ -127,8 +127,7 @@ class TicketAdmission:
 
     def scope_of(self, run_id: str) -> ScopeOf:
         """The repositories a draft of `run_id`'s plan changes, within its workspace."""
-        with self.engine.store.unit() as db:
-            root = Path(db.location(run_id).workspace)
+        root = self.engine.root(run_id)
         return lambda draft: ticket_scope(root, draft.paths)
 
     def ticket_definitions(self, run_id: str, drafts: tuple[TicketDraft, ...]) -> dict[str, str]:
@@ -170,9 +169,7 @@ class TicketAdmission:
         for run in accepted:
             if "tickets" in self.catalog.artifacts(run.id):
                 continue
-            breakdown = next(
-                (r for r in self.engine.outputs(run.id, "tickets") if r.outcome == "done"), None
-            )
+            breakdown = self.engine.latest(run.id, "tickets")
             if breakdown is None:
                 continue
             drafts = tickets_of(breakdown.data)
@@ -238,8 +235,7 @@ class TicketAdmission:
         except KeyError:
             pass
         feature = self.catalog.task(parent)
-        with self.engine.store.unit() as db:
-            root = Path(db.location(parent).workspace)
+        root = self.engine.root(parent)
         run = self.engine.create(
             child,
             definition,

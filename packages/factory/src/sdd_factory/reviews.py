@@ -104,8 +104,7 @@ class PlanReviews:
         rule = language_rule(feature.language)
         budget = self.engine.store.workflow(definition).max_input_chars - REVIEW_MARGIN - len(rule)
         brief = snapshot.brief(detail, self.flows.agents(feature.project), budget)
-        with self.engine.store.unit() as db:
-            root = Path(db.location(parent).workspace)
+        root = self.engine.root(parent)
         identifier = f"{parent[:80]}-review-{len(reviews) + 1}"
         run = self.engine.create(identifier, definition, root, rule + brief, None, time.time())
         self.catalog.save_task(
@@ -175,8 +174,7 @@ class PlanReviews:
         return revision
 
     def _changes_data(self, review: str) -> str:
-        done = (r for r in self.engine.outputs(review, "plan_changes") if r.outcome == "done")
-        found = next(done, None)
+        found = self.engine.latest(review, "plan_changes")
         if found is None:
             raise ValueError("The review proposed no changes")
         return found.data
@@ -201,8 +199,7 @@ class PlanReviews:
                 parent, draft, ids, definitions[draft.id], contexts[draft.id]
             )
         ]
-        with self.engine.store.unit() as db:
-            root = db.location(parent).workspace
+        root = str(self.engine.root(parent))
         for draft in revision.update:
             claim = self.engine.workspace.claim(root, ticket_scope(Path(root), draft.paths))
             prerequisites = tuple(ids[p] for p in draft.depends_on)

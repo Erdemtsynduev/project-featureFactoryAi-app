@@ -22,10 +22,8 @@ class FeatureDocuments:
 
     def specification(self, run_id: str) -> str:
         """The latest specification the feature's specification step produced, whole."""
-        for result in self.engine.outputs(run_id, "specification"):
-            if result.outcome == "done":
-                return result.reason
-        return ""
+        found = self.engine.latest(run_id, "specification")
+        return found.reason if found is not None else ""
 
     def preview(self, run_id: str) -> list[dict[str, object]]:
         """Tickets awaiting approval on a feature, for the approval dialog."""
