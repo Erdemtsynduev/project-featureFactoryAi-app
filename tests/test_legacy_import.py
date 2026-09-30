@@ -155,7 +155,7 @@ def test_apply_creates_paused_scoped_runs_idempotently(tmp_path):
     run = engine.store.get("1_B_1")
     assert run.paused and run.status == "ready" and run.step == "implement"
     with store.unit() as db:
-        assert db.location("1_B_1")[1] == str(repo.resolve())
+        assert db.location("1_B_1").claim == str(repo.resolve())
     assert catalog.task_metadata()["1_C_1"]["legacy_id"] == "1:C.1"
     assert apply(engine, catalog, source, plan, "ru")["kept"] == first["created"]
     assert catalog.task_metadata()["2_X"]["kind"] == "feature"

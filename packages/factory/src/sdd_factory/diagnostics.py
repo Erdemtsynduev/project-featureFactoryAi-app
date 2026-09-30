@@ -61,7 +61,7 @@ def _tail(path: Path) -> str:
 def record(engine: Engine, log: FlightLog, run_id: str) -> FlightRecord:
     run = engine.store.get(run_id)
     with engine.store.unit() as db:
-        root = Path(db.location(run_id)[0])
+        root = Path(db.location(run_id).workspace)
     attempt = run.active.id if run.active else run.previous_attempt
     files: dict[str, str] = {}
     if attempt:
@@ -129,7 +129,7 @@ def live(engine: Engine, run_id: str, hosted: bool) -> dict[str, object]:
     if run.active is None:
         return {"active": False, "now": now}
     with engine.store.unit() as db:
-        root = Path(db.location(run_id)[0])
+        root = Path(db.location(run_id).workspace)
     folder = attempt_folder(root, run_id, run.active.id)
     streams: dict[str, object] = {}
     last_output = None

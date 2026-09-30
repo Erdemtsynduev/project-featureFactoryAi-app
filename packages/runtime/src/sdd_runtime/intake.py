@@ -16,7 +16,7 @@ class ResultIntake:
         if not result.artifacts:
             return result
         with self.runs.store.unit() as db:
-            workspace = db.location(run_id)[0]
+            workspace = db.location(run_id).workspace
         return self.runs.workspace.normalize(run_id, result, workspace)
 
     def complete(self, run_id: str, result: Result, now: float, expected: int | None = None) -> Run:

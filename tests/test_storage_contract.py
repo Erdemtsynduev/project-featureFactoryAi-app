@@ -72,7 +72,7 @@ def test_context_location_and_relocation(engine):
         unit.relocate("a", workspace + "-lane", claim)
     with engine.store.unit() as unit:
         assert unit.context("a") == "revised"
-        assert unit.location("a")[0] == workspace + "-lane"
+        assert unit.location("a").workspace == workspace + "-lane"
 
 
 def test_dependencies_order_runnable_and_can_be_replaced(engine):
@@ -126,7 +126,7 @@ def test_claims_of_started_unfinished_runs(engine):
     engine.dispatch("a", 3, "att")
     with engine.store.unit() as unit:
         ((kind, claim),) = unit.active_claims()
-        assert kind == "operation" and claim == unit.location("a")[1], "(step kind, claim)"
+        assert kind == "operation" and claim == unit.location("a").claim, "(step kind, claim)"
         assert [run.id for run, _ in unit.unfinished_claims("b")] == ["a"]
         assert unit.unfinished_claims("a") == ()
 

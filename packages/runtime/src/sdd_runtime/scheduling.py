@@ -37,7 +37,7 @@ class Scheduler:
         store = self.runs.store
         with store.unit() as db:
             run = db.run(run_id)
-            claim = db.location(run_id)[1]
+            claim = db.location(run_id).claim
             others = db.unfinished_claims(run_id)
         for other, _ in others:
             self.runs.flow(other.workflow_digest)

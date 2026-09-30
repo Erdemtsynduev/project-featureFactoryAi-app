@@ -21,7 +21,7 @@ from sdd_core.models import (
     Workflow,
 )
 from sdd_core.ports import Conflict, StaleVersion, UnitOfWork
-from sdd_core.records import EffectRecord
+from sdd_core.records import EffectRecord, RunLocation
 from sdd_core.storage_rules import (
     check_dependencies,
     check_discard,
@@ -77,7 +77,7 @@ class MemoryUnit:
             if effect.id in self.state.effects:
                 raise Conflict("Duplicate effect")
             self.state.effects[effect.id] = EffectRecord(
-                effect.id, before.id, effect.kind, "pending", self.location(before.id)[0]
+                effect.id, before.id, effect.kind, "pending", self.location(before.id).workspace
             )
             self.state.attempts[effect.id] = effect.attempt
         return after
@@ -90,9 +90,9 @@ class MemoryUnit:
             raise Conflict("Duplicate command")
         self.state.commands[identifier] = (request, response)
 
-    def location(self, identifier: str) -> tuple[str, str]:
+    def location(self, identifier: str) -> RunLocation:
         workspace, _, claim, _ = self.state.inputs[identifier]
-        return workspace, claim
+        return RunLocation(workspace, claim)
 
     def locations(self) -> tuple[tuple[str, str], ...]:
         return tuple((key, inputs[0]) for key, inputs in self.state.inputs.items())
@@ -121,14 +121,14 @@ class MemoryUnit:
 
     def active_claims(self) -> tuple[tuple[str, str], ...]:
         return tuple(
-            (record.kind, self.location(record.run_id)[1])
+            (record.kind, self.location(record.run_id).claim)
             for record in self.effects(LIVE_EFFECT_STATUSES)
             if record.kind not in UNPINNED_KINDS
         )
 
     def unfinished_claims(self, identifier: str) -> tuple[tuple[Run, str], ...]:
         return tuple(
-            (run, self.location(key)[1])
+            (run, self.location(key).claim)
             for key, run in self.state.runs.items()
             if key != identifier and started_unfinished(run)
         )

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from sdd_core.codec import result_load, run_load, sequence, text
 from sdd_core.models import LIVE_EFFECT_STATUSES, UNPINNED_KINDS, Result, Run, Transition
+from sdd_core.records import RunLocation
 from sdd_core.storage_rules import started_unfinished
 
 from sdd_storage.runtime_records import SQLiteRuntimeRecords
@@ -41,13 +42,13 @@ class SQLiteUnit(SQLiteRuntimeRecords):
     def save_command(self, identifier: str, request: str, response: str) -> None:
         self.db.execute("INSERT INTO commands VALUES(?,?,?)", (identifier, request, response))
 
-    def location(self, identifier: str) -> tuple[str, str]:
+    def location(self, identifier: str) -> RunLocation:
         row = self.db.execute(
             "SELECT workspace,claim FROM runs WHERE id=?", (identifier,)
         ).fetchone()
         if row is None:
             raise KeyError(identifier)
-        return str(row[0]), str(row[1])
+        return RunLocation(str(row[0]), str(row[1]))
 
     def locations(self) -> tuple[tuple[str, str], ...]:
         return tuple(

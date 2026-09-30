@@ -22,7 +22,7 @@ def build_packet(store: StateStore, registry: Registry, run_id: str) -> Packet:
         raise ValueError("No dispatched attempt")
     workflow = store.workflow(run.workflow_digest)
     with store.unit() as db:
-        root = Path(db.location(run_id)[0])
+        root = Path(db.location(run_id).workspace)
         context = db.context(run_id)
         results = db.recent_results(run_id, MEMORY_WINDOW)
     folder = attempt_folder(root, run.id, run.active.id)

@@ -270,7 +270,7 @@ def test_revise_rewrites_only_a_never_started_run(tmp_path, any_store):
     for identifier in ("a", "b", "c"):
         engine.create(identifier, definition, root, "brief " + identifier, "rev", 0)
     with store.unit() as db:
-        claim = db.location("c")[1]
+        claim = db.location("c").claim
     revised = engine.revise("c", "new brief", claim, ("a", "b"), "req", 0, 1)
     assert engine.revise("c", "new brief", claim, ("a", "b"), "req", 0, 2) == revised
     with store.unit() as db:

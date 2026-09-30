@@ -120,7 +120,7 @@ class RunCommands:
             kept = [edge for edge in db.dependency_edges() if edge[0] != run_id]
             acyclic([*kept, *((run_id, p) for p in dependencies)], "Dependencies form a cycle")
             db.set_context(run_id, context)
-            db.relocate(run_id, db.location(run_id)[0], claim)
+            db.relocate(run_id, db.location(run_id).workspace, claim)
             db.set_dependencies(run_id, dependencies)
             state = db.apply(run, transition)
             db.save_command(request_id, request, run_json(state))

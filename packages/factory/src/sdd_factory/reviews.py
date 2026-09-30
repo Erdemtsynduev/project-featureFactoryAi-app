@@ -94,7 +94,7 @@ class PlanReviews:
         budget = self.engine.store.workflow(definition).max_input_chars - REVIEW_MARGIN - len(rule)
         brief = snapshot.brief(detail, self.flows.agents(feature.project), budget)
         with self.engine.store.unit() as db:
-            root = Path(db.location(parent)[0])
+            root = Path(db.location(parent).workspace)
         identifier = f"{parent[:80]}-review-{len(reviews) + 1}"
         run = self.engine.create(identifier, definition, root, rule + brief, None, time.time())
         self.catalog.save_task(
@@ -209,7 +209,7 @@ class PlanReviews:
             )
         ]
         with self.engine.store.unit() as db:
-            root = db.location(parent)[0]
+            root = db.location(parent).workspace
         for draft in revision.update:
             claim = self.engine.workspace.claim(root, ticket_scope(Path(root), draft.paths))
             prerequisites = tuple(ids[p] for p in draft.depends_on)

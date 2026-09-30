@@ -5,7 +5,7 @@ every role participates in the same atomic commit.
 """
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from sdd_core.models import Result, Run, Transition
 
@@ -20,6 +20,13 @@ class StaleVersion(Conflict):
 
 # A handler may change between a run's attempts, never under a live one.
 HANDLER_CHANGED_WHILE_LIVE = "Handler changed while an attempt of this run is live"
+
+
+class RunLocation(NamedTuple):
+    """Where a run works: its workspace folder and the claim naming the paths it owns."""
+
+    workspace: str
+    claim: str
 
 
 @dataclass(frozen=True)
@@ -44,7 +51,7 @@ class RunRecords(Protocol):
     def apply(self, before: Run, transition: Transition) -> Run: ...
     def context(self, run_id: str) -> str: ...
     def set_context(self, identifier: str, context: str) -> None: ...
-    def location(self, identifier: str) -> tuple[str, str]: ...
+    def location(self, identifier: str) -> RunLocation: ...
     def locations(self) -> tuple[tuple[str, str], ...]:
         """(run id, workspace) of every run, in one read."""
         ...

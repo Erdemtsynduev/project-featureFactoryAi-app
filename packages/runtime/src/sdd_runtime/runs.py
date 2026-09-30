@@ -48,7 +48,7 @@ class RunContext:
     def observe(self, run_id: str) -> str:
         """Current revision of everything the run owns."""
         with self.store.unit() as db:
-            claim = db.location(run_id)[1]
+            claim = db.location(run_id).claim
         return self.revision_of(claim)
 
 

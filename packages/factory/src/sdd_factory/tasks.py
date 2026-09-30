@@ -458,7 +458,7 @@ class TaskService:
     def scope_of(self, run_id: str) -> ScopeOf:
         """The repositories a draft of `run_id`'s plan changes, within its workspace."""
         with self.engine.store.unit() as db:
-            root = Path(db.location(run_id)[0])
+            root = Path(db.location(run_id).workspace)
         return lambda draft: ticket_scope(root, draft.paths)
 
     def ticket_definitions(self, run_id: str, drafts: tuple[TicketDraft, ...]) -> dict[str, str]:
@@ -576,7 +576,7 @@ class TaskService:
             pass
         feature = self.catalog.task(parent)
         with self.engine.store.unit() as db:
-            root = Path(db.location(parent)[0])
+            root = Path(db.location(parent).workspace)
         run = self.engine.create(
             child,
             definition,
