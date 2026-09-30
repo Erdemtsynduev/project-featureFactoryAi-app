@@ -8,8 +8,6 @@ from sdd_core.models import Result, Run, Step, Workflow
 from sdd_runtime.application import ApplicationEngine
 from sdd_runtime.git import GitProject
 from sdd_runtime.workspace import LocalWorkspace
-from sdd_storage.memory import MemoryStore
-from sdd_storage.store import Store
 
 
 def branching() -> Workflow:
@@ -78,9 +76,8 @@ def test_unknown_step_is_a_value_error():
         branching().step("missing")
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "memory"])
-def test_application_routes_on_previous_human_answer(tmp_path, backend):
-    store = Store(tmp_path / "state.db") if backend == "sqlite" else MemoryStore()
+def test_application_routes_on_previous_human_answer(tmp_path, any_store):
+    store = any_store
     definition = store.publish(branching())
     engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
     engine.create("one", definition, tmp_path, "test", "rev", 0)

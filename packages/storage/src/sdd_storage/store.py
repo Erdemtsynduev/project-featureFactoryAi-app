@@ -13,6 +13,7 @@ from sdd_core.graph import validate
 from sdd_core.models import Run, Transition, Workflow
 from sdd_core.ports import Conflict as Conflict
 from sdd_core.ports import StaleVersion, UnitOfWork
+from sdd_core.storage_rules import check_dependencies
 
 from sdd_storage.catalog import SQLiteCatalog
 from sdd_storage.unit import SQLiteUnit
@@ -229,13 +230,16 @@ class Store:
                 is None
             ):
                 raise KeyError(run.workflow_digest)
+            prerequisites = check_dependencies(
+                run.id,
+                dependencies,
+                lambda key: bool(db.execute("SELECT 1 FROM runs WHERE id=?", (key,)).fetchone()),
+            )
             db.execute(
                 "INSERT INTO runs VALUES(?,?,?,?,?,?,?)",
                 (run.id, run_json(run), run.version, workspace, context, claim, now),
             )
-            for prerequisite in sorted(set(dependencies)):
-                if prerequisite == run.id:
-                    raise ValueError("Self dependency")
+            for prerequisite in prerequisites:
                 db.execute("INSERT INTO dependencies VALUES(?,?)", (run.id, prerequisite))
             db.execute(
                 "INSERT INTO events(run,version,kind,at,detail,state) VALUES(?,?,?,?,?,?)",

@@ -23,6 +23,7 @@ from sdd_core.models import (
 )
 from sdd_core.ports import Conflict, StaleVersion, UnitOfWork
 from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE, EffectRecord
+from sdd_core.storage_rules import check_dependencies
 
 
 @dataclass
@@ -338,8 +339,7 @@ class MemoryStore:
                 return old
             if run.workflow_digest not in self._state.flows:
                 raise KeyError(run.workflow_digest)
-            if run.id in dependencies or any(key not in self._state.runs for key in dependencies):
-                raise ValueError("Invalid dependencies")
+            check_dependencies(run.id, dependencies, self._state.runs.__contains__)
             self._state.runs[run.id] = run
             self._state.inputs[run.id] = inputs
             self._state.created[run.id] = now

@@ -8,15 +8,12 @@ import pytest
 from sdd_core.models import Attempt, Effect, Run, Step, Transition, Workflow
 from sdd_core.ports import Conflict
 from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE
-from sdd_storage.memory import MemoryStore
-from sdd_storage.store import Store
 from sdd_ui.service import LEGACY_BLOCKS, WorkspaceService
 from test_runtime import runtime, settle
 
 
-@pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_the_pin_follows_the_handler_between_attempts_only(tmp_path, backend):
-    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+def test_the_pin_follows_the_handler_between_attempts_only(tmp_path, any_store):
+    store = any_store
     flow = Workflow(
         "w",
         "work",

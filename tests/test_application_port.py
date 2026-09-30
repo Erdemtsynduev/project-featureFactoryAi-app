@@ -9,13 +9,11 @@ from sdd_core.ports import Conflict
 from sdd_runtime.application import ApplicationEngine
 from sdd_runtime.git import GitProject
 from sdd_runtime.workspace import LocalWorkspace
-from sdd_storage.memory import MemoryStore
-from sdd_storage.store import Store
 
 
-@pytest.fixture(params=["sqlite", "memory"])
-def application(request, tmp_path):
-    store = Store(tmp_path / "state.db") if request.param == "sqlite" else MemoryStore()
+@pytest.fixture
+def application(any_store, tmp_path):
+    store = any_store
     flow = Workflow(
         "port",
         "work",

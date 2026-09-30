@@ -19,14 +19,12 @@ from sdd_runtime.execution import ExecutionDriver
 from sdd_runtime.files import revision
 from sdd_runtime.git import GitProject
 from sdd_runtime.workspace import LocalWorkspace
-from sdd_storage.memory import MemoryStore
-from sdd_storage.store import Store
 from test_runtime import finished_execution
 
 
-@pytest.fixture(params=["sqlite", "memory"])
-def configured(request, tmp_path):
-    store = Store(tmp_path / "state.db") if request.param == "sqlite" else MemoryStore()
+@pytest.fixture
+def configured(any_store, tmp_path):
+    store = any_store
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     flow = Workflow(

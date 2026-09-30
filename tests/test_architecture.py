@@ -51,9 +51,9 @@ class Workspace:
         hook()
 
 
-@pytest.fixture(params=["sqlite", "memory"])
-def engine(request, tmp_path):
-    store = Store(tmp_path / "state.db") if request.param == "sqlite" else MemoryStore()
+@pytest.fixture
+def engine(any_store, tmp_path):
+    store = any_store
     flow = Workflow(
         "port",
         "work",

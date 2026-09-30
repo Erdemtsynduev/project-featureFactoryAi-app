@@ -13,7 +13,6 @@ from sdd_runtime.files import revision
 from sdd_runtime.git import GitProject
 from sdd_runtime.workspace import LocalWorkspace
 from sdd_storage.memory import MemoryStore
-from sdd_storage.store import Store
 
 FLOW = Workflow(
     "guards",
@@ -33,9 +32,9 @@ FLOW = Workflow(
 )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def engine(request, tmp_path):
-    store = MemoryStore() if request.param == "memory" else Store(tmp_path / "state.db")
+@pytest.fixture
+def engine(any_store, tmp_path):
+    store = any_store
     engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
     root = tmp_path / "project"
     root.mkdir()

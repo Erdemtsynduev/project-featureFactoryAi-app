@@ -16,8 +16,6 @@ from sdd_runtime.application import ApplicationEngine
 from sdd_runtime.files import atomic_write
 from sdd_runtime.git import GitProject
 from sdd_runtime.workspace import LocalWorkspace
-from sdd_storage.memory import MemoryStore
-from sdd_storage.store import Store
 from sdd_ui.server import create_server
 from sdd_ui.service import WorkspaceService
 from sdd_workflows.templates import approved_feature, interview, main_flow
@@ -52,9 +50,8 @@ def test_planning_budget_is_distinct_from_implementation():
     assert json.loads(interview().step("ask").config)["purpose"] == "planning"
 
 
-@pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_queue_budget_is_shared_and_survives_new_engine(tmp_path, backend):
-    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+def test_queue_budget_is_shared_and_survives_new_engine(tmp_path, any_store):
+    store = any_store
     flow = Workflow(
         "calls",
         "work",

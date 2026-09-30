@@ -257,15 +257,12 @@ def test_a_person_deciding_holds_no_paths():
     assert machine.holds_claim(reading, flow), "a live process still holds its paths"
 
 
-@pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_revise_rewrites_only_a_never_started_run(tmp_path, backend):
+def test_revise_rewrites_only_a_never_started_run(tmp_path, any_store):
     from sdd_runtime.application import ApplicationEngine
     from sdd_runtime.git import GitProject
     from sdd_runtime.workspace import LocalWorkspace
-    from sdd_storage.memory import MemoryStore
-    from sdd_storage.store import Store
 
-    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+    store = any_store
     engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
     root = tmp_path / "work"
     root.mkdir()

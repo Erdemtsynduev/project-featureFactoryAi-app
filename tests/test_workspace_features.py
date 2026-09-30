@@ -15,16 +15,13 @@ from sdd_runtime.coordinator import Coordinator
 from sdd_runtime.files import revision
 from sdd_runtime.git import GitProject
 from sdd_runtime.workspace import LocalWorkspace
-from sdd_storage.memory import MemoryStore
-from sdd_storage.store import Store
 from sdd_ui.service import WorkspaceService
 from sdd_ui.subscriptions import read_codex_buckets, read_codex_quota
 from sdd_workflows.templates import main_flow
 
 
-@pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_message_persists_once_and_enters_next_packet(tmp_path, backend):
-    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+def test_message_persists_once_and_enters_next_packet(tmp_path, any_store):
+    store = any_store
     root = tmp_path / "project"
     root.mkdir()
     flow = Workflow(
@@ -52,9 +49,8 @@ def test_message_persists_once_and_enters_next_packet(tmp_path, backend):
     assert packet.attempt.id == "attempt"
 
 
-@pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_recovery_reconciles_changed_revision_without_bypassing_gates(tmp_path, backend):
-    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+def test_recovery_reconciles_changed_revision_without_bypassing_gates(tmp_path, any_store):
+    store = any_store
     root = tmp_path / "project"
     root.mkdir()
     engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
@@ -89,9 +85,10 @@ def test_recovery_reconciles_changed_revision_without_bypassing_gates(tmp_path, 
     )
 
 
-@pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_an_attempt_that_changed_nothing_is_retried_or_restarted_not_reconciled(tmp_path, backend):
-    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+def test_an_attempt_that_changed_nothing_is_retried_or_restarted_not_reconciled(
+    tmp_path, any_store
+):
+    store = any_store
     root = tmp_path / "project"
     root.mkdir()
     engine = ApplicationEngine(store, GitProject(), LocalWorkspace())
@@ -193,9 +190,8 @@ def test_subscription_failure_does_not_claim_zero_usage(tmp_path, monkeypatch):
         service.coordinator.close()
 
 
-@pytest.mark.parametrize("backend", ["memory", "sqlite"])
-def test_retry_after_the_call_limit_grants_the_workflow_budget_once_more(tmp_path, backend):
-    store = MemoryStore() if backend == "memory" else Store(tmp_path / "state.db")
+def test_retry_after_the_call_limit_grants_the_workflow_budget_once_more(tmp_path, any_store):
+    store = any_store
     root = tmp_path / "project"
     root.mkdir()
     flow = Workflow(
