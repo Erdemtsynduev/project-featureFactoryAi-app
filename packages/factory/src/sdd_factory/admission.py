@@ -188,10 +188,14 @@ class TicketAdmission:
         contexts: dict[str, str],
     ) -> list[str]:
         ids = self.ticket_runs(parent.id, drafts)
+        # Tickets of one repository start from the same revision: observe it once.
+        revisions: dict[tuple[str, ...], str] = {}
         created = [
             draft.id
             for draft in drafts
-            if self.admit_ticket(parent.id, draft, ids, definitions[draft.id], contexts[draft.id])
+            if self.admit_ticket(
+                parent.id, draft, ids, definitions[draft.id], contexts[draft.id], revisions
+            )
         ]
         self.catalog.save_artifact(
             Artifact(parent.id, "specification", self.documents.specification(parent.id))
@@ -225,9 +229,11 @@ class TicketAdmission:
         ids: dict[str, str],
         definition: str,
         context: str,
+        revisions: dict[tuple[str, ...], str] | None = None,
     ) -> bool:
         """Create one ticket's paused child run; False when it exists (admission is
-        idempotent per ticket)."""
+        idempotent per ticket). `revisions` caches the revision of each scope within one
+        admission."""
         child = ids[draft.id]
         try:
             self.engine.store.get(child)
@@ -236,15 +242,19 @@ class TicketAdmission:
             pass
         feature = self.catalog.task(parent)
         root = self.engine.root(parent)
+        scope = ticket_scope(root, draft.paths)
+        cache = {} if revisions is None else revisions
+        if scope not in cache:
+            cache[scope] = self.engine.scope_revision(root, scope)
         run = self.engine.create(
             child,
             definition,
             root,
             context,
-            None,
+            cache[scope],
             time.time(),
             (*(ids[dependency] for dependency in draft.depends_on), *draft.after),
-            ticket_scope(root, draft.paths),
+            scope,
         )
         self.catalog.save_task(
             run.id,

@@ -194,6 +194,11 @@ class ApplicationEngine:
         """The newest `done` result of the step that produces `product`, if any."""
         return next((r for r in self.outputs(run_id, product) if r.outcome == "done"), None)
 
+    def scope_revision(self, workspace: Path, scope: tuple[str, ...]) -> str:
+        """The revision a run owning `scope` of `workspace` would start from."""
+        workspaces = self.runs.workspace
+        return self.runs.revision_of(workspaces.claim(workspaces.resolve(str(workspace)), scope))
+
     def root(self, run_id: str) -> Path:
         """The folder the run works in: its workspace, or its lane once isolated."""
         with self.store.unit() as db:

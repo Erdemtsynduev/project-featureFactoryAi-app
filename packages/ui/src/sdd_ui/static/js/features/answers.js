@@ -192,7 +192,12 @@ export function answerPanel(detail, step, after) {
     if (!asked.length && !approving && !typed && !SUCCESS.includes(outcome))
       throw Error(t("answer.needText"));
     if (outcome === "rework" && !typed) throw Error(t("answer.needReworkNote"));
+    // Approving a breakdown creates every ticket before it answers: say it is working.
+    const label = button.textContent;
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (approving && outcome === "approved")
+      button.textContent = t("tickets.creating", { count: tickets.length });
     try {
       const result = await api.post("answer", {
         id: run.id,
@@ -212,6 +217,8 @@ export function answerPanel(detail, step, after) {
       after?.(result);
     } finally {
       button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = label;
     }
   };
   const act = (outcome, choices) => async (event) => {

@@ -313,6 +313,7 @@ export default {
     other:
       "The agent proposes {count} tickets. After approval they appear on the board, paused.",
   },
+  "tickets.creating": "Creating {count} tickets…",
   "tickets.approve": {
     one: "Approve and create {count} ticket",
     other: "Approve and create {count} tickets",
