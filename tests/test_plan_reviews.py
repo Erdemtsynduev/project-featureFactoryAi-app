@@ -380,11 +380,12 @@ def test_rebuilding_plans_again_what_never_started_and_keeps_started_work(servic
     service.mutate("resume", {"id": api, "version": service.engine.store.get(api).version})
     service.engine.dispatch(api, 13, "w1")
 
+    review = review_of(service, feature)  # the breakdown's review, never started
     rebuilt = service.mutate("plans-rebuild", {"project": "app", "plan": "110"})
-    assert rebuilt["removed"] == len(admitted) - 1 and rebuilt["reopened"] == [feature]
+    assert rebuilt["removed"] == len(admitted) and rebuilt["reopened"] == [feature]
     assert rebuilt["created"] == ["feature_110"]
     runs = {r["id"] for r in service.state()["runs"]}
-    assert {feature, api, "feature_110"} <= runs and f"{feature}-ui" not in runs
+    assert {feature, api, "feature_110"} <= runs and not {f"{feature}-ui", review} & runs
     closed, started = catalog.task(feature), catalog.task(api)
     assert closed.closed and (started.parent, started.origin) == ("", feature)
     assert catalog.task("feature_110").rows == ("FH-02", "FH-03"), "its rows are planned again"
@@ -392,3 +393,4 @@ def test_rebuilding_plans_again_what_never_started_and_keeps_started_work(servic
         brief = unit.context("feature_110")
     assert f"{api} — Engine core (running)" in brief, "started work is not duplicated"
     assert service.mutate("plans-sync", {"project": "app"})["created"] == []
+    assert service.reviews.request(feature, "blocked:api", "stuck") is None, "a closed plan"

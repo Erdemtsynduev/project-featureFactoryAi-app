@@ -198,8 +198,9 @@ class PlanService:
         requirement or imported ticket recorded (its requirement, acceptance and
         decisions) carries over into the new feature. A feature whose tickets were
         removed is closed: what it delivered stays, its started tickets keep running
-        as top-level work, and its rows are planned again. Started work, tasks, plan
-        reviews and anything a kept run depends on stay untouched.
+        as top-level work, its never-started plan reviews go, and its rows are planned
+        again. Other started work, tasks, reviews and anything a kept run depends on stay
+        untouched.
         """
         project_id, project, workspace = self._project(doc)
         only = str(doc.get("plan", ""))
@@ -242,6 +243,12 @@ class PlanService:
             and not item.legacy_id
             and item.parent not in candidates
         )
+        # A review that never started goes with its plan; nothing depends on reviews.
+        candidates |= {
+            key
+            for key, item in records.items()
+            if item.reviews in reopened and machine.discardable(runs[key])
+        }
         path = self.engine.store.path
         backup = path.with_name(f"{path.stem}.before-plan-rebuild-{time.time_ns()}.db")
         self.engine.store.backup(backup)
@@ -251,7 +258,7 @@ class PlanService:
                 item = records[key]
                 # Imported tickets belong to their row's requirement; features to themselves.
                 owner = item.parent if item.legacy_id else key
-                if item.legacy_id or not item.rows:
+                if item.legacy_id or (item.kind == "feature" and not item.rows):
                     work = recorded_work(unit.context(key))
                     carried[owner] = "\n\n".join(filter(None, (carried.get(owner, ""), work)))
         removed = self.engine.store.discard(tuple(sorted(candidates)))

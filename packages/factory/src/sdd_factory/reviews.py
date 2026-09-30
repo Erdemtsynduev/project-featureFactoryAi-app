@@ -75,7 +75,10 @@ class PlanReviews:
     # Starting a review --------------------------------------------------------------
 
     def request(self, parent: str, trigger: str, detail: str) -> str | None:
-        """Start one review of `parent`'s plan for `trigger`; None when not due."""
+        """Start one review of `parent`'s plan for `trigger`; None when not due.
+        A closed plan is not reviewed: its rows were delivered or planned again."""
+        if self.catalog.task(parent).closed:
+            return None
         reviews = self.reviews_of(parent)
         if any(item.trigger == trigger for item in reviews.values()):
             return None  # this very event was reviewed already
