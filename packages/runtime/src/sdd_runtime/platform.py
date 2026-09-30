@@ -61,6 +61,11 @@ class ProcessGroups:
                 kill_group(group)
             except ProcessLookupError:
                 pass
+            except PermissionError:
+                # macOS refuses to signal a group that holds only zombies, where Linux
+                # reports success. A live member that may not be signalled is a failure.
+                if group_alive(group):
+                    raise
 
     def stop_and_confirm(self, timeout: float = 5) -> None:
         self.terminate()

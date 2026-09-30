@@ -304,3 +304,25 @@ def test_restart_after_coordinator_killed(tmp_path):
         if process.poll() is None:
             process.kill()
         process.wait(timeout=5)
+
+
+def test_a_group_of_only_zombies_counts_as_stopped(monkeypatch):
+    # macOS answers EPERM when every member of the group is a zombie; Linux succeeds.
+    from sdd_runtime import platform
+    from sdd_runtime.platform import ProcessGroups
+
+    def refuse(group: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(platform, "kill_group", refuse)
+    job = ProcessGroups()
+    job.groups.add(4741)
+    monkeypatch.setattr(platform, "group_alive", lambda group: False)
+    job.stop_and_confirm()
+    job.close()
+    assert job.groups == set()
+    # A live member that may not be signalled is never reported as stopped.
+    job.groups.add(4741)
+    monkeypatch.setattr(platform, "group_alive", lambda group: True)
+    with pytest.raises(PermissionError):
+        job.terminate()
