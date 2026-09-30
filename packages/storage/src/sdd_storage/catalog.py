@@ -9,6 +9,38 @@ from sdd_core.codec import object_json
 
 type Transaction = Callable[[], AbstractContextManager[sqlite3.Connection]]
 
+# The catalog's tables, created by the store's schema migrations in their order.
+# Application metadata (projects, plans, task labels, preferences); earlier releases
+# created these from the UI, and IF NOT EXISTS adopts them unchanged.
+METADATA_TABLES = """
+CREATE TABLE IF NOT EXISTS ui_projects(id TEXT PRIMARY KEY, document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ui_tasks(id TEXT PRIMARY KEY REFERENCES runs(id), document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ui_plans(project TEXT NOT NULL, id TEXT NOT NULL,
+    document TEXT NOT NULL, PRIMARY KEY(project, id));
+CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY, document TEXT NOT NULL);
+"""
+# A feature's specification and ticket breakdown, kept by the factory.
+ARTIFACT_TABLES = """
+CREATE TABLE IF NOT EXISTS ui_artifacts(run TEXT NOT NULL REFERENCES runs(id),
+    kind TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(run, kind));
+"""
+# Publications to a project's tracker, recorded before delivery (an outbox).
+OUTBOX_TABLES = """
+CREATE TABLE IF NOT EXISTS tracker_outbox(id TEXT PRIMARY KEY, project TEXT NOT NULL,
+    run TEXT NOT NULL, kind TEXT NOT NULL, document TEXT NOT NULL, status TEXT NOT NULL,
+    attempts INTEGER NOT NULL, next_at REAL NOT NULL, error TEXT NOT NULL, receipt TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS tracker_outbox_item ON tracker_outbox(run, kind);
+CREATE INDEX IF NOT EXISTS tracker_outbox_pending ON tracker_outbox(project, status);
+"""
+# Catalog rows that belong to one run: they leave with it.
+RUN_ROWS = (("ui_tasks", "id"), ("ui_artifacts", "run"))
+
+
+def forget_runs(db: sqlite3.Connection, identifiers: list[tuple[str]]) -> None:
+    """Remove the catalog rows of discarded runs, in the store's transaction."""
+    for table, column in RUN_ROWS:
+        db.executemany(f"DELETE FROM {table} WHERE {column}=?", identifiers)
+
 
 class SQLiteCatalog:
     """Each call is one short transaction; documents are stored opaquely."""

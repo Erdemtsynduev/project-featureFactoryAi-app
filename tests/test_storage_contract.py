@@ -162,3 +162,16 @@ def test_discard_removes_only_never_started_runs_all_or_none(engine):
     with engine.store.unit() as unit:
         assert [run.id for run in unit.runs()] == ["c"]
         assert unit.dependency_edges() == ()
+
+
+def test_discarded_runs_take_their_catalog_records_with_them(engine):
+    engine, root = engine
+    create(engine, "a", root)
+    create(engine, "b", root)
+    catalog = engine.store.catalog()
+    for key in ("a", "b"):
+        catalog.save_task(key, "{}")
+        catalog.save_artifact(key, "specification", "{}")
+    engine.store.discard(("a",))
+    assert [key for key, _ in catalog.tasks()] == ["b"]
+    assert catalog.artifacts("a") == () and catalog.artifacts("b") != ()

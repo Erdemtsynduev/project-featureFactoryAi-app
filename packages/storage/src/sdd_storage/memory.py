@@ -1,6 +1,6 @@
 """Volatile transactional backend for embedding and contract tests; never durable storage."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -257,6 +257,15 @@ class MemoryStore:
         self._state = MemoryState()
         self._lock = RLock()
         self._in_transaction = False
+        # Catalogs over this store drop the records of runs it discards.
+        self.forgetting: list[Callable[[set[str]], None]] = []
+        self._catalog: MemoryCatalog | None = None
+
+    def catalog(self) -> "MemoryCatalog":
+        """Application metadata over this store, like `Store.catalog`."""
+        if self._catalog is None:
+            self._catalog = MemoryCatalog(self)
+        return self._catalog
 
     @contextmanager
     def unit(self) -> Iterator[UnitOfWork]:
@@ -302,6 +311,8 @@ class MemoryStore:
             state.events[:] = [event for event in state.events if event[0] not in wanted]
             for binding in [b for b in state.bindings if b[0] in wanted]:
                 del state.bindings[binding]
+            for forget in self.forgetting:
+                forget(wanted)
         return tuple(sorted(wanted))
 
     def create(
@@ -337,6 +348,7 @@ class MemoryCatalog:
 
     def __init__(self, store: MemoryStore) -> None:
         self.store = store
+        store.forgetting.append(self.forget)
         self.documents: dict[str, dict[str, str]] = {
             "projects": {},
             "tasks": {},
@@ -345,6 +357,13 @@ class MemoryCatalog:
         self.plan_documents: dict[tuple[str, str], str] = {}
         self.artifact_documents: dict[tuple[str, str], str] = {}
         self.outbox: dict[str, OutboxEntry] = {}  # insertion order is delivery order
+
+    def forget(self, runs: set[str]) -> None:
+        """Drop the records of discarded runs (see `sqlite catalog.RUN_ROWS`)."""
+        for run in runs:
+            self.documents["tasks"].pop(run, None)
+        for key in [key for key in self.artifact_documents if key[0] in runs]:
+            del self.artifact_documents[key]
 
     def projects(self) -> tuple[str, ...]:
         return tuple(v for _, v in sorted(self.documents["projects"].items()))

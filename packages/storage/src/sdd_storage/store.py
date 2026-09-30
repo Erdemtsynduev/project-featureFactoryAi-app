@@ -21,7 +21,13 @@ from sdd_core.ports import Conflict as Conflict
 from sdd_core.ports import StaleVersion, UnitOfWork
 from sdd_core.storage_rules import check_dependencies, check_discard, check_transition, same_input
 
-from sdd_storage.catalog import SQLiteCatalog
+from sdd_storage.catalog import (
+    ARTIFACT_TABLES,
+    METADATA_TABLES,
+    OUTBOX_TABLES,
+    SQLiteCatalog,
+    forget_runs,
+)
 from sdd_storage.unit import SQLiteUnit
 
 SCHEMA = """
@@ -52,31 +58,10 @@ CREATE TABLE IF NOT EXISTS portfolios(id TEXT PRIMARY KEY, digest TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS lanes(run TEXT PRIMARY KEY REFERENCES runs(id), document TEXT NOT NULL);
 """
 
-# Application metadata (projects, plans, task labels, preferences) behind CatalogRecords.
-# Earlier releases created these tables from the UI; IF NOT EXISTS adopts them unchanged.
-MIGRATION_3 = """
-CREATE TABLE IF NOT EXISTS ui_projects(id TEXT PRIMARY KEY, document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ui_tasks(id TEXT PRIMARY KEY REFERENCES runs(id), document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ui_plans(project TEXT NOT NULL, id TEXT NOT NULL,
-    document TEXT NOT NULL, PRIMARY KEY(project, id));
-CREATE TABLE IF NOT EXISTS ui_state(key TEXT PRIMARY KEY, document TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS effects_kind ON effects(kind);
-"""
-
-# A feature's specification and ticket breakdown, kept by the factory.
-MIGRATION_4 = """
-CREATE TABLE IF NOT EXISTS ui_artifacts(run TEXT NOT NULL REFERENCES runs(id),
-    kind TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(run, kind));
-"""
-
-# Publications to a project's tracker, recorded before delivery (an outbox).
-MIGRATION_5 = """
-CREATE TABLE IF NOT EXISTS tracker_outbox(id TEXT PRIMARY KEY, project TEXT NOT NULL,
-    run TEXT NOT NULL, kind TEXT NOT NULL, document TEXT NOT NULL, status TEXT NOT NULL,
-    attempts INTEGER NOT NULL, next_at REAL NOT NULL, error TEXT NOT NULL, receipt TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS tracker_outbox_item ON tracker_outbox(run, kind);
-CREATE INDEX IF NOT EXISTS tracker_outbox_pending ON tracker_outbox(project, status);
-"""
+# The catalog's tables arrive in the order earlier releases added them (see catalog).
+MIGRATION_3 = METADATA_TABLES + "CREATE INDEX IF NOT EXISTS effects_kind ON effects(kind);"
+MIGRATION_4 = ARTIFACT_TABLES
+MIGRATION_5 = OUTBOX_TABLES
 
 VERSION = 5
 MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5)
@@ -322,11 +307,10 @@ class Store:
                 "DELETE FROM events WHERE run=?",
                 "DELETE FROM bindings WHERE run=?",
                 "DELETE FROM lanes WHERE run=?",
-                "DELETE FROM ui_tasks WHERE id=?",
-                "DELETE FROM ui_artifacts WHERE run=?",
-                "DELETE FROM runs WHERE id=?",
             ):
                 db.executemany(statement, rows)
+            forget_runs(db, rows)
+            db.executemany("DELETE FROM runs WHERE id=?", rows)
         return tuple(sorted(wanted))
 
     def backup(self, target: Path) -> None:
