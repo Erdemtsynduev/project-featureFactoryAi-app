@@ -7,7 +7,6 @@ and each tick `ExecutionDriver.poll` applies the supervisor's observation. The
 supervisor reports an end only once the attempt's sandbox is confirmed empty.
 """
 
-import subprocess
 import time
 import uuid
 from collections.abc import Callable
@@ -18,33 +17,24 @@ from sdd_core import machine
 from sdd_core import revision as revisions
 from sdd_core.codec import (
     canonical,
-    decode,
-    encode,
-    object_json,
-    result_json,
-    result_load,
 )
-from sdd_core.execution import ExecutionRequest
-from sdd_core.models import LIVE_EFFECT_STATUSES, PROCESS_KINDS, SETTLED_STATUSES, Result, Step
+from sdd_core.models import LIVE_EFFECT_STATUSES, SETTLED_STATUSES, Step
 from sdd_core.ports import Conflict
 from sdd_core.records import EffectRecord
-from sdd_core.sdk import PACKET_FILE, Manifest, Packet, Registry, handler_key
+from sdd_core.sdk import Manifest, Packet, Registry, handler_key
 
 from sdd_runtime.application import ApplicationEngine
 from sdd_runtime.execution import ExecutionDriver
-from sdd_runtime.files import atomic_write, verify_evidence
+from sdd_runtime.files import atomic_write
 from sdd_runtime.lane_keeper import LaneKeeper
-from sdd_runtime.packets import build_packet
-from sdd_runtime.supervisor import INPUT_FILE, Plan, Supervisor, health, host_alive
+from sdd_runtime.launcher import Launcher
+from sdd_runtime.receipts import Receipts
+from sdd_runtime.supervisor import Supervisor, health, host_alive
 
 __all__ = ["Coordinator"]
 
-# Windows refuses a command line past 32,767 characters; keep a margin for quoting.
-COMMAND_LINE_CHARS = 32000
 # How often `contain` re-reads a run that moved while its failure was being recorded.
 CONTAIN_RETRIES = 3
-RECEIPT_FILE = "receipt.json"
-HANDLER_FILE = "handler.json"
 
 
 class Coordinator:
@@ -66,11 +56,11 @@ class Coordinator:
         self.engine, self.registry = engine, registry
         self.health_path = health_path
         self.available = available
-        self.supervisor = Supervisor(self._request, self._collect)
+        self.launcher = Launcher(engine, registry)
+        self.receipts = Receipts(engine, registry, self.launcher, lambda: self.supervisor.id)
+        self.supervisor = Supervisor(self.receipts.request, self.receipts.collect)
         self.driver = ExecutionDriver(engine, self.supervisor)
         self.lanes = LaneKeeper(engine)
-        # Packets of attempts this process submitted; a restart rebuilds them.
-        self.packets: dict[str, Packet] = {}
 
     def active(self) -> tuple[str, ...]:
         """Attempts whose processes this coordinator started and still owns."""
@@ -114,107 +104,25 @@ class Coordinator:
             self.block(run_id, now, "Automatic answer: " + str(error))
 
     def manifest(self, step: Step) -> Manifest:
-        """The handler a step runs with now, checked against the step's needs."""
-        manifest = self.registry.get(handler_key(step)).manifest
-        required_profile = step.options.profile_snapshot
-        if not step.handler and step.profile != "default" and required_profile is None:
-            raise ValueError("Resolve named profiles when creating the run with --config")
-        if (
-            required_profile is not None
-            and object_json(manifest.settings).get("profile") != required_profile
-        ):
-            raise ValueError("Run profile differs from its creation snapshot")
-        if step.kind not in manifest.capabilities:
-            raise ValueError(f"Handler {manifest.id} lacks {step.kind} capability")
-        return manifest
+        return self.launcher.manifest(step)
 
     def bind(self, run_id: str) -> None:
-        """Pin every process step's current handler; waits (Conflict) while one runs."""
-        workflow = self.engine.store.workflow(self.engine.store.get(run_id).workflow_digest)
-        with self.engine.store.unit() as db:
-            for step in workflow.steps:
-                if step.kind in PROCESS_KINDS:
-                    document = canonical(encode(self.manifest(step)))
-                    db.bind_handler(run_id, handler_key(step), document)
+        self.launcher.bind(run_id)
 
     def packet(self, run_id: str) -> Packet:
-        return build_packet(self.engine.store, self.registry, run_id)
+        return self.launcher.packet(run_id)
+
+    @property
+    def packets(self) -> dict[str, Packet]:
+        return self.receipts.packets
 
     # Submission ----------------------------------------------------------------
 
     def submit(self, run_id: str) -> None:
         """Prepare the dispatched attempt's launch and hand it to the supervisor."""
-        self.bind(run_id)
-        packet = self.packet(run_id)
-        folder = Path(packet.directory)
-        launch = self.registry.get(handler_key(packet.step)).prepare(packet)
-        if not Path(launch.cwd).resolve().is_relative_to(Path(packet.workspace).resolve()):
-            raise ValueError("Handler cwd must stay inside the owned workspace")
-        if not launch.argv or not Path(launch.argv[0]).is_absolute():
-            raise ValueError("Explicit executable required")
-        if len(subprocess.list2cmdline(launch.argv)) > COMMAND_LINE_CHARS:
-            raise ValueError("Command line too long; the handler must pass its prompt on stdin")
-        atomic_write(folder / PACKET_FILE, canonical(encode(packet)))
-        # The handler this attempt runs with: its provenance, whatever changes later.
-        atomic_write(folder / HANDLER_FILE, canonical(encode(self.manifest(packet.step))))
-        if launch.input:
-            atomic_write(folder / INPUT_FILE, launch.input)
-        plan = Plan(
-            str(folder),
-            packet.workspace,
-            launch.argv,
-            launch.cwd,
-            tuple(sorted(launch.environment)),
-            INPUT_FILE if launch.input else "",
-        )
-        self.packets[packet.attempt.id] = packet
+        packet, plan = self.launcher.prepare(run_id)
+        self.receipts.packets[packet.attempt.id] = packet
         self.driver.submit(run_id, plan.payload())
-
-    def _request(self, attempt: str) -> ExecutionRequest | None:
-        """The durable request the store holds for one of this supervisor's attempts."""
-        with self.engine.store.unit() as db:
-            row = db.execution(attempt)
-        if row is None or row[0] != self.supervisor.id:
-            return None
-        return decode(ExecutionRequest, object_json(row[1]))
-
-    def _collect(self, request: ExecutionRequest, plan: Plan, exit_code: int) -> Result:
-        """The handler's result for a quiescent attempt, bound to the owned revision.
-
-        The receipt is written before the result is applied, so a restart reapplies
-        the same result instead of asking the handler (or the model) again.
-        """
-        packet = self.packets.pop(request.id, None)
-        if packet is None:
-            with self.engine.store.unit() as db:
-                run_id = db.effect(request.id).run_id
-            self.bind(run_id)
-            packet = self.packet(run_id)
-        current = self.revision(packet.run_id)
-        receipt = Path(plan.folder) / RECEIPT_FILE
-        if receipt.exists():
-            result = result_load(receipt.read_text(encoding="utf-8"))
-            if result.revision != current:
-                raise ValueError("Workspace changed after completion")
-        else:
-            result = self._handler_result(packet, exit_code, current)
-        verify_evidence(result.artifacts, Path(packet.workspace), current)
-        atomic_write(receipt, result_json(result))
-        return result
-
-    def _handler_result(self, packet: Packet, exit_code: int, current: str) -> Result:
-        try:
-            return self.registry.get(handler_key(packet.step)).collect(packet, exit_code, current)
-        except ValueError as error:
-            # The attempt is quiescent: bad protocol is a product-independent blocker,
-            # not a reason to invoke the model again and lose the primary diagnosis.
-            return Result(
-                packet.attempt.id,
-                packet.attempt.generation,
-                "blocked",
-                "Provider protocol: " + str(error),
-                current,
-            )
 
     # Observation -----------------------------------------------------------------
 
