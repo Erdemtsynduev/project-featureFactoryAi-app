@@ -6,7 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from sdd_core.machine import revision_named
+from sdd_core import revision as revisions
 from sdd_core.models import Artifact
 
 from sdd_runtime.platform import NO_WINDOW
@@ -31,7 +31,9 @@ def atomic_write(path: Path, content: str) -> None:
 
 # Engine scratch inside a workspace: packets, host receipts and logs per attempt.
 ENGINE_DIRECTORY = ".sdd-engine"
-SCRATCH = (".git", ENGINE_DIRECTORY, ".sdd-lanes", "__pycache__", ".venv", ".pytest_cache")
+# Isolated working copies of runs ("lanes"), one folder per run.
+LANES = ".sdd-lanes"
+SCRATCH = (".git", ENGINE_DIRECTORY, LANES, "__pycache__", ".venv", ".pytest_cache")
 
 
 def attempt_folder(workspace: Path, run_id: str, attempt_id: str) -> Path:
@@ -111,7 +113,7 @@ def revision(root: Path) -> str:
             if any(part in SCRATCH for part in Path(name).parts):
                 continue
             checksum.update(f"{name}\0{content}\0".encode())
-        return revision_named(checksum.hexdigest())
+        return revisions.named(checksum.hexdigest())
     checksum = hashlib.sha256(b"no-git")
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
@@ -124,7 +126,7 @@ def revision(root: Path) -> str:
             with path.open("rb") as stream:
                 while block := stream.read(1024 * 1024):
                     checksum.update(block)
-    return revision_named(checksum.hexdigest())
+    return revisions.named(checksum.hexdigest())
 
 
 def evidence(path: Path, root: Path, current_revision: str) -> Artifact:

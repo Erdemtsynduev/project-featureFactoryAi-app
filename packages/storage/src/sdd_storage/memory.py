@@ -114,7 +114,7 @@ class MemoryUnit:
         return tuple(
             (record.kind, self.location(record.run_id)[1])
             for record in self.effects(LIVE_EFFECT_STATUSES)
-            if record.kind not in ("human", "condition")
+            if record.kind not in UNPINNED_KINDS
         )
 
     def unfinished_claims(self, identifier: str) -> tuple[tuple[Run, str], ...]:

@@ -16,9 +16,10 @@ from functools import partial
 from pathlib import Path
 
 from sdd_core import machine
+from sdd_core import revision as revisions
 from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load, text
 from sdd_core.execution import ExecutionRequest
-from sdd_core.models import LIVE_EFFECT_STATUSES, PROCESS_KINDS, Result, Step
+from sdd_core.models import LIVE_EFFECT_STATUSES, PROCESS_KINDS, SETTLED_STATUSES, Result, Step
 from sdd_core.ports import Conflict
 from sdd_core.records import EffectRecord
 from sdd_core.sdk import PACKET_FILE, Manifest, Packet, Registry, handler_key
@@ -83,7 +84,7 @@ class Coordinator:
             try:
                 if run.active is None:
                     # Accepted is final; a blocked run already shows its own reason.
-                    if run.status not in ("blocked", "accepted"):
+                    if run.status not in SETTLED_STATUSES:
                         self.engine.block(run_id, now, reason)
                 else:
                     # A host still owned here may be alive: ownership stays uncertain.
@@ -290,7 +291,7 @@ class Coordinator:
                 return False
             run = self.engine.store.get(run_id)
         observed = self.revision(run_id)
-        if observed != run.revision and machine.earlier_format(run.revision):
+        if observed != run.revision and revisions.earlier_format(run.revision):
             run = self.engine.rebase_revision(run_id, observed, now)
         if observed != run.revision:
             self.engine.invalidate(run_id, observed, now)

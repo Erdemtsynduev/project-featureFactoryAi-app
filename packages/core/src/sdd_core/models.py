@@ -94,6 +94,10 @@ HELD_NEEDS: tuple[TicketNeed, ...] = ("human", "asset")
 PROCESS_KINDS: tuple[Kind, ...] = ("agent", "check", "operation")
 # Effect kinds that launch no handler process, so they never lock a pinned manifest.
 UNPINNED_KINDS: tuple[Kind, ...] = ("human", "condition")
+# Kinds whose step may be a gate: they produce `passed` evidence without changing files.
+GATE_KINDS: tuple[Kind, ...] = ("agent", "check")
+# Statuses that already say where a run stands: final, or held with its own reason.
+SETTLED_STATUSES: tuple[Status, ...] = ("blocked", "accepted")
 # Effect statuses of an attempt whose process may still run.
 LIVE_EFFECT_STATUSES = ("pending", "running", "uncertain")
 # Provider failures that refuse an attempt before any model work: the attempt's

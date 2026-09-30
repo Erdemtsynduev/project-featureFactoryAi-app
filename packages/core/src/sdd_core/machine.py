@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable
 from dataclasses import astuple, replace
 
+from sdd_core import revision as revisions
 from sdd_core.models import (
     RECORD_ID,
     REFUSALS,
@@ -183,23 +184,10 @@ def invalidate(run: Run, revision: str, now: float) -> Transition:
     return changed(run, held, now, "revision_changed")
 
 
-# Revisions are "<format>:<digest>"; one recorded in an earlier format names the same
-# content differently, so it is re-based, never mistaken for an outside change.
-REVISION_FORMAT = "c1"
-
-
-def revision_named(digest: str) -> str:
-    return f"{REVISION_FORMAT}:{digest}"
-
-
-def earlier_format(revision: str) -> bool:
-    return not revision.startswith(REVISION_FORMAT + ":")
-
-
 def rebase_revision(run: Run, revision: str, now: float) -> Transition:
     """Adopt `revision` for a run recorded in an earlier revision format. Gates proved
     against the old name are cleared and proved again."""
-    if not earlier_format(run.revision) or earlier_format(revision):
+    if not revisions.earlier_format(run.revision) or revisions.earlier_format(revision):
         raise ValueError("Only a revision of an earlier format is re-based")
     return changed(run, replace(run, revision=revision, gates=()), now, "revision_rebased")
 

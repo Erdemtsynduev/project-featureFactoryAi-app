@@ -8,7 +8,15 @@ broken rule raises `ValueError` with the reason.
 import re
 from collections.abc import Iterable, Mapping
 
-from sdd_core.models import KINDS, PROCESS_KINDS, RESERVED_OUTCOMES, STEP_ID, Step, Workflow
+from sdd_core.models import (
+    GATE_KINDS,
+    KINDS,
+    PROCESS_KINDS,
+    RESERVED_OUTCOMES,
+    STEP_ID,
+    Step,
+    Workflow,
+)
 
 MAX_STEPS = 128
 
@@ -73,10 +81,7 @@ def _check_step(step: Step, steps: Mapping[str, Step]) -> None:
     ):
         raise ValueError("Missing handler")
     if step.gate and (
-        step.mutates
-        or not step.required
-        or "passed" not in edges
-        or step.kind not in ("agent", "check")
+        step.mutates or not step.required or "passed" not in edges or step.kind not in GATE_KINDS
     ):
         raise ValueError("Gate must be required, read-only and produce passed evidence")
     if step.kind == "condition" and (set(edges) != {"true", "false"} or not step.condition_key):

@@ -38,11 +38,9 @@ from sdd_core.options import StepOptions
 from sdd_core.sdk import PACKET_FILE, Launch, Manifest, Packet
 from sdd_core.tickets import ticket_title
 
-from sdd_runtime.files import ENGINE_DIRECTORY, atomic_write, evidence
+from sdd_runtime.files import ENGINE_DIRECTORY, LANES, atomic_write, evidence
 from sdd_runtime.git import git, is_repository_top
 from sdd_runtime.submodules import links_of
-
-LANES = ".sdd-lanes"
 
 
 def lane_branch(run_id: str) -> str:

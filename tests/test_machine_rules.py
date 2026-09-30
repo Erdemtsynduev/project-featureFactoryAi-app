@@ -8,6 +8,7 @@ from dataclasses import replace
 
 import pytest
 from sdd_core import machine
+from sdd_core import revision as revisions
 from sdd_core.codec import digest, workflow_json
 from sdd_core.models import Artifact, Attempt, Result, Run, Spend, Step, Usage, Workflow
 
@@ -293,10 +294,10 @@ def test_release_condition_gives_back_its_visit():
 def test_a_revision_of_an_earlier_format_is_re_based_not_an_outside_change():
     workflow = flow()
     run = ready(workflow, gates=("check",))
-    current = machine.revision_named("abc")
-    assert machine.earlier_format(run.revision) and not machine.earlier_format(current)
+    current = revisions.named("abc")
+    assert revisions.earlier_format(run.revision) and not revisions.earlier_format(current)
     rebased = machine.rebase_revision(run, current, 2).state
     assert rebased.revision == current and rebased.gates == ()
     assert rebased.status == run.status, "nothing is held"
     with pytest.raises(ValueError, match="earlier format"):
-        machine.rebase_revision(rebased, machine.revision_named("def"), 3)
+        machine.rebase_revision(rebased, revisions.named("def"), 3)

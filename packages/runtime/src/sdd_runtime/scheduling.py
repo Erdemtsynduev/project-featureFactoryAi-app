@@ -2,14 +2,11 @@
 
 from sdd_core import machine
 from sdd_core.admission import QueueBudget, Slots
-from sdd_core.models import Run
+from sdd_core.models import PROCESS_KINDS, Run
 from sdd_core.ports import Conflict
 from sdd_core.records import AdmissionRecords
 
 from sdd_runtime.runs import RunContext, data_of, optimistic
-
-# Steps that start no process, so they take no slot and no paths.
-UNSLOTTED = ("condition", "finish", "human")
 
 
 class Scheduler:
@@ -45,7 +42,7 @@ class Scheduler:
         for other, _ in others:
             self.runs.flow(other.workflow_digest)
         kind = self.runs.flow(run.workflow_digest).step(run.step).kind
-        if kind in UNSLOTTED:
+        if kind not in PROCESS_KINDS:  # no process: no slot and no paths
             return True
         with store.unit() as db:
             return self._admitted(db, run_id, kind, claim)
