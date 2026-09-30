@@ -11,7 +11,12 @@ contract (workflow schema, result schema, storage schema, HTTP actions) needs a 
 minor version before 1.0 and a migration; existing tasks stay pinned to the workflow
 digest they were created with.
 
-## Unreleased
+## 0.5.0 — 2026-09-30
+
+- **Stopping a finished process group works on macOS.** macOS answers `EPERM` when a
+  group holds only zombies, where Linux reports success, so closing an already stopped
+  attempt failed there. Such a group counts as stopped; a live member that may not be
+  signalled still fails.
 
 - **Drafts replace plans.** A source item (a numbered Markdown file, a tracker item,
   an idea typed under New task) is imported once as a **draft**. The lead cuts it
