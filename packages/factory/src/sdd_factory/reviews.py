@@ -13,7 +13,7 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
-from sdd_core.codec import digest, encode, object_json, sequence, text
+from sdd_core.codec import digest, encode, object_json, sequence
 from sdd_core.editor import FlowChange
 from sdd_core.machine import discardable
 from sdd_core.models import Json, Run
@@ -158,21 +158,6 @@ class PlanReviews:
         )
 
     # Deciding -------------------------------------------------------------------------
-
-    def answer(self, doc: dict[str, Json]) -> dict[str, object]:
-        """Answer a task. An approved review is checked before and applied after the
-        answer; an approved breakdown asks for a review of the fresh plan."""
-        run_id = text(doc.get("id"), "id")
-        item = self.catalog.task(run_id)
-        approved = text(doc.get("outcome"), "outcome") == "approved"
-        if item.reviews and approved:
-            self.revision(run_id)  # refused here, while the review still awaits the answer
-        answered = self.admission.answer(doc)
-        if item.reviews and approved:
-            self.apply(run_id)
-        elif approved and answered.get("admitted"):
-            self.request(run_id, f"breakdown:{run_id}", "a fresh breakdown was approved")
-        return answered
 
     def proposal(self, review: str) -> list[Json]:
         """The changes a review proposes, as its agent wrote them (with reasons)."""

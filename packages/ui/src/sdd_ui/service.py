@@ -21,6 +21,7 @@ from sdd_core.ports import Conflict
 from sdd_core.questions import questions
 from sdd_core.sdk import Registry
 from sdd_factory.admission import TicketAdmission
+from sdd_factory.answers import Answers
 from sdd_factory.control import WorkControl
 from sdd_factory.diagnostics import live, record
 from sdd_factory.documents import FeatureDocuments
@@ -114,6 +115,7 @@ class WorkspaceService:
         )
         # A plan lead reviews approved plans; its approved proposals change the tickets.
         self.reviews = PlanReviews(self.engine, self.catalog, self.flows, self.admission, self.log)
+        self.answers = Answers(self.catalog, self.admission, self.reviews)
         # A project's work comes from its plans folder or its tracker, which also
         # receives the factory's progress through the outbox.
         self.sources = ProjectSources()
@@ -149,7 +151,7 @@ class WorkspaceService:
             "flows-update": self.reflow.update_many,
             "interactive-demo": self.creation.demo,
             "tracker-sync": lambda doc: self.sync_trackers(text(doc.get("project", ""), "project")),
-            "answer": self.reviews.answer,
+            "answer": self.answers.answer,
             "message": self.control.message,
             "recover": self.control.recover,
         }
