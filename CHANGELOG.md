@@ -17,6 +17,9 @@ digest they were created with.
   ended stays in the process table until its parent reads its exit status. The lineage
   counted it as a survivor, so an end timed out with "Descendants outside containment
   have not terminated" although nothing was running.
+- **The application starts at once where the machine's name does not resolve.** The
+  HTTP server asked DNS for the host's full name on start, which took over 15 seconds
+  on macOS; a server bound to 127.0.0.1 does not need it.
 - CI shows each failed test as an annotation of the run. Tests of the Python install
   manager's alias run only where the alias starts an interpreter, not the Store's stub.
 

@@ -9,7 +9,10 @@ from sdd_ui.service import WorkspaceService
 def test_second_click_reuses_only_matching_application(tmp_path, monkeypatch):
     database = tmp_path / "ui.db"
     service = WorkspaceService(database)
+    # Starting never asks DNS for this machine's name: that lookup hangs where it fails.
+    monkeypatch.setattr("socket.getfqdn", lambda *name: pytest.fail("No name lookup"))
     server = create_server(service, 0)
+    assert server.server_name == "127.0.0.1" and server.server_port > 0
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_port}"

@@ -2,6 +2,7 @@
 
 import hashlib
 import secrets
+import socketserver
 import subprocess
 import sys
 import threading
@@ -78,6 +79,17 @@ def relaunch_command(database: Path, config: Path | None, port: int) -> list[str
         f"sys.exit(launch(Path({str(database)!r}), {configured}, {port}, False))"
     )
     return [sys.executable, "-c", code]
+
+
+class LocalServer(ThreadingHTTPServer):
+    """The loopback server. `HTTPServer.server_bind` asks DNS for the host's full name,
+    which takes many seconds on a machine whose name does not resolve (macOS); a
+    server bound to 127.0.0.1 has no use for that name."""
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = str(host), int(port)
 
 
 def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
@@ -197,7 +209,7 @@ def create_server(service: WorkspaceService, port: int) -> ThreadingHTTPServer:
                     canonical({"error": str(error)}).encode(),
                 )
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return LocalServer(("127.0.0.1", port), Handler)
 
 
 def launch(database: Path, config: Path | None, port: int, open_browser: bool) -> int:
