@@ -601,3 +601,19 @@ def test_a_person_skips_a_step_of_a_tasks_flow_from_its_drawer(page, workshop, t
     expect(page.locator(".toast", has_text="Флоу изменён")).to_be_visible()
     run = service.engine.store.get("reflow-me")
     assert run.workflow_digest != digest and run.step == "sign"
+
+
+def test_answer_opens_the_answer_from_any_remembered_tab(page, workshop):
+    from playwright.sync_api import expect
+
+    url, _ = workshop
+    ready(page, url + "/#task/needs-answer")
+    page.get_by_role("tab", name="Детали").click()  # remembered for the next drawer
+    page.get_by_role("button", name="Закрыть").click()
+    ready(page, url + "/#task/needs-answer")
+    expect(page.get_by_role("tab", name="Обсуждение")).to_have_attribute("aria-selected", "true")
+    page.get_by_role("tab", name="Журнал").click()
+    expect(page.locator(".answer-panel")).to_have_count(0)
+    page.locator("dialog[open] .attention").get_by_role("button", name="Ответить").click()
+    expect(page.locator(".answer-panel")).to_be_visible()
+    expect(page.locator(".answer-panel textarea")).to_be_focused()

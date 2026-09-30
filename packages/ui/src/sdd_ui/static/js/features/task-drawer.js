@@ -39,16 +39,27 @@ let request = 0;
 
 /* Header and actions ---------------------------------------------------------- */
 
+/** The answer lives on the discussion tab: switch to it, then bring the answer's
+ * buttons into view with the cursor in its first field. */
+function goToAnswer() {
+  if (!drawer?.detail) return;
+  if (drawer.tab !== "discussion") {
+    drawer.tab = "discussion";
+    remember("drawer-tab", "discussion");
+    renderDrawer(drawer.detail);
+  }
+  const panel = drawer.dialog.body.querySelector(".answer-panel");
+  if (!panel) return;
+  panel.querySelector("textarea, .option")?.focus({ preventScroll: true });
+  panel.scrollIntoView({ block: "end", behavior: "smooth" });
+}
+
 function banner(run) {
   return h(
     "div",
     { class: "attention tone-" + (run.attention?.tone || "idle") },
     h("span", { class: "attention-text" }, attentionText(run)),
-    primaryAction(run, () =>
-      drawer?.dialog.body
-        .querySelector(".answer-panel textarea, .answer-panel .option")
-        ?.focus(),
-    ),
+    primaryAction(run, goToAnswer),
   );
 }
 
@@ -219,7 +230,9 @@ function open(id) {
     version: null,
     tab: recall("drawer-tab", "discussion"),
   };
-  if (!TABS.includes(drawer.tab)) drawer.tab = "discussion";
+  // Work waiting for your answer opens where the answer is.
+  if (!TABS.includes(drawer.tab) || findRun(id)?.attention?.action === "answer")
+    drawer.tab = "discussion";
   load(id);
 }
 
