@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import asdict
 from pathlib import Path
 
 from sdd_core.codec import (
@@ -229,7 +228,7 @@ def main() -> int:
         if args.action == "agents":
             catalog = adapters(tuple(args.extension))
             selected = [catalog[args.adapter]] if args.adapter else list(catalog.values())
-            print(canonical([asdict(discover(adapter)) for adapter in selected]))
+            print(canonical([encode(discover(adapter)) for adapter in selected]))
         elif args.action == "models":
             config = load_profiles(args.config)
             runner = config.runners[args.runner]
@@ -256,7 +255,7 @@ def main() -> int:
                 validate(flow)
                 print(workflow_json(flow))
             else:
-                print(canonical([asdict(item) for item in resolved.manifests()]))
+                print(canonical([encode(item) for item in resolved.manifests()]))
         return 0
 
     if args.action == "schema":
@@ -321,7 +320,7 @@ def main() -> int:
         print("valid")
         return 0
     if args.action == "catalog":
-        print(canonical([asdict(item) for item in registry(args.config).manifests()]))
+        print(canonical([encode(item) for item in registry(args.config).manifests()]))
         return 0
     if args.action in ("supervise", "start"):
         return supervise(args)

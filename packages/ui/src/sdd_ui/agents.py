@@ -8,10 +8,9 @@ one, so a bad edit never reaches the running queue.
 import time
 import tomllib
 from collections.abc import Callable
-from dataclasses import asdict
 from pathlib import Path
 
-from sdd_core.codec import canonical, integer, mapping, object_json, sequence, text
+from sdd_core.codec import canonical, encode, integer, mapping, object_json, sequence, text
 from sdd_core.models import Json
 from sdd_core.ports import Conflict
 from sdd_core.sdk import Registry
@@ -96,7 +95,7 @@ class AgentSettings:
             candidate.unlink(missing_ok=True)
         self.handlers = handlers
         self.installed(handlers)
-        return [asdict(item) for item in handlers.manifests()]
+        return [encode(item) for item in handlers.manifests()]
 
     def connect(self, doc: dict[str, Json]) -> list[dict[str, object]]:
         """Register a discovered CLI as a runner plus a named profile.

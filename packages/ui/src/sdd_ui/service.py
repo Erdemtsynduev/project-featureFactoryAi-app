@@ -11,7 +11,6 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict
 from functools import cache, partial
 from pathlib import Path
 from typing import Any, cast
@@ -204,7 +203,7 @@ class WorkspaceService:
             text(doc.get("project", ""), "project"),
             text(doc.get("language", "ru"), "language"),
         )
-        return asdict(flow)
+        return encode(flow)
 
     # Actions -------------------------------------------------------------------
 
@@ -363,7 +362,7 @@ class WorkspaceService:
         derived, progress = rollup(
             own, {key: tuple(value) for key, value in children.items()}, closed
         )
-        reasons = {key: asdict(value) for key, value in derived.items()}
+        reasons = {key: encode(value) for key, value in derived.items()}
         return {
             "runs": [
                 {
@@ -373,7 +372,7 @@ class WorkspaceService:
                     "needs": calls_needed(run, workflows[run.workflow_digest]),
                     "pending_dependencies": list(pending.get(run.id, ())),
                     "dependencies": prerequisites.get(run.id, []),
-                    "progress": asdict(progress[run.id]) if run.id in progress else None,
+                    "progress": encode(progress[run.id]) if run.id in progress else None,
                     # Its place in the parent's plan: number, wave, what it follows.
                     "ticket": places.get(run.id),
                 }
@@ -398,7 +397,7 @@ class WorkspaceService:
                 {"digest": key, "workflow": outline(flow)} for key, flow in definitions
             ],
             "profile_config": self.agents.document(),
-            "profiles": [asdict(item) for item in self.agents.handlers.manifests()],
+            "profiles": [encode(item) for item in self.agents.handlers.manifests()],
             "intents": self.flows.readiness(),
             "cooldowns": self.agents.resting(),
             "active_processes": len(self.queue.coordinator.active()),
@@ -412,7 +411,7 @@ class WorkspaceService:
 
     def definition(self, digest: str) -> dict[str, object]:
         """One published workflow in full, prompts included (the editor opens it)."""
-        return asdict(self.engine.store.workflow(digest))
+        return encode(self.engine.store.workflow(digest))
 
     def detail(self, identifier: str) -> dict[str, object]:
         run = self.engine.store.get(identifier)
@@ -422,7 +421,7 @@ class WorkspaceService:
         return {
             "run": encode(run),
             "context": context,
-            "workflow": asdict(self.engine.store.workflow(run.workflow_digest)),
+            "workflow": encode(self.engine.store.workflow(run.workflow_digest)),
             "events": self.engine.store.history(identifier, limit=1000),
             "results": [object_json(result) for result in results],
             "metadata": self.catalog.task_metadata().get(identifier, {}),
@@ -451,6 +450,6 @@ class WorkspaceService:
 
     def _questions(self, identifier: str) -> list[dict[str, object]]:
         try:
-            return [asdict(q) for q in questions(self.engine.asked(identifier))]
+            return [encode(q) for q in questions(self.engine.asked(identifier))]
         except ValueError:
             return []

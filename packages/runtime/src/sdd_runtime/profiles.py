@@ -1,10 +1,10 @@
 """Configuration composition; no provider identifiers are hard-coded here."""
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from sdd_core.codec import canonical, integer, mapping, object_json, sequence, text
+from sdd_core.codec import canonical, encode, integer, mapping, object_json, sequence, text
 from sdd_core.models import Result
 from sdd_core.profiles import AgentProfile
 from sdd_core.sdk import Handler, Launch, Manifest, Packet, Registry
@@ -88,7 +88,7 @@ class ProfileHandler:
             delegate.manifest,
             id=profile.name,
             settings=canonical(
-                {"profile": asdict(profile), "adapter": object_json(delegate.manifest.settings)}
+                {"profile": encode(profile), "adapter": object_json(delegate.manifest.settings)}
             ),
         )
 

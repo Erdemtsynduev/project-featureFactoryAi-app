@@ -28,10 +28,10 @@ import os
 import shutil
 import sys
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from sdd_core.codec import canonical, decode, mapping, object_json, sequence, text
+from sdd_core.codec import canonical, decode, encode, object_json, text
 from sdd_core.links import Link, infer_link, missing, stale
 from sdd_core.models import Artifact, Result
 from sdd_core.options import StepOptions
@@ -128,7 +128,7 @@ class Lane:
     attached: list[Attached] = field(default_factory=list)
 
     def document(self) -> str:
-        return canonical(asdict(self))
+        return canonical(encode(self))
 
     def work(self, repo: LaneRepo) -> Path:
         """The repository's working copy in the lane."""
@@ -141,30 +141,8 @@ class Lane:
 
 def load_lane(document: str) -> Lane:
     raw = object_json(document)
-    repos = [
-        LaneRepo(
-            text(item["path"], "path"),
-            text(item["branch"], "branch"),
-            text(item["base"], "base"),
-            text(item["origin"], "origin"),
-            item.get("fresh") is True,
-        )
-        for item in (mapping(x) for x in sequence(raw.get("repos", [])))
-    ]
-    attached = [
-        Attached(text(item["path"], "path"), text(item["dependency"], "dependency"))
-        for item in (mapping(x) for x in sequence(raw.get("attached", [])))
-    ]
-    version = raw.get("version", 1)
-    return Lane(
-        text(raw["run"], "run"),
-        text(raw["workspace"], "workspace"),
-        text(raw["root"], "root"),
-        repos,
-        text(raw.get("status", "active"), "status"),
-        version if isinstance(version, int) else 1,
-        attached,
-    )
+    # A lane written before versions existed is version 1: it has no attached links yet.
+    return decode(Lane, {"version": 1, **raw})
 
 
 def _link(target: Path, link: Path) -> None:

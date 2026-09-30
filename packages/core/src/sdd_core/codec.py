@@ -74,6 +74,9 @@ def _value(hint: Any, raw: Json, name: str, closed: frozenset[type]) -> Any:
         if raw not in get_args(hint):
             raise ValueError(f"Unknown {name}")
         return raw
+    if origin is list:
+        (inner,) = get_args(hint)
+        return [_value(inner, item, name, closed) for item in sequence(raw)]
     if origin is tuple:
         items = sequence(raw)
         args = get_args(hint)

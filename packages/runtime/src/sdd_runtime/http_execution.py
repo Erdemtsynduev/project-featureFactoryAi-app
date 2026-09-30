@@ -1,10 +1,9 @@
 """HTTP execution adapter. The remote service owns durable deduplication and cancellation."""
 
-from dataclasses import asdict
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
-from sdd_core.codec import canonical, integer, number, object_json, result_load, text
+from sdd_core.codec import canonical, encode, integer, number, object_json, result_load, text
 from sdd_core.execution import (
     ExecutionHandle,
     ExecutionObservation,
@@ -49,7 +48,7 @@ class HttpExecutionBackend:
         return f"/executions/{quote(handle.id, safe='')}/{handle.generation}"
 
     def start(self, request: ExecutionRequest) -> ExecutionHandle:
-        handle = self._handle(self._call("POST", "/executions", canonical(asdict(request))))
+        handle = self._handle(self._call("POST", "/executions", canonical(encode(request))))
         if handle != ExecutionHandle(self.id, request.id, request.generation):
             raise ValueError("Remote execution changed request identity")
         return handle

@@ -12,7 +12,6 @@ import re
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict
 from pathlib import Path
 
 from sdd_core.codec import encode, flag, integer, mapping, sequence, text
@@ -436,7 +435,7 @@ class TaskService:
     def preview(self, run_id: str) -> list[dict[str, object]]:
         """Tickets awaiting approval on a feature, for the approval dialog."""
         try:
-            return [asdict(draft) for draft in tickets_of(self.engine.facts(run_id))]
+            return [encode(draft) for draft in tickets_of(self.engine.facts(run_id))]
         except ValueError:
             return []
 
@@ -612,7 +611,7 @@ class TaskService:
                 parent,
                 "tickets",
                 tickets_markdown(title, drafts, ids),
-                [{**asdict(draft), "run": ids[draft.id]} for draft in drafts],
+                [{**encode(draft), "run": ids[draft.id]} for draft in drafts],
             )
         )
         self._export(parent)

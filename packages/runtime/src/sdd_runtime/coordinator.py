@@ -11,13 +11,19 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 
 from sdd_core import machine
 from sdd_core import revision as revisions
-from sdd_core.codec import canonical, integer, number, object_json, result_json, result_load, text
+from sdd_core.codec import (
+    canonical,
+    decode,
+    encode,
+    object_json,
+    result_json,
+    result_load,
+)
 from sdd_core.execution import ExecutionRequest
 from sdd_core.models import LIVE_EFFECT_STATUSES, PROCESS_KINDS, SETTLED_STATUSES, Result, Step
 from sdd_core.ports import Conflict
@@ -128,7 +134,7 @@ class Coordinator:
         with self.engine.store.unit() as db:
             for step in workflow.steps:
                 if step.kind in PROCESS_KINDS:
-                    document = canonical(asdict(self.manifest(step)))
+                    document = canonical(encode(self.manifest(step)))
                     db.bind_handler(run_id, handler_key(step), document)
 
     def packet(self, run_id: str) -> Packet:
@@ -148,9 +154,9 @@ class Coordinator:
             raise ValueError("Explicit executable required")
         if len(subprocess.list2cmdline(launch.argv)) > COMMAND_LINE_CHARS:
             raise ValueError("Command line too long; the handler must pass its prompt on stdin")
-        atomic_write(folder / PACKET_FILE, canonical(asdict(packet)))
+        atomic_write(folder / PACKET_FILE, canonical(encode(packet)))
         # The handler this attempt runs with: its provenance, whatever changes later.
-        atomic_write(folder / HANDLER_FILE, canonical(asdict(self.manifest(packet.step))))
+        atomic_write(folder / HANDLER_FILE, canonical(encode(self.manifest(packet.step))))
         if launch.input:
             atomic_write(folder / INPUT_FILE, launch.input)
         plan = Plan(
@@ -170,14 +176,7 @@ class Coordinator:
             row = db.execution(attempt)
         if row is None or row[0] != self.supervisor.id:
             return None
-        doc = object_json(row[1])
-        return ExecutionRequest(
-            text(doc["id"], "id"),
-            integer(doc["generation"], "generation"),
-            text(doc["handler"], "handler"),
-            text(doc["payload"], "payload"),
-            number(doc["deadline"]),
-        )
+        return decode(ExecutionRequest, object_json(row[1]))
 
     def _collect(self, request: ExecutionRequest, plan: Plan, exit_code: int) -> Result:
         """The handler's result for a quiescent attempt, bound to the owned revision.

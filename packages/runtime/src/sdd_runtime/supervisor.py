@@ -20,7 +20,17 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import psutil
-from sdd_core.codec import canonical, flag, integer, mapping, number, object_json, sequence, text
+from sdd_core.codec import (
+    canonical,
+    encode,
+    flag,
+    integer,
+    mapping,
+    number,
+    object_json,
+    sequence,
+    text,
+)
 from sdd_core.execution import ExecutionHandle, ExecutionObservation, ExecutionRequest
 from sdd_core.models import Result
 from sdd_core.sdk import STDOUT_LOG
@@ -158,7 +168,7 @@ class Supervisor:
         if not Path(plan.cwd).resolve().is_relative_to(Path(plan.workspace).resolve()):
             raise ValueError("Launch cwd must stay inside the owned workspace")
         folder.mkdir(parents=True, exist_ok=True)
-        document = canonical(asdict(request))
+        document = canonical(encode(request))
         with Lease(folder / "launch.lock"):
             record = folder / REQUEST_FILE
             if record.exists():

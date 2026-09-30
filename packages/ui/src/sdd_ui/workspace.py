@@ -3,13 +3,13 @@
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sdd_core.catalog import CatalogRecords
 from sdd_core.codec import (
     canonical,
+    encode,
     mapping,
     object_json,
     result_load,
@@ -68,7 +68,7 @@ class WorkspaceCatalog(ProjectCatalog):
             adapter: AgentAdapter,
         ) -> tuple[str, tuple[InstallationProbe, ...], dict[str, object]]:
             result = discover(adapter)
-            item: dict[str, object] = asdict(result)
+            item: dict[str, object] = encode(result)
             if result.selected is not None:
                 login = authenticate(adapter, result.selected)
                 item["authentication"] = login.status

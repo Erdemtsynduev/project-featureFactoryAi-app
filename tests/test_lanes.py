@@ -183,3 +183,10 @@ def test_coordinator_moves_isolated_runs_into_parallel_lanes(tmp_path, workspace
         assert [e["kind"] for e in store.history("a")][-1] == "lane_opened"
     finally:
         coordinator.close()
+
+
+def test_a_lane_document_round_trips_and_an_unversioned_one_is_version_one(workspace):
+    lane = open_lane(workspace, "t8", (workspace / "libraries" / "alpha",))
+    assert load_lane(lane.document()) == lane
+    old = load_lane('{"run":"x","workspace":"w","root":"r","repos":[]}')
+    assert old.version == 1 and old.attached == [] and old.status == "active"

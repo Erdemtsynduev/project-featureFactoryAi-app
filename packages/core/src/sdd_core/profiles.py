@@ -1,9 +1,9 @@
 """Portable, immutable agent profiles; machine installation details live elsewhere."""
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from typing import Literal
 
-from sdd_core.codec import canonical, object_json
+from sdd_core.codec import canonical, encode, object_json
 from sdd_core.models import Workflow
 
 
@@ -45,7 +45,7 @@ def resolve_profiles(workflow: Workflow, profiles: tuple[AgentProfile, ...]) -> 
         profile = catalog[step.profile]
         if step.mutates and profile.permissions != "workspace-write":
             raise ValueError(f"Read-only profile on mutating step: {step.id}")
-        snapshot = object_json(canonical(asdict(profile)))
+        snapshot = object_json(canonical(encode(profile)))
         config = step.options.changed(profile_snapshot=snapshot).render()
         steps.append(replace(step, handler="", timeout=profile.timeout_seconds, config=config))
     return replace(workflow, steps=tuple(steps))

@@ -1,9 +1,7 @@
 """Durable dispatch for every execution backend: submit once, then poll to an end."""
 
-from dataclasses import asdict
-
 from sdd_core import machine
-from sdd_core.codec import canonical
+from sdd_core.codec import canonical, encode
 from sdd_core.execution import (
     ExecutionBackend,
     ExecutionHandle,
@@ -35,7 +33,7 @@ class ExecutionDriver:
         request = ExecutionRequest(
             run.active.id, run.active.generation, step.handler, payload, run.active.deadline
         )
-        document = canonical(asdict(request))
+        document = canonical(encode(request))
         with self.engine.store.unit() as db:
             current = db.run(run_id)
             if current.active != run.active:

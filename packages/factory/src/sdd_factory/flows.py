@@ -9,10 +9,9 @@ template for the same project always yields the same immutable version.
 
 import sys
 from collections.abc import Callable
-from dataclasses import asdict
 from pathlib import Path
 
-from sdd_core.codec import canonical, mapping, sequence, text, workflow_load
+from sdd_core.codec import canonical, encode, mapping, sequence, text, workflow_load
 from sdd_core.graph import validate
 from sdd_core.models import Json, Workflow
 from sdd_core.profiles import resolve_profiles
@@ -95,7 +94,7 @@ class FlowLibrary:
 
     def check(self, document: Json, publish: bool) -> dict[str, object]:
         flow = workflow_load(canonical(document))
-        return {"workflow": asdict(flow), "digest": self._verified(flow, publish)}
+        return {"workflow": encode(flow), "digest": self._verified(flow, publish)}
 
     def _ticket(
         self, project: dict[str, Json], checks: list[str], repositories: tuple[str, ...]

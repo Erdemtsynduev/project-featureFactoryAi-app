@@ -4,10 +4,17 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
-from dataclasses import asdict
 from pathlib import Path
 
-from sdd_core.codec import canonical, digest, run_json, run_load, workflow_json, workflow_load
+from sdd_core.codec import (
+    canonical,
+    digest,
+    encode,
+    run_json,
+    run_load,
+    workflow_json,
+    workflow_load,
+)
 from sdd_core.graph import validate
 from sdd_core.models import Run, Transition, Workflow
 from sdd_core.ports import Conflict as Conflict
@@ -278,7 +285,7 @@ class Store:
         for effect in transition.effects:
             db.execute(
                 "INSERT INTO effects(id,run,kind,payload,status) VALUES(?,?,?,?,?)",
-                (effect.id, after.id, effect.kind, canonical(asdict(effect)), "pending"),
+                (effect.id, after.id, effect.kind, canonical(encode(effect)), "pending"),
             )
         return after
 
