@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from threading import RLock
 from typing import cast
 
-from sdd_core import machine
 from sdd_core.catalog import AgentCall, OutboxEntry
 from sdd_core.codec import digest, result_load, workflow_json
 from sdd_core.graph import validate
@@ -22,8 +21,18 @@ from sdd_core.models import (
     Workflow,
 )
 from sdd_core.ports import Conflict, StaleVersion, UnitOfWork
-from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE, EffectRecord
-from sdd_core.storage_rules import check_dependencies
+from sdd_core.records import EffectRecord
+from sdd_core.storage_rules import (
+    check_dependencies,
+    check_discard,
+    check_execution_binding,
+    check_immutable,
+    live_process,
+    pin_changes,
+    runnable,
+    same_input,
+    started_unfinished,
+)
 
 
 @dataclass
@@ -121,7 +130,7 @@ class MemoryUnit:
         return tuple(
             (run, self.location(key)[1])
             for key, run in self.state.runs.items()
-            if key != identifier and run.generation > 0 and run.status != "accepted"
+            if key != identifier and started_unfinished(run)
         )
 
     def results(self, identifier: str) -> tuple[Result, ...]:
@@ -146,16 +155,12 @@ class MemoryUnit:
 
     def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
         key = (run_id, handler)
-        old = self.state.bindings.get(key)
-        if old is not None and old != manifest and self._live(run_id):
-            raise Conflict(HANDLER_CHANGED_WHILE_LIVE)
-        self.state.bindings[key] = manifest
-
-    def _live(self, run_id: str) -> bool:
-        return any(
-            e.run_id == run_id and e.kind not in UNPINNED_KINDS and e.status in LIVE_EFFECT_STATUSES
+        live = any(
+            e.run_id == run_id and live_process(e.kind, e.status)
             for e in self.state.effects.values()
         )
+        if pin_changes(self.state.bindings.get(key), manifest, live):
+            self.state.bindings[key] = manifest
 
     def context(self, run_id: str) -> str:
         return self.state.inputs[run_id][1]
@@ -198,40 +203,23 @@ class MemoryUnit:
 
     def bind_execution(self, run_id: str, attempt: str, backend: str, document: str) -> None:
         record = self.effect(attempt)
-        if record.run_id != run_id or record.status not in ("pending", "running"):
-            raise Conflict("Attempt is not available for execution")
-        old = self.execution(attempt)
-        if old is not None and old != (backend, document):
-            raise Conflict("Execution request is immutable")
-        if record.host_nonce is not None or record.pid is not None:
-            raise Conflict("Attempt already belongs to a local host")
+        check_execution_binding(record, run_id, self.execution(attempt), (backend, document))
         self.state.executions[attempt] = (backend, document)
         self.state.effects[attempt] = replace(record, external=True)
 
     def runnable(self) -> tuple[str, ...]:
-        def priority(identifier: str) -> tuple[float, float, str]:
-            dispatched = [
-                at
-                for key, at, kind in self.state.events
-                if key == identifier and kind == "dispatched"
-            ]
-            created = self.state.created[identifier]
-            return max(dispatched, default=created), created, identifier
-
-        return tuple(
-            sorted(
-                (
-                    key
-                    for key, run in self.state.runs.items()
-                    if not run.paused
-                    and run.status not in ("accepted", "blocked")
-                    and all(
-                        self.state.runs[needed].status == "accepted"
-                        for needed in self.state.inputs[key][3]
-                    )
-                ),
-                key=priority,
+        dispatched: dict[str, float] = {}
+        for key, at, kind in self.state.events:
+            if kind == "dispatched":
+                dispatched[key] = max(at, dispatched.get(key, at))
+        return runnable(
+            (
+                run,
+                (self.state.runs[needed].status for needed in self.state.inputs[key][3]),
+                dispatched.get(key, self.state.created[key]),
+                self.state.created[key],
             )
+            for key, run in self.state.runs.items()
         )
 
     def queue_usage(self) -> tuple[int, int]:
@@ -256,9 +244,9 @@ class MemoryUnit:
         return self.state.portfolios.get(identifier)
 
     def bind_portfolio(self, identifier: str, document: str) -> None:
-        old = self.portfolio(identifier)
-        if old is not None and old != document:
-            raise Conflict("Approved portfolio revision is immutable")
+        check_immutable(
+            self.portfolio(identifier), document, "Approved portfolio revision is immutable"
+        )
         self.state.portfolios[identifier] = document
 
 
@@ -302,14 +290,12 @@ class MemoryStore:
         wanted = set(identifiers)
         with self._lock:
             state = self._state
-            for identifier in sorted(wanted):
-                if not machine.discardable(state.runs[identifier]):
-                    raise ValueError(f"Run {identifier} has started; it cannot be discarded")
-                if any(effect.run_id == identifier for effect in state.effects.values()):
-                    raise ValueError(f"Run {identifier} has effects; it cannot be discarded")
-            for key, inputs in state.inputs.items():
-                if key not in wanted and wanted & set(inputs[3]):
-                    raise ValueError(f"Run {key} depends on a discarded run")
+            check_discard(
+                wanted,
+                state.runs.__getitem__,
+                lambda key: any(effect.run_id == key for effect in state.effects.values()),
+                ((key, needed) for key, inputs in state.inputs.items() for needed in inputs[3]),
+            )
             for identifier in wanted:
                 for table in (state.runs, state.inputs, state.created, state.lanes):
                     table.pop(identifier, None)
@@ -331,11 +317,10 @@ class MemoryStore:
         with self._lock:
             old = self._state.runs.get(run.id)
             if old:
-                if (
-                    old.workflow_digest != run.workflow_digest
-                    or self._state.inputs[run.id] != inputs
-                ):
-                    raise Conflict("Run id reused with different input")
+                same_input(
+                    (old.workflow_digest, *self._state.inputs[run.id]),
+                    (run.workflow_digest, *inputs),
+                )
                 return old
             if run.workflow_digest not in self._state.flows:
                 raise KeyError(run.workflow_digest)

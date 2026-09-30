@@ -7,13 +7,12 @@ from contextlib import closing, contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 
-from sdd_core import machine
 from sdd_core.codec import canonical, digest, run_json, run_load, workflow_json, workflow_load
 from sdd_core.graph import validate
 from sdd_core.models import Run, Transition, Workflow
 from sdd_core.ports import Conflict as Conflict
 from sdd_core.ports import StaleVersion, UnitOfWork
-from sdd_core.storage_rules import check_dependencies
+from sdd_core.storage_rules import check_dependencies, check_discard, same_input
 
 from sdd_storage.catalog import SQLiteCatalog
 from sdd_storage.unit import SQLiteUnit
@@ -208,20 +207,22 @@ class Store:
                         (run.id,),
                     )
                 )
-                if (
-                    existing.workflow_digest,
-                    old["workspace"],
-                    old["context"],
-                    old["claim"],
-                    deps,
-                ) != (
-                    run.workflow_digest,
-                    workspace,
-                    context,
-                    claim,
-                    tuple(sorted(set(dependencies))),
-                ):
-                    raise Conflict("Run id reused with different input")
+                same_input(
+                    (
+                        existing.workflow_digest,
+                        old["workspace"],
+                        old["context"],
+                        old["claim"],
+                        deps,
+                    ),
+                    (
+                        run.workflow_digest,
+                        workspace,
+                        context,
+                        claim,
+                        tuple(sorted(set(dependencies))),
+                    ),
+                )
                 return existing
             if (
                 db.execute(
@@ -301,16 +302,14 @@ class Store:
         """
         wanted = set(identifiers)
         with self.transaction() as db:
-            for identifier in sorted(wanted):
-                if not machine.discardable(self.load(db, identifier)):
-                    raise ValueError(f"Run {identifier} has started; it cannot be discarded")
-                if db.execute(
-                    "SELECT 1 FROM effects WHERE run=? LIMIT 1", (identifier,)
-                ).fetchone():
-                    raise ValueError(f"Run {identifier} has effects; it cannot be discarded")
-            for run_id, prerequisite in db.execute("SELECT run,prerequisite FROM dependencies"):
-                if prerequisite in wanted and run_id not in wanted:
-                    raise ValueError(f"Run {run_id} depends on {prerequisite}")
+            check_discard(
+                wanted,
+                lambda key: self.load(db, key),
+                lambda key: bool(
+                    db.execute("SELECT 1 FROM effects WHERE run=? LIMIT 1", (key,)).fetchone()
+                ),
+                db.execute("SELECT run,prerequisite FROM dependencies").fetchall(),
+            )
             rows = [(identifier,) for identifier in sorted(wanted)]
             for statement in (
                 "DELETE FROM dependencies WHERE run=? OR prerequisite=?1",

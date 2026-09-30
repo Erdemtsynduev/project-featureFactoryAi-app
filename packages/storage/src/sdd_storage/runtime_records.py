@@ -3,9 +3,15 @@
 import sqlite3
 
 from sdd_core.codec import canonical, digest, run_load
-from sdd_core.models import LIVE_EFFECT_STATUSES, UNPINNED_KINDS, Run
-from sdd_core.ports import Conflict
-from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE, EffectRecord
+from sdd_core.models import Run
+from sdd_core.records import EffectRecord
+from sdd_core.storage_rules import (
+    check_execution_binding,
+    check_immutable,
+    live_process,
+    pin_changes,
+    runnable,
+)
 
 
 class SQLiteRuntimeRecords:
@@ -19,26 +25,21 @@ class SQLiteRuntimeRecords:
         )
 
     def bind_handler(self, run_id: str, handler: str, manifest: str) -> None:
-        old = self.db.execute(
+        row = self.db.execute(
             "SELECT manifest FROM bindings WHERE run=? AND handler=?", (run_id, handler)
         ).fetchone()
-        if old and old[0] == manifest:
-            return
-        if old:
-            live = self.db.execute(
-                "SELECT 1 FROM effects WHERE run=? AND kind NOT IN (?,?) AND status IN (?,?,?) LIMIT 1",
-                (run_id, *UNPINNED_KINDS, *LIVE_EFFECT_STATUSES),
-            ).fetchone()
-            if live:
-                raise Conflict(HANDLER_CHANGED_WHILE_LIVE)
-            # Between attempts the pin follows the operator's current handler; each attempt
-            # keeps the manifest it ran with in its own folder.
-            self.db.execute(
-                "UPDATE bindings SET manifest=? WHERE run=? AND handler=?",
-                (manifest, run_id, handler),
+        live = any(
+            live_process(str(kind), str(status))
+            for kind, status in self.db.execute(
+                "SELECT kind,status FROM effects WHERE run=?", (run_id,)
             )
-            return
-        self.db.execute("INSERT INTO bindings VALUES(?,?,?)", (run_id, handler, manifest))
+        )
+        if pin_changes(None if row is None else str(row[0]), manifest, live):
+            self.db.execute(
+                "INSERT INTO bindings VALUES(?,?,?) ON CONFLICT(run,handler) "
+                "DO UPDATE SET manifest=excluded.manifest",
+                (run_id, handler, manifest),
+            )
 
     def context(self, run_id: str) -> str:
         row = self.db.execute("SELECT context FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -113,29 +114,28 @@ class SQLiteRuntimeRecords:
         return None if row is None else (str(row[0]), str(row[1]))
 
     def bind_execution(self, run_id: str, attempt: str, backend: str, document: str) -> None:
-        record = self.effect(attempt)
-        if record.run_id != run_id or record.status not in ("pending", "running"):
-            raise Conflict("Attempt is not available for execution")
-        old = self.execution(attempt)
-        if old is not None and old != (backend, document):
-            raise Conflict("Execution request is immutable")
-        if record.host_nonce is not None or record.pid is not None:
-            raise Conflict("Attempt already belongs to a local host")
+        check_execution_binding(
+            self.effect(attempt), run_id, self.execution(attempt), (backend, document)
+        )
         self.db.execute(
             "INSERT OR IGNORE INTO execution_requests VALUES(?,?,?)", (attempt, backend, document)
         )
 
     def runnable(self) -> tuple[str, ...]:
-        return tuple(
-            str(row[0])
-            for row in self.db.execute(
-                "SELECT r.id FROM runs r WHERE json_extract(state,'$.paused')=0 "
-                "AND json_extract(state,'$.status') NOT IN ('accepted','blocked') "
-                # A run waiting for a prerequisite is not a candidate at all.
-                "AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN runs p ON p.id=d.prerequisite "
-                "WHERE d.run=r.id AND json_extract(p.state,'$.status')<>'accepted') "
-                "ORDER BY COALESCE((SELECT max(e.at) FROM events e WHERE e.run=r.id AND e.kind='dispatched'),r.created),r.created,r.id"
-            )
+        rows = self.db.execute(
+            "SELECT r.state,r.created,COALESCE((SELECT max(e.at) FROM events e "
+            "WHERE e.run=r.id AND e.kind='dispatched'),r.created) FROM runs r"
+        ).fetchall()
+        runs = [
+            (run_load(str(state)), float(created), float(last)) for state, created, last in rows
+        ]
+        status = {run.id: run.status for run, _, _ in runs}
+        needs: dict[str, list[str]] = {}
+        for run_id, prerequisite in self.db.execute("SELECT run,prerequisite FROM dependencies"):
+            needs.setdefault(str(run_id), []).append(str(prerequisite))
+        return runnable(
+            (run, [status[key] for key in needs.get(run.id, ())], last, created)
+            for run, created, last in runs
         )
 
     def queue_usage(self) -> tuple[int, int]:
@@ -156,9 +156,9 @@ class SQLiteRuntimeRecords:
         return None if row is None else str(row[0])
 
     def bind_portfolio(self, identifier: str, document: str) -> None:
-        old = self.portfolio(identifier)
-        if old is not None and old != document:
-            raise Conflict("Approved portfolio revision is immutable")
+        check_immutable(
+            self.portfolio(identifier), document, "Approved portfolio revision is immutable"
+        )
         self.db.execute(
             "INSERT OR IGNORE INTO portfolios VALUES(?,?,?)",
             (identifier, digest(document), document),

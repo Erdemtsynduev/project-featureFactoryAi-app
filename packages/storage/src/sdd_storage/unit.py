@@ -4,8 +4,9 @@ import json
 import sqlite3
 from typing import TYPE_CHECKING
 
-from sdd_core.codec import result_load, sequence, text
+from sdd_core.codec import result_load, run_load, sequence, text
 from sdd_core.models import LIVE_EFFECT_STATUSES, UNPINNED_KINDS, Result, Run, Transition
+from sdd_core.storage_rules import started_unfinished
 
 from sdd_storage.runtime_records import SQLiteRuntimeRecords
 
@@ -101,11 +102,13 @@ class SQLiteUnit(SQLiteRuntimeRecords):
 
     def unfinished_claims(self, identifier: str) -> tuple[tuple[Run, str], ...]:
         rows = self.db.execute(
-            "SELECT id,claim FROM runs WHERE id<>? AND json_extract(state,'$.generation')>0 "
-            "AND json_extract(state,'$.status')<>'accepted'",
-            (identifier,),
+            "SELECT state,claim FROM runs WHERE id<>? ORDER BY created,id", (identifier,)
         ).fetchall()
-        return tuple((self.run(str(row[0])), str(row[1])) for row in rows)
+        return tuple(
+            (run, str(claim))
+            for run, claim in ((run_load(str(state)), claim) for state, claim in rows)
+            if started_unfinished(run)
+        )
 
     def results(self, identifier: str) -> tuple[Result, ...]:
         return tuple(
