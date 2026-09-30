@@ -144,3 +144,21 @@ def test_folder_revision_ignores_the_rest_of_its_repository(tmp_path):
     assert revision(plans) == base
     (plans / "one.md").write_text("edited plan", encoding="utf-8")
     assert revision(plans) != base
+
+
+def test_committing_or_staging_unchanged_content_keeps_the_revision(tmp_path):
+    repo = repository(tmp_path / "repo")
+    plans = repo / "plans"
+    plans.mkdir()
+    (plans / "one.md").write_text("plan\r\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "plans")
+    (plans / "one.md").write_text("plan edited\r\n", encoding="utf-8")
+    (plans / "two.md").write_text("new", encoding="utf-8")
+    edited, whole = revision(plans), revision(repo)
+    git(repo, "add", "-A")
+    assert (revision(plans), revision(repo)) == (edited, whole), "staging moves no content"
+    git(repo, "commit", "-q", "-m", "commit the same content")
+    assert (revision(plans), revision(repo)) == (edited, whole), "a commit moves no content"
+    (plans / "two.md").write_text("changed", encoding="utf-8")
+    assert revision(plans) != edited

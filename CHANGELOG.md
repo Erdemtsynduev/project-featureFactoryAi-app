@@ -13,6 +13,10 @@ digest they were created with.
 
 ## Unreleased
 
+- **A revision is the workspace's content.** Files are named by the id of their
+  current content (the index blob, or Git's hash of the working file), so committing or
+  staging unchanged content no longer blocks a running step with "Workspace changed
+  outside attempt"; any edit still does.
 - **Started work can be superseded by the feature that plans it again.** The
   `supersede` action (`ids`, `by`) pauses unfinished runs of the same plan and shows
   them as **Superseded**; their lanes and `ffai/<run>` branches stay for reuse. A

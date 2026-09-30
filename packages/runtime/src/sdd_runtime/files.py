@@ -47,49 +47,72 @@ def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     )
 
 
-def _changed_paths(root: Path, top: Path) -> set[Path]:
-    """Paths under `root` whose content differs from HEAD: modified, deleted, renamed
-    or untracked.
+def _entries(output: bytes) -> list[bytes]:
+    return [entry for entry in output.split(b"\0") if entry]
 
-    Unchanged tracked files are identified by the HEAD tree itself, so large
-    repositories are not re-read on every observation. Ignored files stay out.
-    A nested repository appears as one untracked directory, never recursively.
-    Porcelain paths are relative to the repository top, even for a subfolder.
+
+def _content_ids(root: Path, top: Path) -> dict[str, str]:
+    """Each file under `root` (relative to the repository top) and the id of its
+    content: the index's blob id when the working file matches it, else the id Git
+    gives the working content (`hash-object`, with the repository's filters), or
+    `<deleted>`. Committing or staging moves no id, so neither changes a revision.
+
+    Unchanged files are named by the index, so large repositories are not re-read on
+    every observation. Ignored files stay out; a nested repository that is not
+    ignored is one untracked directory, never recursive.
     """
-    listing = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".")
-    paths: set[Path] = set()
-    entries = iter(listing.stdout.split(b"\0"))
-    for entry in entries:
-        if len(entry) < 4:
-            continue
-        paths.add(top / os.fsdecode(entry[3:]))
-        if entry[:1] in (b"R", b"C"):
-            paths.add(top / os.fsdecode(next(entries, b"")))
-    return {path for path in paths if path == root or path.is_relative_to(root)}
+    ids: dict[str, str] = {}
+    for entry in _entries(_git(root, "ls-files", "-s", "-z", "--full-name", "--", ".").stdout):
+        meta, listed = entry.split(b"\t", 1)
+        ids[os.fsdecode(listed)] = meta.split()[1].decode()
+    changed = _entries(_git(root, "diff", "--name-only", "-z", "--", ".").stdout)
+    untracked = _entries(
+        _git(root, "ls-files", "-o", "-z", "--full-name", "--exclude-standard", "--", ".").stdout
+    )
+    hashed: list[str] = []
+    for raw in (*changed, *untracked):
+        name = os.fsdecode(raw).rstrip("/")
+        path = top / name
+        if path.is_symlink() or (path.exists() and not path.resolve().is_relative_to(top)):
+            raise ValueError("Revision cannot silently follow workspace links")
+        if path.is_file():
+            hashed.append(name)
+        else:
+            ids[name] = "<deleted>" if not path.exists() else "<directory>"
+    if hashed:
+        listing = "\n".join(hashed).encode()
+        result = subprocess.run(
+            ["git", "--no-optional-locks", "-C", str(top), "hash-object", "--stdin-paths"],
+            input=listing,
+            capture_output=True,
+            check=True,
+            timeout=60,
+            creationflags=NO_WINDOW,
+        )
+        ids.update(zip(hashed, result.stdout.decode().split(), strict=True))
+    return ids
 
 
 def revision(root: Path) -> str:
-    """Git HEAD plus the content of every change against it, excluding engine scratch.
+    """The content of `root`, excluding engine scratch.
 
-    A repository top hashes its HEAD commit; a folder inside a repository hashes
-    only its own HEAD tree, so unrelated commits elsewhere do not change it.
-    Non-Git workspaces intentionally use a full content snapshot.
+    Inside a Git repository it names every file by the id of its current content, so a
+    commit or `git add` that changes no content keeps the revision; a folder sees only
+    its own files, so changes elsewhere in the repository do not move it. Non-Git
+    workspaces intentionally use a full content snapshot.
     """
     root = root.resolve(strict=True)
-    response = _git(root, "rev-parse", "--show-toplevel", "HEAD", check=False)
-    lines = response.stdout.decode(errors="replace").split()
-    if response.returncode == 0 and len(lines) == 2:
-        top = Path(lines[0]).resolve()
-        if top == root:
-            checksum = hashlib.sha256(b"git-head:" + lines[1].encode())
-        else:
-            tree = _git(root, "rev-parse", "HEAD:./", check=False).stdout.strip()
-            checksum = hashlib.sha256(b"git-tree:" + tree)
-        paths = _changed_paths(root, top)
-    else:
-        checksum = hashlib.sha256(b"no-git")
-        paths = set(root.rglob("*"))
-    for path in sorted(paths):
+    response = _git(root, "rev-parse", "--show-toplevel", check=False)
+    if response.returncode == 0:
+        top = Path(response.stdout.decode(errors="replace").strip()).resolve()
+        checksum = hashlib.sha256(b"git-content:")
+        for name, content in sorted(_content_ids(root, top).items()):
+            if any(part in SCRATCH for part in Path(name).parts):
+                continue
+            checksum.update(f"{name}\0{content}\0".encode())
+        return checksum.hexdigest()
+    checksum = hashlib.sha256(b"no-git")
+    for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
         if any(p in SCRATCH for p in relative.parts):
             continue
@@ -100,8 +123,6 @@ def revision(root: Path) -> str:
             with path.open("rb") as stream:
                 while block := stream.read(1024 * 1024):
                     checksum.update(block)
-        elif not path.exists():
-            checksum.update(b"<deleted>")
     return checksum.hexdigest()
 
 
