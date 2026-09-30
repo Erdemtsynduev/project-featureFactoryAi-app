@@ -423,5 +423,5 @@ def _requirement_plan(
         (),
         workflow,
         (),
-        "requirement",
+        "feature",
     )

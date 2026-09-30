@@ -5,7 +5,7 @@ Documents decode through one reader driven by the dataclass declarations in
 once, and a field added to a model is read without a second hand-written copy.
 """
 
-from dataclasses import MISSING, Field, fields, is_dataclass, replace
+from dataclasses import MISSING, Field, fields, is_dataclass
 from functools import cache
 from types import NoneType, UnionType
 from typing import (
@@ -19,7 +19,6 @@ from typing import (
     get_type_hints,
 )
 
-from sdd_core.machine import legacy_cause
 from sdd_core.models import Result, Run, Step, Workflow
 from sdd_core.wire import (
     Json,
@@ -177,10 +176,7 @@ def run_json(run: Run) -> str:
 
 
 def run_load(raw: str) -> Run:
-    """A stored run; one written before `cause` existed gets it from its reason."""
-    stored = object_json(raw)
-    run = decode(Run, stored)
-    return run if "cause" in stored else replace(run, cause=legacy_cause(run))
+    return decode(Run, object_json(raw))
 
 
 def result_json(result: Result) -> str:

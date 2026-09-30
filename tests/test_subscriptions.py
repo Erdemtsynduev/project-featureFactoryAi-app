@@ -16,7 +16,6 @@ from sdd_runtime.git import GitProject
 from sdd_runtime.rotation import Cooldowns
 from sdd_runtime.workspace import LocalWorkspace
 from sdd_storage.memory import MemoryStore
-from sdd_ui.queue import _uncapped
 from sdd_ui.subscriptions import QuotaMonitor, overview
 from sdd_usage.quota import (
     CLOSE_POLL_SECONDS,
@@ -261,11 +260,6 @@ def test_attempts_stored_before_reservations_return_nothing():
 
 
 # Queue caps and dispatch --------------------------------------------------------------
-
-
-def test_legacy_default_caps_are_read_as_no_cap():
-    assert _uncapped({"max_calls": 40, "max_planning_calls": 8})["max_calls"] is None
-    assert _uncapped({"max_calls": 60, "max_planning_calls": 8})["max_calls"] == 60
 
 
 def test_queue_caps_are_optional_and_consistent():

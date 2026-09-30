@@ -143,30 +143,6 @@ def stop_requested(run: Run) -> bool:
     return run.paused and run.cause == "stop"
 
 
-def legacy_cause(run: Run) -> Cause:
-    """The cause of a run stored before causes existed, read from its reason text."""
-    if run.reason == STOP_REQUESTED:
-        return "stop"
-    if run.status != "blocked":
-        return ""
-    exact: dict[str, Cause] = {
-        CALL_LIMIT: "call_limit",
-        PLANNING_LIMIT: "planning_limit",
-        TOKEN_LIMIT: "token_limit",
-        VISIT_LIMIT: "visit_limit",
-        QUEUE_LIMIT: "queue_limit",
-        WAIT_RETRY_LIMIT: "wait_limit",
-        WORKSPACE_CHANGED: "workspace_changed",
-    }
-    if run.reason in exact:
-        return exact[run.reason]
-    if run.reason.startswith(UNCERTAIN):
-        return "uncertain"
-    if run.reason.startswith(UNSATISFIED):
-        return "acceptance"
-    return "blocked"
-
-
 def reconcilable(run: Run) -> bool:
     return run.active is None and run.status in RECONCILABLE
 
@@ -233,16 +209,6 @@ def restart(run: Run, target: str, revision: str, now: float) -> Transition:
         run, target, revision, "Nothing was changed yet: restarted from the first working step"
     )
     return changed(run, replace(state, infrastructure_failures=0), now, "restarted", target)
-
-
-def release_condition(run: Run, now: float) -> Transition:
-    """Return a condition attempt persisted by an earlier release to pure routing."""
-    if run.active is None:
-        raise ValueError("No persisted condition attempt")
-    state = replace(
-        _released(run), active=None, status="ready", visits=_visits(run, run.active.step, -1)
-    )
-    return changed(run, state, now, "condition_released")
 
 
 def guidance(run: Run, now: float, message: str) -> Transition:

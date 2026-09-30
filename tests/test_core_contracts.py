@@ -29,6 +29,7 @@ from sdd_core.models import (
     Spend,
     Step,
     Usage,
+    Workflow,
 )
 from sdd_core.schema import workflow_schema
 from sdd_workflows.templates import main_flow
@@ -188,10 +189,46 @@ def test_run_wire_stays_flat_for_storage_queries():
         ("waiting", "Rate limited", ""),
     ],
 )
-def test_runs_stored_before_causes_get_them_from_their_reason(status, reason, cause):
+def test_runs_stored_before_causes_get_them_once_when_the_store_opens(
+    tmp_path, status, reason, cause
+):
+    import sqlite3
+
+    from sdd_storage.store import Store
+
+    path = tmp_path / "old.db"
+    Store(path).publish(Workflow("w", "s", (Step("s", "finish"),)))
     old = object_json(run_json(Run("r", "d", "s", "v", status=status, reason=reason)))
     del old["cause"]
-    assert run_load(canonical(old)).cause == cause
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO runs VALUES('r',?,0,'w','','w',0)", (canonical(old),))
+        db.execute("UPDATE meta SET version=5")
+    store = Store(path)  # a version 5 database: backed up, then rewritten once
+    assert store.get("r").cause == cause
+    assert list(tmp_path.glob("old.db.pre-v6-*.bak")), "backed up before the rewrite"
+    with sqlite3.connect(path) as db:
+        assert "cause" in object_json(db.execute("SELECT state FROM runs").fetchone()[0])
+
+
+def test_a_feature_stored_as_a_requirement_is_rewritten_once(tmp_path):
+    import sqlite3
+
+    from sdd_storage.store import Store
+
+    path = tmp_path / "old.db"
+    store = Store(path)
+    store.publish(Workflow("w", "s", (Step("s", "finish"),)))
+    store.create(
+        Run("r", store.publish(Workflow("w", "s", (Step("s", "finish"),))), "s", "v"),
+        "w",
+        "",
+        "w",
+        0,
+    )
+    store.catalog().save_task("r", '{"kind":"requirement","project":"p"}')
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE meta SET version=5")
+    assert object_json(Store(path).catalog().tasks()[0][1])["kind"] == "feature"
 
 
 def test_rewording_a_reason_does_not_change_behaviour():

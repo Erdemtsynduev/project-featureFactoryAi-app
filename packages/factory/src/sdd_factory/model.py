@@ -12,9 +12,8 @@ done; the parent is delivered when all its children are, or when the operator
 closes it early, which detaches its unfinished children (`origin` remembers where
 they came from).
 
-Records are application metadata beside the engine's runs. They are versioned by
-replacement: `TaskRecord.load` reads every earlier spelling (a feature was once
-stored as kind "requirement").
+Records are application metadata beside the engine's runs, versioned by replacement.
+Earlier spellings are rewritten once by the store's data migrations.
 """
 
 from collections.abc import Mapping
@@ -26,7 +25,6 @@ from sdd_core.tickets import needs_of
 
 type Kind = Literal["feature", "ticket", "task"]
 KINDS: tuple[Kind, ...] = ("feature", "ticket", "task")
-EARLIER_KINDS = {"requirement": "feature"}
 
 # Intents offered when creating work, in the order the dialog shows them, with the
 # template each one runs.
@@ -58,7 +56,7 @@ class TaskRecord:
     @classmethod
     def load(cls, document: dict[str, Json]) -> "TaskRecord":
         raw = str(document.get("kind", "task"))
-        spelled = EARLIER_KINDS.get(raw, raw)
+        spelled = raw
         kind: Kind = next((known for known in KINDS if known == spelled), "task")
         rows = document.get("rows")
         return cls(

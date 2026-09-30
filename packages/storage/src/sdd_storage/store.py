@@ -28,6 +28,7 @@ from sdd_storage.catalog import (
     SQLiteCatalog,
     forget_runs,
 )
+from sdd_storage.migrations import DATA_MIGRATIONS
 from sdd_storage.unit import SQLiteUnit
 
 SCHEMA = """
@@ -63,7 +64,7 @@ MIGRATION_3 = METADATA_TABLES + "CREATE INDEX IF NOT EXISTS effects_kind ON effe
 MIGRATION_4 = ARTIFACT_TABLES
 MIGRATION_5 = OUTBOX_TABLES
 
-VERSION = 5
+VERSION = 6
 MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5)
 
 
@@ -90,10 +91,14 @@ class Store:
                 db.execute("INSERT INTO meta VALUES(1)")
             elif not 1 <= row[0] <= VERSION:
                 raise ValueError("Unsupported database version; restore a compatible backup")
+            stored = 1 if row is None else int(row[0])
             for migration in MIGRATIONS:
                 for statement in migration.split(";"):
                     if statement.strip():
                         db.execute(statement)
+            for version, rewrite in sorted(DATA_MIGRATIONS.items()):
+                if stored < version:
+                    rewrite(db)
             db.execute("UPDATE meta SET version=?", (VERSION,))
 
     def catalog(self) -> SQLiteCatalog:

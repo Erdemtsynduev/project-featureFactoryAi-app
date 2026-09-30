@@ -13,6 +13,17 @@ digest they were created with.
 
 ## Unreleased
 
+- **Stored data moves forward once; compatibility shims are gone.** Schema version 6
+  records every run's cause and every feature's kind explicitly (backed up first). Removed:
+  cause inference on read, the `requirement` kind spelling, the `emits` option spelling,
+  the start-up release of earlier engines' blocks, the earlier queue caps and `.ui.json`,
+  conditions persisted as effects, and restoring pre-supervisor hosts by PID.
+- **Refactoring, continued.** The coordinator, lanes, CLI, task service and workspace
+  service are split by reason to change (Launcher, Receipts; lane_model, lanes,
+  lane_actions; command tables; WorkCreation, WorkControl, TicketAdmission,
+  FeatureDocuments, Supersession, Answers; BoardView, background jobs). Board decisions
+  are pure rules (`sdd_factory.board`, `sdd_core.admission.revivable`); templates are
+  built from a table and typed `ProjectSettings`.
 - **Work in progress can change its flow.** Skip a step, insert one, run a step with
   another agent profile or set a step option: the engine publishes a new version and
   migrates the idle run onto it, keeping progress where steps are unchanged. A person does

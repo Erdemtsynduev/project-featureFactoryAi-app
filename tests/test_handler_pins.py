@@ -8,7 +8,6 @@ import pytest
 from sdd_core.models import Attempt, Effect, Run, Step, Transition, Workflow
 from sdd_core.ports import Conflict
 from sdd_core.records import HANDLER_CHANGED_WHILE_LIVE
-from sdd_ui.service import LEGACY_BLOCKS, WorkspaceService
 from test_runtime import runtime, settle
 
 
@@ -64,26 +63,3 @@ def test_a_handler_change_under_a_live_attempt_waits_instead_of_blocking(tmp_pat
         assert coordinator.engine.store.get("one").status == "running", "never blocked"
     finally:
         coordinator.close()
-
-
-def test_runs_an_earlier_engine_blocked_by_its_pin_are_released_once(tmp_path):
-    database = tmp_path / "ui.db"
-    service = WorkspaceService(database)
-    root = tmp_path / "project"
-    root.mkdir()
-    flow = Workflow(
-        "w", "work", (Step("work", "human", transitions=(("done", "end"),)), Step("end", "finish"))
-    )
-    definition = service.engine.store.publish(flow)
-    run = service.engine.create("stuck", definition, root, "", "rev", 0)
-    reason = "Pinned handler settings or version changed"
-    assert reason in LEGACY_BLOCKS
-    service.engine.block("stuck", 1, reason)
-    service.coordinator.close()
-    reopened = WorkspaceService(database)
-    try:
-        state = reopened.engine.store.get("stuck")
-        assert state.status == "ready" and state.version > run.version
-        assert any(e.get("legacy") for e in reopened.flight(run="stuck"))
-    finally:
-        reopened.coordinator.close()

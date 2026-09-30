@@ -29,7 +29,7 @@ from sdd_runtime.files import atomic_write
 from sdd_runtime.lane_keeper import LaneKeeper
 from sdd_runtime.launcher import Launcher
 from sdd_runtime.receipts import Receipts
-from sdd_runtime.supervisor import Supervisor, health, host_alive
+from sdd_runtime.supervisor import Supervisor, health
 
 __all__ = ["Coordinator"]
 
@@ -153,10 +153,6 @@ class Coordinator:
             run = self.engine.store.get(row.run_id)
             if run.active is None:
                 raise RuntimeError("Active effect without an attempt")
-            if row.kind == "condition":
-                # Earlier releases dispatched conditions as effects; route them purely now.
-                self.engine.release_condition(row.run_id, now)
-                continue
             request = requests[row.id]
             if request is not None:
                 if request[0] == self.supervisor.id:
@@ -165,15 +161,10 @@ class Coordinator:
             self._restore_unsubmitted(row, now)
 
     def _restore_unsubmitted(self, row: EffectRecord, now: float) -> None:
-        """An attempt without an execution request: never submitted, or an older host."""
-        if row.pid is None:
-            confirmed, reason = True, "Launch never started"
-        else:
-            # A host launched by a release before the supervisor: prove it is gone.
-            gone = host_alive(int(row.pid), float(row.created or 0)) is False
-            confirmed, reason = gone, "Coordinator restart reconciliation"
-        launched = row.pid is not None
-        self.engine.recover(row.run_id, now, confirmed, reason, self.revision(row.run_id), launched)
+        """An attempt without an execution request never started: no host ran it."""
+        self.engine.recover(
+            row.run_id, now, True, "Launch never started", self.revision(row.run_id), False
+        )
 
     # Scheduling ------------------------------------------------------------------
 

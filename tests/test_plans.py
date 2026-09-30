@@ -106,9 +106,9 @@ def test_rebuild_plans_never_started_work_again_and_carries_what_it_recorded(tmp
                 TaskRecord.load({"project": "game", "kind": kind, "plan": "110", **extra}),
             )
 
-        legacy("110_FH-02", "requirement", "Recorded acceptance draft:\nСтыки не видны с 5 м.")
-        legacy("110_FH-03", "requirement")
-        legacy("110_FH-09", "requirement")
+        legacy("110_FH-02", "feature", "Recorded acceptance draft:\nСтыки не видны с 5 м.")
+        legacy("110_FH-03", "feature")
+        legacy("110_FH-09", "feature")
         legacy(
             "110_FH-03_1",
             "ticket",
@@ -170,24 +170,6 @@ def test_store_refuses_to_discard_started_or_needed_runs(tmp_path):
         service.coordinator.close()
 
 
-def test_task_blocked_by_the_old_dispatch_race_is_released_on_start(tmp_path):
-    database = tmp_path / "ui.db"
-    service = WorkspaceService(database)
-    root = tmp_path / "work"
-    root.mkdir()
-    flow = service.engine.store.publish(Workflow("empty", "done", (Step("done", "finish"),)))
-    service.engine.create("stuck", flow, root, "", "rev", 1)
-    service.engine.block("stuck", 2, "Run is not dispatchable")
-    service.coordinator.close()
-    restarted = WorkspaceService(database)
-    try:
-        run = restarted.engine.store.get("stuck")
-        assert run.status == "ready" and run.paused
-        assert any(e["kind"] == "unblocked" for e in restarted.flight(run="stuck"))
-    finally:
-        restarted.coordinator.close()
-
-
 def test_a_project_without_a_plans_folder_has_no_plans(tmp_path):
     service = WorkspaceService(tmp_path / "ui.db")
     try:
@@ -216,7 +198,7 @@ def test_a_started_per_row_requirement_is_superseded_by_the_feature_planning_its
             "110_FH-03", flow, root, "Recorded decisions: кабина от первого лица.", "r", 1
         )
         catalog.save_task(
-            "110_FH-03", TaskRecord.load({"project": "game", "kind": "requirement", "plan": "110"})
+            "110_FH-03", TaskRecord.load({"project": "game", "kind": "feature", "plan": "110"})
         )
         engine.command("110_FH-03", "resume", "go", 0, 2)
         engine.block("110_FH-03", 4, "Workspace changed outside attempt")

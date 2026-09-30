@@ -13,8 +13,8 @@ from sdd_workflows.templates import feature
 
 
 def test_step_options_are_typed_and_unknown_options_are_refused_on_publish():
-    options = StepOptions.parse('{"emits":"tickets","purpose":"planning"}')
-    assert options.produces == "tickets" and options.planning  # earlier spelling still reads
+    options = StepOptions.parse('{"produces":"tickets","purpose":"planning"}')
+    assert options.produces == "tickets" and options.planning
     assert StepOptions.parse(options.render()) == options
     assert StepOptions.parse("{}").cwd == "."
     with pytest.raises(ValueError, match="argv must be a list"):
@@ -37,8 +37,8 @@ def test_step_options_are_typed_and_unknown_options_are_refused_on_publish():
     assert roles["spec"] == "specification" and roles["tickets"] == "tickets"
 
 
-def test_task_records_read_earlier_spellings_and_can_be_corrected(tmp_path):
-    assert TaskRecord.load({"kind": "requirement", "rows": ["A-1"]}).kind == "feature"
+def test_task_records_read_their_kind_and_can_be_corrected(tmp_path):
+    assert TaskRecord.load({"kind": "feature", "rows": ["A-1"]}).kind == "feature"
     assert TaskRecord.load({"kind": "strange"}).kind == "task"
     assert TaskRecord(title="T").document() == {
         "kind": "task",

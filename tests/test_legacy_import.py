@@ -89,7 +89,7 @@ def test_translation_orders_dependencies_and_resolves_checks():
     assert dict(plan.skipped) == {"1:C.4": "Check executable is not resolved: node"}
     assert "1:A.1" in plan.satisfied
     requirement_plan, first, waiting, second, _ = plan.tickets
-    assert requirement_plan.kind == "requirement" and requirement_plan.scope == ("plans",)
+    assert requirement_plan.kind == "feature" and requirement_plan.scope == ("plans",)
     assert (
         requirement_plan.workflow.id == "feature" and "Not decomposed" in requirement_plan.context
     )

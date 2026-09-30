@@ -171,8 +171,6 @@ An attempt runs with the handler manifest of its step at dispatch, and `handler.
 folder records it. Between attempts a run's binding follows the installed handler, so an agent
 CLI update, an engine upgrade or a profile edit applies from the next step. While an attempt of
 the run is live, a changed handler is a `Conflict`: the coordinator waits and never blocks.
-Runs that an earlier release blocked with "Pinned handler settings or version changed" are
-released once on start.
 
 ## One repository per ticket; the engine commits and pins
 A ticket changes exactly one repository. Work across repositories is a chain of tickets: the
@@ -263,6 +261,15 @@ against runaway loops and counts only calls that may have reached a model.
 
 ## Storage and operations
 
+Stored data moves forward once. Schema changes are idempotent SQL applied on every open;
+a rewrite of stored data is keyed by the schema version that introduced it
+(`sdd_storage.migrations.DATA_MIGRATIONS`) and runs once, after the store backs the
+database up. Version 6 records every run's cause explicitly and every feature's kind, so
+no reader infers them any more. Records that are immutable by design (published
+workflows, result receipts) are read as written: a ticket draft without `needs` still
+reads a leading `HITL` goal as a person's decision. Lanes and revisions of an earlier
+format move forward lazily, when their run next starts.
+
 SQLite uses FULL synchronous WAL and BEGIN IMMEDIATE. Schema 1 -> 2 creates a verified backup
 before migration. Unsupported future versions are rejected. Backup uses SQLite's online API.
 Diagnostics archival only handles settled logs older than retention that are not evidence references;
@@ -321,7 +328,7 @@ fresh session with the full bounded context.
 
 Every change of a run is a named pure transition in `sdd_core.machine` (`dispatch`,
 `complete`, `recover`, `control`, `block`, `invalidate`, `relocate`, `reconcile`,
-`release_condition`, `guidance`). Runtime code never builds a state with `changed()`;
+`migrate`, `rebase_revision`, `guidance`, `plan_revised`). Runtime code never builds a state with `changed()`;
 the boundary gate rejects `machine.changed` outside core.
 
 Slow observations stay outside transactions. `dispatch` and `complete` read a snapshot,
@@ -392,7 +399,7 @@ not by guessing from result shapes.
 Step options are typed (`sdd_core.options.StepOptions`): purpose, produces, recovery
 step, auto answer and outcome, preset questions, title, command argv/cwd/error pattern,
 profile snapshot. Publication refuses unknown options, so a misspelt option fails
-early instead of being ignored at run time. `emits: tickets` is still read.
+early instead of being ignored at run time.
 
 Every agent result may carry `notes` (0-5 durable facts). They form the task memory
 shared by later steps and by other agents, so a fallback profile or a fresh session
@@ -407,8 +414,7 @@ per session and only while the `revive` queue setting is on. Queue budgets apply
 
 `sdd_ui.service.WorkspaceService` composes the factory, the queue and the agents and
 maps HTTP action names to use cases. `queue` owns the coordinator's lifecycle and the
-queue settings (stored in the control database; an earlier `<db>.ui.json` is adopted
-once), `agents` the profiles file (shared with the CLI's `--config`) and rotation,
+queue settings (stored in the control database), `agents` the profiles file (shared with the CLI's `--config`) and rotation,
 `attention` the single "why is this task (not) moving" derivation.
 
 The board's read model is a projection per run with server-derived fields: attention,

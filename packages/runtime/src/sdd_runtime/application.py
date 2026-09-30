@@ -182,9 +182,6 @@ class ApplicationEngine:
     ) -> Run:
         return self.intake.recover(run_id, now, confirmed, reason, revision, launched)
 
-    def release_condition(self, run_id: str, now: float) -> Run:
-        return self.intake.release_condition(run_id, now)
-
     # Human steps ---------------------------------------------------------------
 
     def facts(self, run_id: str) -> str:

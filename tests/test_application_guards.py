@@ -140,11 +140,6 @@ def test_recovery_refuses_live_or_stale_requests_and_workflows_without_a_path(en
         engine.request_recovery("one", idle.version, 6)
 
 
-def test_releasing_a_condition_needs_a_persisted_condition_attempt(engine):
-    with pytest.raises(ValueError, match="No persisted condition"):
-        engine.release_condition("one", 1)
-
-
 def test_facts_of_a_run_without_results_are_empty(engine):
     assert engine.facts("one") == "{}"
     assert engine.asked("one") == "{}"

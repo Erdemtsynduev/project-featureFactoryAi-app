@@ -29,30 +29,19 @@ DEFAULTS: dict[str, Json] = {
     "max_planning_calls": None,
     "revive": True,
 }
-# Caps every earlier release saved by default. They were never a subscription's limit,
-# so a queue still holding exactly them runs uncapped from now on.
-LEGACY_DEFAULT_CAPS = (40, 8)
 WATCH_EVERY = 1.0
 
 
 class QueueSettings:
-    """Queue settings kept in the control database with everything else.
-
-    An earlier release kept them in `<database>.ui.json`; that file is adopted once
-    and renamed, so there is one source of truth.
-    """
+    """Queue settings kept in the control database with everything else."""
 
     KEY = "queue-settings"
 
-    def __init__(self, records: CatalogRecords, earlier: Path) -> None:
-        self.records, self.earlier = records, earlier
+    def __init__(self, records: CatalogRecords) -> None:
+        self.records = records
 
     def load(self) -> dict[str, Json]:
         raw = self.records.preference(self.KEY)
-        if raw is None and self.earlier.is_file():
-            raw = canonical(object_json(self.earlier.read_text(encoding="utf-8")))
-            self.records.save_preference(self.KEY, raw)
-            self.earlier.replace(self.earlier.with_suffix(".json.adopted"))
         return object_json(raw) if raw else {}
 
     def save(self, settings: dict[str, Json]) -> None:
@@ -82,7 +71,7 @@ class QueueController:
         # Opening the application never starts work, except right after a restart
         # the operator asked for: then the queue continues as it was.
         resumed = bool(stored.pop("restarting", False)) and bool(stored.get("running"))
-        self.settings: dict[str, Json] = {**DEFAULTS, **_uncapped(stored), "running": resumed}
+        self.settings: dict[str, Json] = {**DEFAULTS, **stored, "running": resumed}
         self.coordinator = self._coordinator()
         self.error: str | None = None
         self.last_tick: float | None = None
@@ -259,10 +248,3 @@ class QueueController:
 def _cap(value: Json, name: str) -> int | None:
     """An optional call cap: a whole number, or null for none."""
     return None if value is None else integer(value, name)
-
-
-def _uncapped(stored: dict[str, Json]) -> dict[str, Json]:
-    """Settings saved with the legacy default caps, read as uncapped."""
-    if (stored.get("max_calls"), stored.get("max_planning_calls")) == LEGACY_DEFAULT_CAPS:
-        return {**stored, "max_calls": None, "max_planning_calls": None}
-    return stored

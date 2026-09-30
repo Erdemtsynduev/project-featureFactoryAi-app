@@ -73,10 +73,6 @@ class StepOptions:
     @classmethod
     def _read(cls, config: str) -> "StepOptions":
         raw = object_json(config)
-        if "emits" in raw:  # earlier spelling of `produces: tickets`
-            if raw.pop("emits") != "tickets":
-                raise ValueError("Step option emits must be tickets")
-            raw.setdefault("produces", "tickets")
         known = {item.name for item in fields(cls)} - {"unknown"}
         values: dict[str, object] = {}
         for name in TEXT_OPTIONS:

@@ -71,10 +71,6 @@ def post(port: int, action: str, body: bytes = b"{}") -> dict[str, object]:
 
 def test_restart_relaunches_the_same_server_and_keeps_the_queue_state(tmp_path, monkeypatch):
     database = tmp_path / "ui.db"
-    (tmp_path / "ui.ui.json").write_text(
-        json.dumps({"max_calls": 5, "max_planning_calls": 1, "revive": True, "running": True}),
-        encoding="utf-8",
-    )
     port = free_port()
     spawned: list[list[str]] = []
     monkeypatch.setattr(server_module.webbrowser, "open", lambda url: True)
@@ -91,9 +87,6 @@ def test_restart_relaunches_the_same_server_and_keeps_the_queue_state(tmp_path, 
     thread.join(timeout=30)
     assert not thread.is_alive()
     assert spawned == [relaunch_command(database.resolve(), None, port)]
-    # The earlier settings file was adopted into the database.
-    assert not (tmp_path / "ui.ui.json").exists()
-    assert (tmp_path / "ui.ui.json.adopted").is_file()
 
     # The relaunch command really starts the server again, on the same port.
     # A fresh interpreter imports the whole application: slow CI runners need time.

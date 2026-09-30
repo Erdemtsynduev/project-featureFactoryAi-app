@@ -10,7 +10,7 @@ import pytest
 from sdd_core import machine
 from sdd_core import revision as revisions
 from sdd_core.codec import digest, workflow_json
-from sdd_core.models import Artifact, Attempt, Result, Run, Spend, Step, Usage, Workflow
+from sdd_core.models import Artifact, Result, Run, Spend, Step, Usage, Workflow
 
 
 def flow(**budgets: int) -> Workflow:
@@ -129,11 +129,6 @@ def test_invalidate_and_relocate_refuse_a_live_attempt():
         machine.invalidate(running(), "new", 2)
     with pytest.raises(ValueError, match="move an active"):
         machine.relocate(running(), "new", 2, "lane")
-
-
-def test_release_condition_needs_a_persisted_attempt():
-    with pytest.raises(ValueError, match="No persisted condition"):
-        machine.release_condition(ready(), 1)
 
 
 def test_unknown_or_misplaced_commands_are_refused():
@@ -282,13 +277,6 @@ def test_restart_rewinds_to_the_target_with_a_fresh_retry_budget():
     assert restarted.state.step == "work" and restarted.state.paused
     assert restarted.state.infrastructure_failures == 0 and restarted.state.gates == ()
     assert restarted.events[0].kind == "restarted" and restarted.events[0].detail == "work"
-
-
-def test_release_condition_gives_back_its_visit():
-    attempt = Attempt("c1", "route", 1, 0, 10, "base")
-    run = ready(active=attempt, status="running", visits=(("route", 1),))
-    released = machine.release_condition(run, 2).state
-    assert released.active is None and dict(released.visits)["route"] == 0
 
 
 def test_a_revision_of_an_earlier_format_is_re_based_not_an_outside_change():

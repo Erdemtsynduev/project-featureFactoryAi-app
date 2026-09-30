@@ -80,14 +80,3 @@ class ResultIntake:
             if run.active:
                 db.effect_status(run.active.id, "abandoned" if confirmed else "uncertain")
             return state
-
-    def release_condition(self, run_id: str, now: float) -> Run:
-        """Return a condition attempt persisted by an earlier release to pure routing."""
-        workflow = self.runs.workflow_of(run_id)
-        with self.runs.store.unit() as db:
-            run = db.run(run_id)
-            if run.active is None or workflow.step(run.active.step).kind != "condition":
-                raise ValueError("No persisted condition attempt")
-            state = db.apply(run, machine.release_condition(run, now))
-            db.effect_status(run.active.id, "abandoned")
-            return state
