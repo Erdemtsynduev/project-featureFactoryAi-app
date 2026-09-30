@@ -11,15 +11,14 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from sdd_core.codec import canonical, encode, mapping, sequence, text, workflow_load
+from sdd_core.codec import canonical, encode, text, workflow_load
 from sdd_core.graph import validate
-from sdd_core.models import Json, Workflow
+from sdd_core.models import PROCESS_KINDS, Json, Workflow
 from sdd_core.profiles import resolve_profiles
 from sdd_core.sdk import Registry, handler_key
 from sdd_runtime.engine import Engine
 from sdd_runtime.profiles import load_profiles
 from sdd_workflows.templates import (
-    CheckCommand,
     approved_feature,
     capabilities,
     command_demo,
@@ -34,6 +33,7 @@ from sdd_workflows.templates import (
 )
 
 from sdd_factory.model import INTENTS
+from sdd_factory.settings import ProjectSettings
 
 TEMPLATES = (*INTENTS, "approved-feature", "interview", "demo", "plan-review")
 
@@ -48,6 +48,16 @@ class FlowLibrary:
     ) -> None:
         self.engine, self.config = engine, config
         self.handlers, self.project = handlers, project
+        # One builder per template: a new template is a new row.
+        self.builders: dict[str, Callable[[ProjectSettings, tuple[str, ...]], Workflow]] = {
+            "feature": self._feature,
+            "main-flow": lambda settings, repositories: main_flow(),
+            "ticket": self._ticket,
+            "approved-feature": lambda settings, repositories: approved_feature(),
+            "interview": lambda settings, repositories: interview(),
+            "demo": lambda settings, repositories: command_demo(sys.executable),
+            "plan-review": lambda settings, repositories: plan_review(),
+        }
 
     def template(
         self,
@@ -58,26 +68,11 @@ class FlowLibrary:
     ) -> Workflow:
         """The project's version of a template. A ticket owning `repositories` runs the
         checks configured for them; otherwise the project's checks."""
-        if name not in TEMPLATES:
+        if name not in self.builders:
             raise ValueError("Unknown template")
-        project = self.project(project_id)
-        checks = [text(x, "check") for x in sequence(project.get("checks", []))]
-        if name == "demo":
-            flow = command_demo(sys.executable)
-        elif name == "ticket":
-            flow = self._ticket(project, checks, repositories)
-        elif name == "feature":
-            # The planner learns what the project's ticket agents can and cannot do.
-            flow = feature(agents=capabilities(self._ticket(project, checks, repositories)))
-        else:
-            flow = {
-                "approved-feature": approved_feature,
-                "main-flow": main_flow,
-                "interview": interview,
-                "plan-review": plan_review,
-            }[name]()
-        flow = localized(flow, language)
-        return flow if name == "demo" else with_checks(flow, checks)
+        settings = ProjectSettings.of(self.project(project_id))
+        flow = localized(self.builders[name](settings, repositories), language)
+        return flow if name == "demo" else with_checks(flow, list(settings.checks))
 
     def readiness(self) -> dict[str, list[str]]:
         """Agent profiles each task intent needs but the registry lacks."""
@@ -87,7 +82,7 @@ class FlowLibrary:
             needed = {
                 handler_key(step)
                 for step in self.template(intent).steps
-                if step.kind in ("agent", "check", "operation")
+                if step.kind in PROCESS_KINDS
             }
             missing[intent] = sorted(needed - known)
         return missing
@@ -96,44 +91,23 @@ class FlowLibrary:
         flow = workflow_load(canonical(document))
         return {"workflow": encode(flow), "digest": self._verified(flow, publish)}
 
-    def _ticket(
-        self, project: dict[str, Json], checks: list[str], repositories: tuple[str, ...]
-    ) -> Workflow:
-        """The project's ticket flow; `web: true` lets its agents use the internet."""
+    def _ticket(self, settings: ProjectSettings, repositories: tuple[str, ...]) -> Workflow:
+        """The project's ticket flow; `web` lets its agents use the internet."""
         flow = ticket(
-            self._ticket_checks(project, checks, repositories),
-            isolated=project.get("isolation", True) is not False,
-            auto_resolve=project.get("auto_resolve", True) is not False,
-            commit_messages=(
-                str(project.get("commit_message") or ""),
-                str(project.get("pin_message") or ""),
-            ),
+            settings.ticket_checks(repositories),
+            isolated=settings.isolation,
+            auto_resolve=settings.auto_resolve,
+            commit_messages=(settings.commit_message, settings.pin_message),
         )
-        return with_tools(flow, ("web",) if project.get("web") is True else ())
+        return with_tools(flow, ("web",) if settings.web else ())
+
+    def _feature(self, settings: ProjectSettings, repositories: tuple[str, ...]) -> Workflow:
+        # The planner learns what the project's ticket agents can and cannot do.
+        return feature(agents=capabilities(self._ticket(settings, repositories)))
 
     def agents(self, project_id: str) -> str:
         """What the project's ticket agents can do, for planning and review briefs."""
-        project = self.project(project_id)
-        checks = [text(x, "check") for x in sequence(project.get("checks", []))]
-        return capabilities(self._ticket(project, checks, ()))
-
-    @staticmethod
-    def _ticket_checks(
-        project: dict[str, Json], checks: list[str], repositories: tuple[str, ...]
-    ) -> tuple[CheckCommand, ...]:
-        configured = mapping(project.get("repository_checks", {}))
-        owned = [
-            CheckCommand(
-                tuple(text(x, "check") for x in sequence(configured[repository])),
-                repository,
-                title=f"checks · {repository}",
-            )
-            for repository in repositories
-            if sequence(configured.get(repository, []))
-        ]
-        if owned:
-            return tuple(owned)
-        return (CheckCommand(tuple(checks), title="checks"),) if checks else ()
+        return capabilities(self._ticket(ProjectSettings.of(self.project(project_id)), ()))
 
     def ensure(
         self, name: str, project_id: str, language: str, repositories: tuple[str, ...] = ()
@@ -155,7 +129,7 @@ class FlowLibrary:
                     raise ValueError(
                         "Configure an absolute check executable in the project or step"
                     )
-            if step.kind in ("agent", "check", "operation"):
+            if step.kind in PROCESS_KINDS:
                 try:
                     manifest = handlers.get(handler_key(step)).manifest
                 except KeyError:
