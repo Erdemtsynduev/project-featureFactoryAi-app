@@ -573,3 +573,31 @@ def test_project_settings_choose_a_tracker_without_storing_a_token(page, worksho
     value = page.locator("textarea[name=tracker_settings]").input_value()
     assert "team: ENG" in value and '{"needs_person":"In Review"}' in value, value
     assert not errors
+
+
+def test_a_person_skips_a_step_of_a_tasks_flow_from_its_drawer(page, workshop, tmp_path):
+    from playwright.sync_api import expect
+
+    url, service = workshop
+    flow = Workflow(
+        "two-steps",
+        "draft",
+        (
+            Step("draft", "human", prompt="Черновик", transitions=(("done", "sign"),)),
+            Step("sign", "human", prompt="Подпись", transitions=(("done", "finish"),)),
+            Step("finish", "finish"),
+        ),
+    )
+    digest = service.engine.store.publish(flow)
+    service.mutate(
+        "create",
+        {"id": "reflow-me", "definition": digest, "workspace": str(tmp_path / "project")},
+    )
+    ready(page, url + "/#task/reflow-me")
+    page.get_by_role("tab", name="Детали").click()
+    section = page.locator("section", has=page.get_by_role("heading", name="Флоу этой задачи"))
+    expect(section).to_be_visible()
+    section.locator("li", has_text="draft").get_by_role("button", name="Пропустить").click()
+    expect(page.locator(".toast", has_text="Флоу изменён")).to_be_visible()
+    run = service.engine.store.get("reflow-me")
+    assert run.workflow_digest != digest and run.step == "sign"

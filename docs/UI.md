@@ -240,6 +240,13 @@ opening a template or a version over unpublished edits asks first. **Прове�
 validates without model calls; **Опубликовать версию** creates an immutable digest
 and existing tasks stay pinned.
 
+A task's drawer shows **Флоу этой задачи** while it is unfinished and idle: **Пропустить**
+a step (a required step, marked `*`, asks first), choose another agent profile for an agent
+step, or **Обновить до текущего шаблона**. The plans header's **Обновить флоу незавершённой
+работы** reports how many unfinished tasks run an older template version and moves the idle
+ones. Each change publishes a new version and migrates the task; progress stays where steps
+are unchanged.
+
 ## Agents, rotation and limits
 
 **Найти CLI и проверить вход** runs each CLI's `--version` and native status command

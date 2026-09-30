@@ -93,14 +93,27 @@ For a non-gate, `required` means a declared result was processed, including an e
 outcome that routes to repair. It does not turn a failure into a passing quality gate. Use `gate`
 when a successful verification, rather than execution, is required.
 
-The default Git adapter hashes HEAD plus the content of every path `git status` reports
-against it (modified, deleted, renamed and untracked non-ignored files); unchanged tracked
-files are identified by HEAD, so large repositories are not re-read per observation. It runs
-with `--no-optional-locks` and never rewrites the index. Engine scratch, virtual environments
-and generated Python caches are excluded. Symlinked workspaces/files are not silently followed.
-Other project revision models can implement ProjectAdapter. Revisions from the earlier
-full-content algorithm differ: an unfinished run observes one "Workspace changed" block after
-upgrade and continues after an explicit retry.
+A revision names content (`sdd_core.revision`, format `c1:<digest>`). The Git adapter names
+every file by the id of its current content: the index blob when the working file matches it,
+else Git's own hash of the working file (`hash-object`, with the repository's filters), or
+deleted. Committing or staging unchanged content therefore keeps the revision; any edit moves
+it. Unchanged files come from the index, so large repositories are not re-read. It runs with
+`--no-optional-locks` and never rewrites the index. Engine scratch, virtual environments and
+Python caches are excluded; links are not silently followed. A run recorded with an earlier
+revision format is re-based once (`revision_rebased`, gates proved again), not blocked.
+
+## Changing the flow of work in progress
+
+A published workflow never changes. A flow change makes a new version: skip a step (routes
+into it go where it continued; a required step only on a person's decision), insert one, run
+a step with another agent profile, or set a step option (`sdd_core.editor`). `machine.migrate`
+moves an idle, unfinished run onto a version: it stays at its step (or where a skipped step
+continued), visits and completed steps stay with the steps that remain, and a gate stays
+passed only where its step does the same work. Storage accepts a new workflow digest only as a
+recorded `workflow_migrated` transition, and the project's mandatory gates still hold.
+A person changes one task's flow from its drawer or moves unfinished work onto the current
+versions of its templates (`flows-update`); a plan lead may propose `reflow` for an idle
+ticket, and a revised ticket moves to the flow of the repository it now changes.
 
 ## Scoped runs in multi-repository workspaces
 

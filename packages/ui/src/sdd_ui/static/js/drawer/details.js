@@ -15,6 +15,7 @@ import {
   titleOf,
 } from "../core/store.js";
 import { openBulkResume } from "../features/bulk.js";
+import { flowSection } from "../features/flow-change.js";
 import { openTask } from "../features/shell.js";
 import {
   attentionText,
@@ -243,6 +244,7 @@ export function details(detail, step) {
         )
       : null,
     ...dependencySections(run),
+    flowSection(detail),
     documentsSection(detail),
     section(
       t("detail.memory"),

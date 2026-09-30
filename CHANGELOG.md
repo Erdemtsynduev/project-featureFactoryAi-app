@@ -13,6 +13,15 @@ digest they were created with.
 
 ## Unreleased
 
+- **Work in progress can change its flow.** Skip a step, insert one, run a step with
+  another agent profile or set a step option: the engine publishes a new version and
+  migrates the idle run onto it, keeping progress where steps are unchanged. A person does
+  it from the task drawer, or moves unfinished work onto the current templates; a plan lead
+  may propose `reflow`. A revised ticket now runs its new repository's flow (it kept the
+  old checks before).
+- **Refactoring.** One storage contract for both backends (it found and fixed a divergence),
+  storage rules in `sdd_core.storage_rules`, revisions in `sdd_core.revision`, kind and
+  status sets in `sdd_core.models`, `RunLocation`, models written only through the codec.
 - **A revision is the workspace's content.** Files are named by the id of their
   current content (the index blob, or Git's hash of the working file), so committing or
   staging unchanged content no longer blocks a running step with "Workspace changed

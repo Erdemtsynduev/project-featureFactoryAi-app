@@ -18,6 +18,7 @@ import {
 import { confirmDialog } from "../ui/dialog.js";
 import { attempt } from "../ui/toast.js";
 import { openBulkResume, pauseAll } from "../features/bulk.js";
+import { updateProjectFlows } from "../features/flow-change.js";
 import { lanes } from "./cards.js";
 import { LANES, NO_PLAN, openPlans, view } from "./state.js";
 
@@ -116,6 +117,11 @@ function plansHeader() {
       { class: "plans-actions" },
       action("plans-sync", (r) =>
         t("plans.synced", { plans: r.plans, created: r.created.length }),
+      ),
+      h(
+        "button",
+        { type: "button", id: "flows-update", class: "ghost", onclick: updateProjectFlows },
+        t("flow.updateAll"),
       ),
       action(
         "plans-rebuild",

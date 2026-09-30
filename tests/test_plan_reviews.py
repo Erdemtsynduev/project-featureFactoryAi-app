@@ -519,3 +519,40 @@ def test_a_review_reflows_an_idle_ticket_and_moves_a_revised_one_to_its_reposito
     assert "work" not in {s.id for s in engine.store.workflow(reflowed.workflow_digest).steps}
     assert engine.store.get(f"{feature}-extra").workflow_digest == beta, "its repository's flow"
     assert service.reviews.apply(review) == [], "applying again changes nothing"
+
+
+def test_a_person_changes_a_tasks_flow_and_moves_outdated_work_to_the_current_template(
+    service, monkeypatch
+):
+    feature, admitted = approved_plan(service)
+    engine = service.engine
+    api, ui = f"{feature}-api", f"{feature}-ui"
+    service.mutate("resume", {"id": api, "version": engine.store.get(api).version})
+    engine.dispatch(api, 13, "live")  # a live attempt is never moved
+    newer = engine.store.publish(replace(TICKET, id="ticket-v2", max_calls=12))
+    ensure = service.flows.ensure
+    monkeypatch.setattr(
+        service.flows,
+        "ensure",
+        lambda name, project, language, repositories=(): (
+            newer if name == "ticket" else ensure(name, project, language)
+        ),
+    )
+    report = service.mutate("flows-update", {"project": "app", "dry": True})
+    assert set(report["outdated"]) == set(admitted) and report["updated"] == []
+    moved = service.mutate("flows-update", {"project": "app"})
+    assert set(moved["updated"]) == set(admitted) - {api} and api in moved["refused"]
+    assert engine.store.get(ui).workflow_digest == newer
+    assert service.mutate("flows-update", {"project": "app", "dry": True})["outdated"] == [api]
+
+    changed = service.mutate(
+        "flow-change",
+        {
+            "id": ui,
+            "version": engine.store.get(ui).version,
+            "changes": [{"kind": "skip", "step": "work"}],
+        },
+    )
+    assert changed["step"] == "end" and changed["workflow_digest"] != newer
+    with pytest.raises(ValueError, match="own"):
+        service.reflow.update({"id": feature, "version": engine.store.get(feature).version})

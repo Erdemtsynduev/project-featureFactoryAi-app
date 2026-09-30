@@ -25,6 +25,7 @@ from sdd_factory.flows import FlowLibrary
 from sdd_factory.journal import FlightLog
 from sdd_factory.model import ticket_places
 from sdd_factory.plans import PlanService
+from sdd_factory.reflow import FlowChanges
 from sdd_factory.reviews import PlanReviews
 from sdd_factory.tasks import TaskService
 from sdd_factory.trackers import ProjectSources, installed_trackers
@@ -60,6 +61,8 @@ TASK_ACTIONS = frozenset(
         "create",
         "rename",
         "close",
+        "flow-change",
+        "flow-update",
         "answer",
         "message",
         "recover",
@@ -110,6 +113,7 @@ class WorkspaceService:
             self.engine, self.catalog, self.flows, self.log, self.sources.source
         )
         self.mirror = TrackerSync(self.catalog, self.sources.tracker, self.log)
+        self.reflow = FlowChanges(self.engine, self.catalog, self.flows, self.log)
         self.actions: dict[str, Action] = {
             "project": self.catalog.save_project,
             "discover": lambda _: self.catalog.discover(),
@@ -132,6 +136,9 @@ class WorkspaceService:
             "supersede": self.tasks.supersede,
             "plans-sync": self.plans.sync,
             "plans-rebuild": self.plans.rebuild,
+            "flow-change": self.reflow.change,
+            "flow-update": self.reflow.update,
+            "flows-update": self.reflow.update_many,
             "interactive-demo": self.tasks.demo,
             "tracker-sync": lambda doc: self.sync_trackers(text(doc.get("project", ""), "project")),
             "answer": self.reviews.answer,
